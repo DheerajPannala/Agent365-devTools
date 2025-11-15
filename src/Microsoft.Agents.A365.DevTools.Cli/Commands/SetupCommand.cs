@@ -324,25 +324,6 @@ public class SetupCommand
         return command;
     }
 
-    /// <summary>
-    /// Convert Agent365Config to DeploymentConfiguration
-    /// </summary>
-    private static DeploymentConfiguration ConvertToDeploymentConfig(Agent365Config config)
-    {
-        return new DeploymentConfiguration
-        {
-            ResourceGroup = config.ResourceGroup,
-            AppName = config.WebAppName,
-            ProjectPath = config.DeploymentProjectPath,
-            DeploymentZip = "app.zip",
-            BuildConfiguration = "Release",
-            PublishOptions = new PublishOptions
-            {
-                SelfContained = false,
-                OutputPath = "publish"
-            }
-        };
-    }
 
     /// <summary>
     /// Display verification URLs and next steps after successful setup
@@ -439,8 +420,18 @@ public class SetupCommand
             throw new InvalidOperationException("Messaging endpoint provider registration failed");
         }
 
+        // Generate endpoint name with Azure Bot Service constraints (4-42 chars)
+        var baseEndpointName = $"{setupConfig.WebAppName}-endpoint";
+        var endpointName = baseEndpointName.Length > 42
+            ? baseEndpointName.Substring(0, 42)
+            : baseEndpointName;
+        if (endpointName.Length < 4)
+        {
+            logger.LogError("Bot endpoint name '{EndpointName}' is too short (must be at least 4 characters)", endpointName);
+            throw new InvalidOperationException($"Bot endpoint name '{endpointName}' is too short (must be at least 4 characters)");
+        }
+        
         // Register messaging endpoint using agent blueprint identity and deployed web app URL
-        var endpointName = $"{setupConfig.WebAppName}-endpoint";
         var messagingEndpoint = $"https://{setupConfig.WebAppName}.azurewebsites.net/api/messages";
         
         logger.LogInformation("   - Registering blueprint messaging endpoint");
@@ -482,21 +473,6 @@ public class SetupCommand
         {
             logger.LogWarning("     - Some messaging integrations failed to configure");
         }
-    }
-
-    /// <summary>
-    /// Get well-known resource names for common Microsoft services
-    /// </summary>
-    private static string GetWellKnownResourceName(string? resourceAppId)
-    {
-        return resourceAppId switch
-        {
-            "00000003-0000-0000-c000-000000000000" => "Microsoft Graph",
-            "00000002-0000-0000-c000-000000000000" => "Azure Active Directory Graph",
-            "797f4846-ba00-4fd7-ba43-dac1f8f63013" => "Azure Service Management",
-            "00000001-0000-0000-c000-000000000000" => "Azure ESTS Service",
-            _ => $"Unknown Resource ({resourceAppId})"
-        };
     }
 
     private static async Task EnsureMcpOauth2PermissionGrantsAsync(

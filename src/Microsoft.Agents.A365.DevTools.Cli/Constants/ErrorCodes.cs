@@ -1,0 +1,11 @@
+﻿// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+namespace Microsoft.Agents.A365.DevTools.Cli.Constants
+{
+    public static class ErrorCodes
+    {
+        public const string AzureAuthFailed = "AZURE_AUTH_FAILED";
+        public const string PythonNotFound = "PYTHON_NOT_FOUND";
+        public const string DeploymentAppFailed = "DEPLOYMENT_APP_FAILED";
+    }
+}

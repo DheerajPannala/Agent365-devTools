@@ -36,6 +36,17 @@ public class ConfigurationWizardService : IConfigurationWizardService
         _logger = logger;
     }
 
+    private static string ExtractDomainFromAccount(AzureAccountInfo accountInfo)
+    {
+        if (!string.IsNullOrWhiteSpace(accountInfo?.User?.Name) && accountInfo.User.Name.Contains("@"))
+        {
+            var parts = accountInfo.User.Name.Split('@');
+            if (parts.Length == 2 && !string.IsNullOrWhiteSpace(parts[1]))
+                return parts[1];
+        }
+        return string.Empty;
+    }
+
     public async Task<Agent365Config?> RunWizardAsync(Agent365Config? existingConfig = null)
     {
         try
@@ -77,7 +88,8 @@ public class ConfigurationWizardService : IConfigurationWizardService
                 return null;
             }
 
-            var derivedNames = GenerateDerivedNames(agentName);
+            var domain = ExtractDomainFromAccount(accountInfo);
+            var derivedNames = GenerateDerivedNames(agentName, domain);
 
             // Step 4: Validate deployment project path
             var deploymentPath = await PromptForDeploymentPathAsync(existingConfig);
@@ -104,7 +116,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
             }
 
             // Step 7: Get manager email (required for agent creation)
-            var managerEmail = PromptForManagerEmail(existingConfig);
+            var managerEmail = PromptForManagerEmail(existingConfig, accountInfo);
             if (string.IsNullOrWhiteSpace(managerEmail))
             {
                 _logger.LogError("Configuration wizard cancelled: Manager email not provided");
@@ -368,11 +380,11 @@ public class ConfigurationWizardService : IConfigurationWizardService
         }
     }
 
-    private string PromptForManagerEmail(Agent365Config? existingConfig)
+    private string PromptForManagerEmail(Agent365Config? existingConfig, AzureAccountInfo accountInfo)
     {
         return PromptWithDefault(
             "Manager email",
-            existingConfig?.ManagerEmail ?? "",
+            accountInfo?.User?.Name ?? "",
             ValidateEmail
         );
     }
@@ -396,17 +408,29 @@ public class ConfigurationWizardService : IConfigurationWizardService
         );
     }
 
-    private ConfigDerivedNames GenerateDerivedNames(string agentName)
+    private static string GenerateValidWebAppName(string cleanName, string timestamp)
+    {
+        // Reserve 9 chars for "-webapp-" and 9 for "-endpoint" (total 18), so max cleanName+timestamp is 33
+        // "-webapp-" is 8 chars, so cleanName+timestamp max is 33
+        var baseName = $"{cleanName}-webapp";
+        if (baseName.Length > 33)
+            baseName = baseName.Substring(0, 33);
+        if (baseName.Length < 2)
+            baseName = baseName.PadRight(2, 'a'); // pad to min length
+        return baseName;
+    }
+
+    private ConfigDerivedNames GenerateDerivedNames(string agentName, string domain)
     {
         var cleanName = System.Text.RegularExpressions.Regex.Replace(agentName, @"[^a-zA-Z0-9]", "").ToLowerInvariant();
         var timestamp = DateTime.Now.ToString("MMddHHmm");
-
+        var webAppName = GenerateValidWebAppName(cleanName, timestamp);
         return new ConfigDerivedNames
         {
-            WebAppName = $"{cleanName}-webapp-{timestamp}",
+            WebAppName = webAppName,
             AgentIdentityDisplayName = $"{agentName} Identity",
             AgentBlueprintDisplayName = $"{agentName} Blueprint",
-            AgentUserPrincipalName = $"agent.{cleanName}.{timestamp}@yourdomain.onmicrosoft.com",
+            AgentUserPrincipalName = $"UPN.{cleanName}@{domain}",
             AgentUserDisplayName = $"{agentName} Agent User"
         };
     }

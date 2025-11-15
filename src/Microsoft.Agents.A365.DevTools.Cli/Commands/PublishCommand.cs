@@ -478,7 +478,6 @@ public class PublishCommand
                     return;
                 }
 
-                // Use native C# service for Graph operations
                 logger.LogInformation("Executing Graph API operations (native C# implementation)...");
                 logger.LogInformation("TenantId: {TenantId}, BlueprintId: {BlueprintId}", tenantId, blueprintId);
 

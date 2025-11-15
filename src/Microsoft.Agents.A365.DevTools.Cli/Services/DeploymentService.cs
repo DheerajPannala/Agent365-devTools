@@ -1,9 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using System.IO.Compression;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Extensions.Logging;
+using System.IO.Compression;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -189,7 +190,7 @@ public class DeploymentService
             {
                 _logger.LogError("Deployment error: {Error}", deployResult.StandardError);
             }
-            throw new Exception($"Azure deployment failed: {deployResult.StandardError}");
+            throw new DeployAppException($"Azure deployment failed: {deployResult.StandardError}");
         }
 
         _logger.LogInformation("");

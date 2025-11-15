@@ -111,12 +111,10 @@ class Program
         {
             // Unexpected error - this is a BUG, show full stack trace
             Log.Fatal(ex, "Application terminated unexpectedly");
-            Console.ForegroundColor = ConsoleColor.Red;
             Console.Error.WriteLine();
             Console.Error.WriteLine("Unexpected error occurred. This may be a bug in the CLI.");
             Console.Error.WriteLine("Please report this issue at: https://github.com/microsoft/Agent365-devTools/issues");
             Console.Error.WriteLine();
-            Console.ResetColor();
             return 1;
         }
         finally
@@ -131,9 +129,6 @@ class Program
     /// </summary>
     private static void HandleAgent365Exception(Exceptions.Agent365Exception ex)
     {
-        // Set console color based on error severity
-        Console.ForegroundColor = ConsoleColor.Red;
-        
         // Display formatted error message
         Console.Error.Write(ex.GetFormattedMessage());
         
