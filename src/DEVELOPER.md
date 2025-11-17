@@ -466,6 +466,38 @@ For security and flexibility, the CLI supports environment variable overrides fo
    export POWERPLATFORM_API_URL=https://api.custom.powerplatform.example.com
    ```
 
+6. **Create endpoint URL**:
+   ```bash
+   # Override create endpoint URL (for custom environments)
+   # Internal use only - for non-production Microsoft environments
+   export A365_CREATE_ENDPOINT_STAGING=https://staging.agent365.example.com/agents/createAgentBlueprint
+   export A365_CREATE_ENDPOINT_CUSTOM=https://custom.agent365.example.com/agents/createAgentBlueprint
+   ```
+
+7. **Delete endpoint URL**:
+   ```bash
+   # Override delete endpoint URL (for custom environments)
+   # Internal use only - for non-production Microsoft environments
+   export A365_DELETE_ENDPOINT_STAGING=https://staging.agent365.example.com/agents/deleteAgentBlueprint
+   export A365_DELETE_ENDPOINT_CUSTOM=https://custom.agent365.example.com/agents/deleteAgentBlueprint
+   ```
+
+8. **Endpoint deployment Environment**:
+   ```bash
+   # Override endpoint deployment environment (for custom environments)
+   # Internal use only - for non-production Microsoft environments
+   export A365_DEPLOYMENT_ENVIRONMENT_STAGING=staging
+   export A365_DEPLOYMENT_ENVIRONMENT_CUSTOM=custom
+   ```
+
+9. **Endpoint cluster category**:
+   ```bash
+   # Override endpoint cluster category (for custom environments)
+   # Internal use only - for non-production Microsoft environments
+   export A365_CLUSTER_CATEGORY_STAGING=staging
+   export A365_CLUSTER_CATEGORY_CUSTOM=custom
+   ```
+
 **Implementation Pattern**:
 
 **ConfigConstants.cs** (Per-environment with suffix):

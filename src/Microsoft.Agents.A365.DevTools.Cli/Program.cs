@@ -75,7 +75,7 @@ class Program
 
             // Get services needed by commands
             var deploymentService = serviceProvider.GetRequiredService<DeploymentService>();
-            var botConfigurator = serviceProvider.GetRequiredService<BotConfigurator>();
+            var botConfigurator = serviceProvider.GetRequiredService<IBotConfigurator>();
             var graphApiService = serviceProvider.GetRequiredService<GraphApiService>();
             var webAppCreator = serviceProvider.GetRequiredService<AzureWebAppCreator>();
             var platformDetector = serviceProvider.GetRequiredService<PlatformDetector>();
@@ -97,7 +97,7 @@ class Program
             var manifestTemplateService = serviceProvider.GetRequiredService<ManifestTemplateService>();
             rootCommand.AddCommand(ConfigCommand.CreateCommand(configLogger, wizardService: wizardService));
             rootCommand.AddCommand(QueryEntraCommand.CreateCommand(queryEntraLogger, configService, executor, graphApiService));
-            rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, executor));
+            rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, botConfigurator, executor));
             rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, graphApiService, manifestTemplateService));
 
             // Wrap all command handlers with exception handling
@@ -211,7 +211,7 @@ class Program
         services.AddSingleton<DeploymentService>();
         
         // Add other services
-        services.AddSingleton<BotConfigurator>();
+        services.AddSingleton<IBotConfigurator, BotConfigurator>();
         services.AddSingleton<GraphApiService>();
         services.AddSingleton<DelegatedConsentService>(); // For AgentApplication.Create permission
         services.AddSingleton<ManifestTemplateService>(); // For publish command template extraction

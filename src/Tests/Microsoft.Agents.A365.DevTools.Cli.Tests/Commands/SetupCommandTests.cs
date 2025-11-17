@@ -26,7 +26,7 @@ public class SetupCommandTests
     private readonly IConfigService _mockConfigService;
     private readonly CommandExecutor _mockExecutor;
     private readonly DeploymentService _mockDeploymentService;
-    private readonly BotConfigurator _mockBotConfigurator;
+    private readonly IBotConfigurator _mockBotConfigurator;
     private readonly IAzureValidator _mockAzureValidator;
     private readonly AzureWebAppCreator _mockWebAppCreator;
     private readonly PlatformDetector _mockPlatformDetector;
@@ -50,8 +50,7 @@ public class SetupCommandTests
             mockDotNetLogger,
             mockNodeLogger,
             mockPythonLogger);
-        var mockBotLogger = Substitute.For<ILogger<BotConfigurator>>();
-        _mockBotConfigurator = Substitute.ForPartsOf<BotConfigurator>(mockBotLogger, _mockExecutor);
+        _mockBotConfigurator = Substitute.For<IBotConfigurator>();
         _mockAzureValidator = Substitute.For<IAzureValidator>();
         _mockWebAppCreator = Substitute.ForPartsOf<AzureWebAppCreator>(Substitute.For<ILogger<AzureWebAppCreator>>());
 
@@ -65,7 +64,6 @@ public class SetupCommandTests
         // Arrange
         var config = new Agent365Config { TenantId = "tenant", SubscriptionId = "sub", ResourceGroup = "rg", Location = "loc", AppServicePlanName = "plan", WebAppName = "web", AgentIdentityDisplayName = "agent", DeploymentProjectPath = "." };
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(config));
-
         var command = SetupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockExecutor, _mockDeploymentService, _mockBotConfigurator, _mockAzureValidator, _mockWebAppCreator, _mockPlatformDetector);
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -79,7 +77,7 @@ public class SetupCommandTests
         // Dry-run should load config but must not call Azure/Bot services
         await _mockConfigService.Received(1).LoadAsync(Arg.Any<string>(), Arg.Any<string>());
         await _mockAzureValidator.DidNotReceiveWithAnyArgs().ValidateAllAsync(default!);
-        await _mockBotConfigurator.DidNotReceiveWithAnyArgs().CreateOrUpdateBotWithAgentBlueprintAsync(default!, default!, default!, default!, default!, default!, default!, default!, default!);
+        await _mockBotConfigurator.DidNotReceiveWithAnyArgs().CreateEndpointWithAgentBlueprintAsync(default!, default!, default!, default!, default!);
     }
 
     [Fact]

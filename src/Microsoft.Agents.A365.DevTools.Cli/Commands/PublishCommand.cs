@@ -216,16 +216,16 @@ public class PublishCommand
                 logger.LogInformation("Your manifest has been updated at: {ManifestPath}", manifestPath);
                 logger.LogInformation("");
                 logger.LogInformation("Please customize these fields before publishing:");
-                logger.LogInformation("  • Version ('version'): Increment for republishing (e.g., 1.0.0 to 1.0.1)");
+                logger.LogInformation("    Version ('version'): Increment for republishing (e.g., 1.0.0 to 1.0.1)");
                 logger.LogInformation("    REQUIRED: Must be higher than previously published version");
-                logger.LogInformation("  • Agent Name ('name.short' and 'name.full'): Make it descriptive and user-friendly");
+                logger.LogInformation("    Agent Name ('name.short' and 'name.full'): Make it descriptive and user-friendly");
                 logger.LogInformation("    Currently: {Name}", agentBlueprintDisplayName);
                 logger.LogInformation("    IMPORTANT: 'name.short' must be 30 characters or less");
-                logger.LogInformation("  • Descriptions ('description.short' and 'description.full'): Explain what your agent does");
+                logger.LogInformation("    Descriptions ('description.short' and 'description.full'): Explain what your agent does");
                 logger.LogInformation("    Short: 1-2 sentences, Full: Detailed capabilities");
-                logger.LogInformation("  • Developer Info ('developer.name', 'developer.websiteUrl', 'developer.privacyUrl')");
+                logger.LogInformation("    Developer Info ('developer.name', 'developer.websiteUrl', 'developer.privacyUrl')");
                 logger.LogInformation("    Should reflect your organization details");
-                logger.LogInformation("  • Icons: Replace 'color.png' and 'outline.png' with your custom branding");
+                logger.LogInformation("    Icons: Replace 'color.png' and 'outline.png' with your custom branding");
                 logger.LogInformation("");
                 logger.LogInformation("When you're done customizing, type 'continue' (or 'c') and press Enter to proceed:");
                 
