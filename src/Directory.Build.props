@@ -37,7 +37,7 @@
 
     <!-- Build Configuration -->
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
-    <IncludeSymbols>true</IncludeSymbols>
+    <IncludeSymbols>false</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
 
@@ -47,7 +47,7 @@
     <DebugType>embedded</DebugType>
     
     <!-- Suppress common NuGet warnings -->
-    <NoWarn>$(NoWarn);NU1608</NoWarn>
+    <NoWarn>$(NoWarn);NU1608;NU5128</NoWarn>
   </PropertyGroup>
   
   <ItemGroup>
@@ -62,3 +62,4 @@
     <None Include="$(RepositoryRoot)README.md" Pack="true" PackagePath="" Condition="Exists('$(RepositoryRoot)README.md')" />
   </ItemGroup>
 </Project>
+
