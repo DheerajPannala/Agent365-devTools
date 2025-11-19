@@ -12,6 +12,7 @@ using Azure.Identity;
 using Azure.Core;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -784,7 +785,7 @@ public sealed class A365SetupRunner
             _logger.LogInformation("Opening browser for Graph API admin consent...");
             TryOpenBrowser(consentUrlGraph);
 
-            var consent1Success = await PollAdminConsentAsync(appId, "Graph API Scopes", 180, 5, ct);
+            var consent1Success = await AdminConsentHelper.PollAdminConsentAsync(_executor, _logger, appId, "Graph API Scopes", 180, 5, ct);
 
             if (consent1Success)
             {
@@ -799,7 +800,7 @@ public sealed class A365SetupRunner
             _logger.LogInformation("Opening browser for Connectivity admin consent...");
             TryOpenBrowser(consentUrlConnectivity);
 
-            var consent2Success = await PollAdminConsentAsync(appId, "Connectivity Scope", 180, 5, ct);
+            var consent2Success = await AdminConsentHelper.PollAdminConsentAsync(_executor, _logger, appId, "Connectivity Scope", 180, 5, ct);
 
             if (consent2Success)
             {
@@ -1044,7 +1045,7 @@ public sealed class A365SetupRunner
                 _logger.LogInformation("  Opening browser for MCP server admin consent...");
                 TryOpenBrowser(consentUrlMcp);
 
-                var consentMcpSuccess = await PollAdminConsentAsync(blueprintAppId, "MCP Server Scopes", 180, 5, ct);
+                var consentMcpSuccess = await AdminConsentHelper.PollAdminConsentAsync(_executor, _logger, blueprintAppId, "MCP Server Scopes", 180, 5, ct);
 
                 if (consentMcpSuccess)
                 {
@@ -1226,61 +1227,7 @@ public sealed class A365SetupRunner
         }
     }
 
-    private async Task<bool> PollAdminConsentAsync(string appId, string scopeDescriptor, int timeoutSeconds, int intervalSeconds, CancellationToken ct)
-    {
-        var start = DateTime.UtcNow;
-        string? spId = null;
-
-        while ((DateTime.UtcNow - start).TotalSeconds < timeoutSeconds && !ct.IsCancellationRequested)
-        {
-            if (spId == null)
-            {
-                var spResult = await _executor.ExecuteAsync("az",
-                    $"rest --method GET --url \"https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '{appId}'\"",
-                    captureOutput: true, suppressErrorLogging: true, cancellationToken: ct);
-
-                if (spResult.Success)
-                {
-                    try
-                    {
-                        using var doc = JsonDocument.Parse(spResult.StandardOutput);
-                        var value = doc.RootElement.GetProperty("value");
-                        if (value.GetArrayLength() > 0)
-                        {
-                            spId = value[0].GetProperty("id").GetString();
-                        }
-                    }
-                    catch { }
-                }
-            }
-
-            if (spId != null)
-            {
-                var grants = await _executor.ExecuteAsync("az",
-                    $"rest --method GET --url \"https://graph.microsoft.com/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spId}'\"",
-                    captureOutput: true, suppressErrorLogging: true, cancellationToken: ct);
-
-                if (grants.Success)
-                {
-                    try
-                    {
-                        using var gdoc = JsonDocument.Parse(grants.StandardOutput);
-                        var arr = gdoc.RootElement.GetProperty("value");
-                        if (arr.GetArrayLength() > 0)
-                        {
-                            _logger.LogInformation("Consent granted ({ScopeDescriptor}).", scopeDescriptor);
-                            return true;
-                        }
-                    }
-                    catch { }
-                }
-            }
-
-            await Task.Delay(TimeSpan.FromSeconds(intervalSeconds), ct);
-        }
-
-        return false;
-    }
+    // PollAdminConsentAsync logic moved to AdminConsentHelper to enable reuse.
 
     private void TryOpenBrowser(string url)
     {
