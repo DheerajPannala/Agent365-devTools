@@ -306,6 +306,12 @@ public class Agent365Config
     [JsonPropertyName("agentBlueprintClientSecret")]
     public string? AgentBlueprintClientSecret { get; set; }
 
+    /// <summary>
+    /// Boolean value indicating if the client secret is stored securely (e.g., in Key Vault).
+    /// </summary>
+    [JsonPropertyName("agentBlueprintClientSecretProtected")]
+    public bool AgentBlueprintClientSecretProtected { get; set; }
+
     #endregion
 
     #region Bot State
