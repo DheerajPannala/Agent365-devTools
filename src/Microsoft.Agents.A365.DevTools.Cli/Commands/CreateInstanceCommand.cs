@@ -80,15 +80,16 @@ public class CreateInstanceCommand
                 logger.LogInformation("");
 
                 // Use C# runner with AuthenticationService and GraphApiService
+                var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
                 var authService = new AuthenticationService(
-                    LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<AuthenticationService>());
+                    cleanLoggerFactory.CreateLogger<AuthenticationService>());
 
                 var graphService = new GraphApiService(
-                    LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<GraphApiService>(),
+                    cleanLoggerFactory.CreateLogger<GraphApiService>(),
                     executor);
 
                 var instanceRunner = new A365CreateInstanceRunner(
-                    LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<A365CreateInstanceRunner>(),
+                    cleanLoggerFactory.CreateLogger<A365CreateInstanceRunner>(),
                     executor,
                     graphService);
 
@@ -250,7 +251,8 @@ public class CreateInstanceCommand
                     generatedConfigPath = Path.Combine(
                         config.DirectoryName ?? Environment.CurrentDirectory,
                         "a365.generated.config.json");
-                    var platformDetector = new PlatformDetector(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<PlatformDetector>());
+                    var syncLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
+                    var platformDetector = new PlatformDetector(syncLoggerFactory.CreateLogger<PlatformDetector>());
 
                     await ProjectSettingsSyncHelper.ExecuteAsync(
                         a365ConfigPath: config.FullName,
@@ -323,15 +325,16 @@ public class CreateInstanceCommand
                 if (instanceConfig == null) Environment.Exit(1);
 
                 // Use C# runner with AuthenticationService and GraphApiService
+                var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
                 var authService = new AuthenticationService(
-                    LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<AuthenticationService>());
+                    cleanLoggerFactory.CreateLogger<AuthenticationService>());
 
                 var graphService = new GraphApiService(
-                    LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<GraphApiService>(),
+                    cleanLoggerFactory.CreateLogger<GraphApiService>(),
                     executor);
 
                 var instanceRunner = new A365CreateInstanceRunner(
-                    LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<A365CreateInstanceRunner>(),
+                    cleanLoggerFactory.CreateLogger<A365CreateInstanceRunner>(),
                     executor,
                     graphService);
 
@@ -355,7 +358,9 @@ public class CreateInstanceCommand
                     generatedConfigPath = Path.Combine(
                         config.DirectoryName ?? Environment.CurrentDirectory,
                         "a365.generated.config.json");
-                    var platformDetector = new PlatformDetector(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<PlatformDetector>());
+                    
+                    var syncLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
+                    var platformDetector = new PlatformDetector(syncLoggerFactory.CreateLogger<PlatformDetector>());
 
                     await ProjectSettingsSyncHelper.ExecuteAsync(
                         a365ConfigPath: config.FullName,
@@ -427,15 +432,16 @@ public class CreateInstanceCommand
                 if (instanceConfig == null) Environment.Exit(1);
 
                 // Use C# runner with AuthenticationService and GraphApiService
+                var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
                 var authService = new AuthenticationService(
-                    LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<AuthenticationService>());
+                    cleanLoggerFactory.CreateLogger<AuthenticationService>());
 
                 var graphService = new GraphApiService(
-                    LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<GraphApiService>(),
+                    cleanLoggerFactory.CreateLogger<GraphApiService>(),
                     executor);
 
                 var instanceRunner = new A365CreateInstanceRunner(
-                    LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<A365CreateInstanceRunner>(),
+                    cleanLoggerFactory.CreateLogger<A365CreateInstanceRunner>(),
                     executor,
                     graphService);
 

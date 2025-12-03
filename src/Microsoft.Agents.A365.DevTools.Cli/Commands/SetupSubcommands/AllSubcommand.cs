@@ -107,7 +107,7 @@ internal static class AllSubcommand
                 // Validate Azure authentication
                 if (!await azureValidator.ValidateAllAsync(setupConfig.SubscriptionId))
                 {
-                    Environment.Exit(1);
+                    ExceptionHandler.ExitWithCleanup(1);
                 }
 
                 logger.LogInformation("");
@@ -134,11 +134,17 @@ internal static class AllSubcommand
 
                     setupResults.InfrastructureCreated = skipInfrastructure ? false : setupInfra;
                 }
+                catch (Agent365Exception infraEx)
+                {
+                    setupResults.InfrastructureCreated = false;
+                    setupResults.Errors.Add($"Infrastructure: {infraEx.Message}");
+                    throw;
+                }
                 catch (Exception infraEx)
                 {
                     setupResults.InfrastructureCreated = false;
                     setupResults.Errors.Add($"Infrastructure: {infraEx.Message}");
-                    logger.LogError(infraEx, "Failed to create infrastructure: {Message}", infraEx.Message);
+                    logger.LogError("Failed to create infrastructure: {Message}", infraEx.Message);
                     throw;
                 }
 
@@ -187,12 +193,19 @@ internal static class AllSubcommand
                         }
                     }
                 }
+                catch (Agent365Exception blueprintEx)
+                {
+                    setupResults.BlueprintCreated = false;
+                    setupResults.MessagingEndpointRegistered = false;
+                    setupResults.Errors.Add($"Blueprint: {blueprintEx.Message}");
+                    throw;
+                }
                 catch (Exception blueprintEx)
                 {
                     setupResults.BlueprintCreated = false;
                     setupResults.MessagingEndpointRegistered = false;
                     setupResults.Errors.Add($"Blueprint: {blueprintEx.Message}");
-                    logger.LogError(blueprintEx, "Failed to create blueprint: {Message}", blueprintEx.Message);
+                    logger.LogError("Failed to create blueprint: {Message}", blueprintEx.Message);
                     throw;
                 }
 
@@ -222,7 +235,7 @@ internal static class AllSubcommand
                 {
                     setupResults.McpPermissionsConfigured = false;
                     setupResults.Errors.Add($"MCP Permissions: {mcpPermEx.Message}");
-                    logger.LogWarning("Setup will continue, but MCP server permissions must be configured manually");
+                    logger.LogWarning("MCP permissions failed: {Message}. Setup will continue, but MCP server permissions must be configured manually", mcpPermEx.Message);
                 }
 
                 // Step 4: Bot API Permissions
@@ -248,7 +261,7 @@ internal static class AllSubcommand
                 {
                     setupResults.BotApiPermissionsConfigured = false;
                     setupResults.Errors.Add($"Bot API Permissions: {botPermEx.Message}");
-                    logger.LogWarning("Setup will continue, but Bot API permissions must be configured manually");
+                    logger.LogWarning("Bot permissions failed: {Message}. Setup will continue, but Bot API permissions must be configured manually", botPermEx.Message);
                 }
 
                 // Display verification info and summary

@@ -81,12 +81,12 @@ public static class InfrastructureSubcommand
                 // Validate Azure CLI authentication, subscription, and environment
                 if (!await azureValidator.ValidateAllAsync(setupConfig.SubscriptionId))
                 {
-                    Environment.Exit(1);
+                    ExceptionHandler.ExitWithCleanup(1);
                 }
             }
             else
             {
-                logger.LogInformation("NeedDeployment=false – skipping Azure subscription validation.");
+                logger.LogInformation("NeedDeployment=false - skipping Azure subscription validation.");
             }
 
             var generatedConfigPath = Path.Combine(
@@ -158,7 +158,7 @@ public static class InfrastructureSubcommand
 
         if (!skipInfra)
         {
-            // Azure hosting scenario – need full infra details
+            // Azure hosting scenario - need full infra details
             if (new[] { subscriptionId, resourceGroup, planName, webAppName, location }.Any(string.IsNullOrWhiteSpace))
             {
                 logger.LogError(
@@ -426,14 +426,30 @@ public static class InfrastructureSubcommand
                 var createResult = await executor.ExecuteAsync("az", $"webapp create -g {resourceGroup} -p {planName} -n {webAppName} --runtime \"{runtime}\" --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
                 if (!createResult.Success)
                 {
+                    // Check for specific error conditions
                     if (createResult.StandardError.Contains("AuthorizationFailed", StringComparison.OrdinalIgnoreCase))
                     {
                         throw new AzureResourceException("WebApp", webAppName, createResult.StandardError, true);
                     }
+                    else if (createResult.StandardError.Contains("already exists", StringComparison.OrdinalIgnoreCase) ||
+                             createResult.StandardError.Contains("app names must be globally unique", StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new AzureResourceException(
+                            ErrorCodes.AzureWebAppNameTaken,
+                            "WebApp",
+                            webAppName,
+                            $"Web app name '{webAppName}' is already taken (web app names must be globally unique across all Azure).",
+                            new List<string>
+                            {
+                                "Web app names must be globally unique across all Azure subscriptions",
+                                "Update the 'webAppName' in your a365.config.json to a different value",
+                                "Consider adding a unique suffix like your organization name or random characters"
+                            });
+                    }
                     else
                     {
-                        logger.LogError("ERROR: Web app creation failed: {Err}", createResult.StandardError);
-                        throw new InvalidOperationException($"Failed to create web app '{webAppName}'. Setup cannot continue.");
+                        logger.LogError("Web app creation failed: {Err}", createResult.StandardError);
+                        throw new AzureResourceException("WebApp", webAppName, createResult.StandardError);
                     }
                 }
             }

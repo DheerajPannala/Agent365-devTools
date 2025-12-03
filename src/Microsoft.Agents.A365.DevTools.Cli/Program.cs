@@ -4,10 +4,9 @@
 using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Serilog;
-using Serilog.Events;
 using System.CommandLine;
 using System.CommandLine.Builder;
 using System.CommandLine.Parsing;
@@ -25,37 +24,28 @@ class Program
 
         // Check if verbose flag is present to adjust logging level
         var isVerbose = args.Contains("--verbose") || args.Contains("-v");
+        var logLevel = isVerbose ? LogLevel.Debug : LogLevel.Information;
         
-        // Configure Serilog with both console and file output
-        Log.Logger = new LoggerConfiguration()
-            .MinimumLevel.Is(isVerbose ? Serilog.Events.LogEventLevel.Debug : Serilog.Events.LogEventLevel.Information)
-            .WriteTo.Logger(lc => lc
-                .WriteTo.Console())
-            .WriteTo.File(      // File output (for debugging)
-                path: logFilePath,
-                rollingInterval: RollingInterval.Infinite,
-                rollOnFileSizeLimit: false,
-                fileSizeLimitBytes: 10_485_760,  // 10 MB max
-                retainedFileCountLimit: 1,       // Only keep latest run
-                outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss.fff}] [{Level:u3}] {Message:lj}{NewLine}")
-            .CreateLogger();
+        // Configure Microsoft.Extensions.Logging with clean console formatter
+        var loggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory(logLevel);
+        var startupLogger = loggerFactory.CreateLogger("Program");
 
         try
         {
-            // Log startup info to file only (debug level - not shown to users by default)
-            Log.Debug("==========================================================");
-            Log.Debug("Agent 365 CLI - Command: {Command}", commandName);
-            Log.Debug("Version: {Version}", GetDisplayVersion());
-            Log.Debug("Log file: {LogFile}", logFilePath);
-            Log.Debug("Started at: {Time}", DateTime.Now);
-            Log.Debug("==========================================================");
+            // Log startup info (debug level - not shown to users by default)
+            startupLogger.LogDebug("==========================================================");
+            startupLogger.LogDebug("Agent 365 CLI - Command: {Command}", commandName);
+            startupLogger.LogDebug("Version: {Version}", GetDisplayVersion());
+            startupLogger.LogDebug("Log file: {LogFile}", logFilePath);
+            startupLogger.LogDebug("Started at: {Time}", DateTime.Now);
+            startupLogger.LogDebug("==========================================================");
             
             // Log version information
             var version = GetDisplayVersion();
 
             // Set up dependency injection
             var services = new ServiceCollection();
-            ConfigureServices(services);
+            ConfigureServices(services, logLevel, logFilePath);
             var serviceProvider = services.BuildServiceProvider();
 
             // Create root command
@@ -117,7 +107,7 @@ class Program
                     else
                     {
                         // Unexpected error - this is a BUG
-                        Log.Fatal(exception, "Application terminated unexpectedly");
+                        startupLogger.LogCritical(exception, "Application terminated unexpectedly");
                         Console.Error.WriteLine("Unexpected error occurred. This may be a bug in the CLI.");
                         Console.Error.WriteLine("Please report this issue at: https://github.com/microsoft/Agent365-devTools/issues");
                         Console.Error.WriteLine();
@@ -130,17 +120,32 @@ class Program
         }
         finally
         {
-            Log.CloseAndFlush();
+            Console.ResetColor();
+            loggerFactory.Dispose();
         }
     }
 
-    private static void ConfigureServices(IServiceCollection services)
+    private static void ConfigureServices(IServiceCollection services, LogLevel minimumLevel = LogLevel.Information, string? logFilePath = null)
     {
-        // Add logging
+        // Add logging with clean console formatter and optional file logging
         services.AddLogging(builder =>
         {
             builder.ClearProviders();
-            builder.AddSerilog(dispose: false); // Prevent Serilog from disposing the console
+            builder.SetMinimumLevel(minimumLevel);
+            
+            // Console logging with clean formatter
+            builder.AddConsoleFormatter<CleanConsoleFormatter, Microsoft.Extensions.Logging.Console.SimpleConsoleFormatterOptions>();
+            builder.AddConsole(options =>
+            {
+                options.FormatterName = "clean";
+            });
+            
+            // File logging if path provided
+            if (!string.IsNullOrEmpty(logFilePath))
+            {
+                builder.Services.AddSingleton<ILoggerProvider>(provider => 
+                    new FileLoggerProvider(logFilePath, minimumLevel));
+            }
         });
 
         // Add core services
