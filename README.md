@@ -24,6 +24,10 @@ The Microsoft Agent 365 DevTools CLI can be used through the developer journey o
 - **query-entra**: Query Microsoft Entra ID for agent information (scopes, permissions, consent status)
 - **cleanup**: Clean up ALL resources (blueprint, instance, other Azure resources)
 
+## Survey
+
+Please help improve the Microsoft Agent 365 SDK and CLI by taking our survey: [Agent365 SDK Integration Feedback Survey](https://forms.office.com/r/wj0edu361y)
+
 ## Current Project State
 
 This project is currently in active development. The CLI is being actively developed and improved based on community feedback.
