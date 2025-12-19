@@ -25,7 +25,7 @@ class Program
         // Check if verbose flag is present to adjust logging level
         var isVerbose = args.Contains("--verbose") || args.Contains("-v");
         var logLevel = isVerbose ? LogLevel.Debug : LogLevel.Information;
-        
+
         // Configure Microsoft.Extensions.Logging with clean console formatter
         var loggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory(logLevel);
         var startupLogger = loggerFactory.CreateLogger("Program");
@@ -39,7 +39,7 @@ class Program
             startupLogger.LogDebug("Log file: {LogFile}", logFilePath);
             startupLogger.LogDebug("Started at: {Time}", DateTime.Now);
             startupLogger.LogDebug("==========================================================");
-            
+
             // Log version information
             var version = GetDisplayVersion();
 
@@ -72,12 +72,13 @@ class Program
             var graphApiService = serviceProvider.GetRequiredService<GraphApiService>();
             var webAppCreator = serviceProvider.GetRequiredService<AzureWebAppCreator>();
             var platformDetector = serviceProvider.GetRequiredService<PlatformDetector>();
+            var processService = serviceProvider.GetRequiredService<IProcessService>();
             var clientAppValidator = serviceProvider.GetRequiredService<IClientAppValidator>();
 
             // Add commands
-            rootCommand.AddCommand(DevelopCommand.CreateCommand(developLogger, configService, executor, authService, graphApiService));
+            rootCommand.AddCommand(DevelopCommand.CreateCommand(developLogger, configService, executor, authService, graphApiService, processService));
             rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService));
-            rootCommand.AddCommand(SetupCommand.CreateCommand(setupLogger, configService, executor, 
+            rootCommand.AddCommand(SetupCommand.CreateCommand(setupLogger, configService, executor,
                 deploymentService, botConfigurator, azureValidator, webAppCreator, platformDetector, graphApiService, clientAppValidator));
             rootCommand.AddCommand(CreateInstanceCommand.CreateCommand(createInstanceLogger, configService, executor,
                 botConfigurator, graphApiService, azureValidator));
@@ -133,18 +134,18 @@ class Program
         {
             builder.ClearProviders();
             builder.SetMinimumLevel(minimumLevel);
-            
+
             // Console logging with clean formatter
             builder.AddConsoleFormatter<CleanConsoleFormatter, Microsoft.Extensions.Logging.Console.SimpleConsoleFormatterOptions>();
             builder.AddConsole(options =>
             {
                 options.FormatterName = "clean";
             });
-            
+
             // File logging if path provided
             if (!string.IsNullOrEmpty(logFilePath))
             {
-                builder.Services.AddSingleton<ILoggerProvider>(provider => 
+                builder.Services.AddSingleton<ILoggerProvider>(provider =>
                     new FileLoggerProvider(logFilePath, minimumLevel));
             }
         });
@@ -154,17 +155,17 @@ class Program
         services.AddSingleton<CommandExecutor>();
         services.AddSingleton<AuthenticationService>();
         services.AddSingleton<IClientAppValidator, ClientAppValidator>();
-        
+
         // Add Microsoft Agent 365 Tooling Service with environment detection
         services.AddSingleton<IAgent365ToolingService>(provider =>
         {
             var configService = provider.GetRequiredService<IConfigService>();
             var authService = provider.GetRequiredService<AuthenticationService>();
             var logger = provider.GetRequiredService<ILogger<Agent365ToolingService>>();
-            
+
             // Determine environment: try to load from config if --config option is provided, otherwise default to prod
             string environment = "prod"; // Default
-            
+
             // Check if --config argument was provided (for internal developers)
             var args = Environment.GetCommandLineArgs();
             var configIndex = Array.FindIndex(args, arg => arg == "--config" || arg == "-c");
@@ -182,17 +183,17 @@ class Program
                     // This is fine - the service will work with default environment
                 }
             }
-            
+
             return new Agent365ToolingService(configService, authService, logger, environment);
         });
-        
+
         // Add Azure validators (individual validators for composition)
         services.AddSingleton<AzureAuthValidator>();
         services.AddSingleton<IAzureEnvironmentValidator, AzureEnvironmentValidator>();
-        
+
         // Add unified Azure validator
         services.AddSingleton<IAzureValidator, AzureValidator>();
-        
+
         // Add multi-platform deployment services
         services.AddSingleton<PlatformDetector>();
         services.AddSingleton<DeploymentService>();
@@ -206,10 +207,13 @@ class Program
         services.AddSingleton<GraphApiService>();
         services.AddSingleton<DelegatedConsentService>(); // For AgentApplication.Create permission
         services.AddSingleton<ManifestTemplateService>(); // For publish command template extraction
-        
+
         // Register AzureWebAppCreator for SDK-based web app creation
         services.AddSingleton<AzureWebAppCreator>();
-        
+
+        // Register ProcessService for cross-platform process launching
+        services.AddSingleton<IProcessService, ProcessService>();
+
         // Register Azure CLI service and Configuration Wizard
         services.AddSingleton<IAzureCliService, AzureCliService>();
         services.AddSingleton<IConfigurationWizardService, ConfigurationWizardService>();
@@ -236,7 +240,7 @@ class Program
         // First non-option argument is typically the command
         // Skip arguments starting with - or --
         var command = args.FirstOrDefault(arg => !arg.StartsWith("-"));
-        
+
         if (string.IsNullOrWhiteSpace(command))
             return "default";
 

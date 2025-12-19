@@ -21,11 +21,12 @@ public static class DevelopCommand
     /// Creates the develop command with subcommands for MCP tool server management
     /// </summary>
     public static Command CreateCommand(
-        ILogger logger, 
-        IConfigService configService, 
-        CommandExecutor commandExecutor, 
+        ILogger logger,
+        IConfigService configService,
+        CommandExecutor commandExecutor,
         AuthenticationService authService,
-        GraphApiService graphApiService)
+        GraphApiService graphApiService,
+        IProcessService processService)
     {
         var developCommand = new Command("develop", "Manage MCP tool servers for agent development");
 
@@ -47,10 +48,13 @@ public static class DevelopCommand
         developCommand.AddCommand(CreateListConfiguredSubcommand(logger, configService, commandExecutor));
         developCommand.AddCommand(CreateAddMcpServersSubcommand(logger, configService, authService, commandExecutor));
         developCommand.AddCommand(CreateRemoveMcpServersSubcommand(logger, configService, commandExecutor));
-        
+
         // Add new MCP authentication subcommands
         developCommand.AddCommand(GetTokenSubcommand.CreateCommand(logger, configService, authService));
         developCommand.AddCommand(AddPermissionsSubcommand.CreateCommand(logger, configService, graphApiService));
+
+        // Start Mock Tooling Server subcommand
+        developCommand.AddCommand(MockToolingServerSubcommand.CreateCommand(logger, processService));
 
         return developCommand;
     }
@@ -131,10 +135,10 @@ public static class DevelopCommand
             if (!skipAuth)
             {
                 logger.LogInformation("Getting authentication token...");
-                
+
                 // Determine the audience (App ID) based on the environment
                 var audience = ConfigConstants.GetAgent365ToolsResourceAppId(config.Environment);
-                
+
                 logger.LogInformation("Environment: {Environment}, Audience: {Audience}", config.Environment, audience);
 
                 authToken = await authService.GetAccessTokenAsync(audience);
@@ -170,7 +174,7 @@ public static class DevelopCommand
             var responseContent = await response.Content.ReadAsStringAsync();
 
             logger.LogInformation("Successfully received response from discoverToolServers endpoint");
-            
+
             // Parse and display the MCP servers
             using var responseDoc = JsonDocument.Parse(responseContent);
             var responseRoot = responseDoc.RootElement;
@@ -516,10 +520,10 @@ public static class DevelopCommand
                 }
 
                 var (updatedServers, addedCount, updatedCount) = UpsertMcpServersInManifest(
-                    existingServers, 
-                    existingServerNames, 
-                    servers, 
-                    catalog, 
+                    existingServers,
+                    existingServerNames,
+                    servers,
+                    catalog,
                     logger);
 
                 if (addedCount == 0 && updatedCount == 0)
@@ -735,7 +739,7 @@ public static class DevelopCommand
         // Process existing servers first (for upsert behavior)
         foreach (var existingServer in existingServers)
         {
-            if (existingServer is Dictionary<string, object> serverDict && 
+            if (existingServer is Dictionary<string, object> serverDict &&
                 serverDict.TryGetValue("mcpServerName", out var nameObj) &&
                 nameObj is string existingServerName)
             {
