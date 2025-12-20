@@ -17,7 +17,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 internal static class SetupHelpers
 {
     /// <summary>
-    /// Display verification URLs and next steps after successful setup
+    /// Display verification URLs after successful setup
     /// </summary>
     public static async Task DisplayVerificationInfoAsync(FileInfo setupConfigFile, ILogger logger)
     {
@@ -38,7 +38,7 @@ internal static class SetupHelpers
             var root = doc.RootElement;
 
             logger.LogInformation("");
-            logger.LogInformation("Verification URLs and Next Steps:");
+            logger.LogInformation("Verification URLs:");
             logger.LogInformation("==========================================");
 
             // Azure Web App URL
@@ -63,14 +63,6 @@ internal static class SetupHelpers
                 logger.LogInformation("Entra ID Application: https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/Overview/appId/{AppId}",
                     blueprintProp.GetString());
             }
-
-            logger.LogInformation("");
-            logger.LogInformation("Next Steps:");
-            logger.LogInformation("   1. Review Azure resources in the portal");
-            logger.LogInformation("   2. View configuration: a365 config display");
-            logger.LogInformation("   3. Create agent instance: a365 create-instance identity");
-            logger.LogInformation("   4. Deploy application: a365 deploy app");
-            logger.LogInformation("");
         }
         catch (Exception ex)
         {
