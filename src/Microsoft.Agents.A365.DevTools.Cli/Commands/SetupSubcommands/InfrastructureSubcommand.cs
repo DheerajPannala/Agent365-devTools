@@ -141,7 +141,7 @@ public static class InfrastructureSubcommand
                 if (!string.IsNullOrWhiteSpace(dryRunConfig.DeploymentProjectPath))
                 {
                     var detectedPlatform = platformDetector.Detect(dryRunConfig.DeploymentProjectPath);
-                    var detectedRuntime = GetRuntimeForPlatform(detectedPlatform);
+                    var detectedRuntime = GetRuntimeForPlatform(detectedPlatform, dryRunConfig.DeploymentProjectPath, executor, logger);
                     logger.LogInformation("  - Detected Platform: {Platform}", detectedPlatform);
                     logger.LogInformation("  - Runtime: {Runtime}", detectedRuntime);
                 }
@@ -301,6 +301,7 @@ public static class InfrastructureSubcommand
             planSku,
             webAppName,
             generatedConfigPath,
+            deploymentProjectPath,
             platform,
             logger,
             needDeployment,
@@ -411,6 +412,7 @@ public static class InfrastructureSubcommand
         string? planSku,
         string webAppName,
         string generatedConfigPath,
+        string deploymentProjectPath,
         Models.ProjectPlatform platform,
         ILogger logger,
         bool needDeployment,
@@ -496,7 +498,7 @@ public static class InfrastructureSubcommand
             var webShow = await executor.ExecuteAsync("az", $"webapp show -g {resourceGroup} -n {webAppName} --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
             if (!webShow.Success)
             {
-                var runtime = GetRuntimeForPlatform(platform);
+                var runtime = GetRuntimeForPlatform(platform, deploymentProjectPath, executor, logger);
                 logger.LogInformation("Creating web app {App} with runtime {Runtime}", webAppName, runtime);
                 var createResult = await executor.ExecuteAsync("az", $"webapp create -g {resourceGroup} -p {planName} -n {webAppName} --runtime \"{runtime}\" --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
                 if (!createResult.Success)
@@ -552,7 +554,7 @@ public static class InfrastructureSubcommand
             }
             else
             {
-                var linuxFxVersion = GetLinuxFxVersionForPlatform(platform);
+                var linuxFxVersion = GetLinuxFxVersionForPlatform(platform, deploymentProjectPath, executor, logger);
                 logger.LogInformation("Web app already exists: {App} (skipping creation)", webAppName);
                 logger.LogInformation("Configuring web app to use {Platform} runtime ({LinuxFxVersion})...", platform, linuxFxVersion);
                 await AzWarnAsync(executor, logger, $"webapp config set -g {resourceGroup} -n {webAppName} --linux-fx-version \"{linuxFxVersion}\" --subscription {subscriptionId}", "Configure runtime");
@@ -818,8 +820,14 @@ public static class InfrastructureSubcommand
     /// Get the Azure Web App runtime string based on the detected platform
     /// (from A365SetupRunner GetRuntimeForPlatform method)
     /// </summary>
-    private static string GetRuntimeForPlatform(Models.ProjectPlatform platform)
+    private static string GetRuntimeForPlatform(Models.ProjectPlatform platform, string? deploymentProjectPath, CommandExecutor executor, ILogger logger)
     {
+        var dotnetVersion = ResolveDotNetRuntimeVersion(platform, deploymentProjectPath, executor, logger);
+        if (!string.IsNullOrWhiteSpace(dotnetVersion))
+        {
+            return $"DOTNETCORE:{dotnetVersion}";
+        }
+
         return platform switch
         {
             Models.ProjectPlatform.Python => "PYTHON:3.11",
@@ -833,8 +841,14 @@ public static class InfrastructureSubcommand
     /// Get the Azure Web App Linux FX Version string based on the detected platform
     /// (from A365SetupRunner GetLinuxFxVersionForPlatform method)
     /// </summary>
-    private static string GetLinuxFxVersionForPlatform(Models.ProjectPlatform platform)
+    private static string GetLinuxFxVersionForPlatform(Models.ProjectPlatform platform, string? deploymentProjectPath, CommandExecutor executor, ILogger logger)
     {
+        var dotnetVersion = ResolveDotNetRuntimeVersion(platform, deploymentProjectPath, executor, logger);
+        if (!string.IsNullOrWhiteSpace(dotnetVersion))
+        {
+            return $"DOTNETCORE:{dotnetVersion}";
+        }
+
         return platform switch
         {
             Models.ProjectPlatform.Python => "PYTHON|3.11",
@@ -842,6 +856,51 @@ public static class InfrastructureSubcommand
             Models.ProjectPlatform.DotNet => "DOTNETCORE|8.0",
             _ => "DOTNETCORE|8.0" // Default fallback
         };
+    }
+
+    private static string? ResolveDotNetRuntimeVersion(
+        Models.ProjectPlatform platform,
+        string? deploymentProjectPath,
+        CommandExecutor executor,
+        ILogger logger)
+    {
+        if (platform != Models.ProjectPlatform.DotNet ||
+            string.IsNullOrWhiteSpace(deploymentProjectPath))
+        {
+            return null;
+        }
+
+        var csproj = Directory
+            .GetFiles(deploymentProjectPath, "*.csproj", SearchOption.TopDirectoryOnly)
+            .FirstOrDefault();
+        if (csproj == null)
+        {
+            logger.LogWarning("No .csproj file found in deploymentProjectPath: {Path}", deploymentProjectPath);
+            return null;
+        }
+
+        var version = DotNetProjectHelper.DetectTargetRuntimeVersion(csproj, logger);
+        if (string.IsNullOrWhiteSpace(version))
+        {
+            logger.LogWarning("Unable to detect TargetFramework version from {Project}", csproj);
+            return null;
+        }
+
+        // Validate local SDK
+        var sdkResult = executor.ExecuteAsync("dotnet", "--version", captureOutput: true).GetAwaiter().GetResult();
+        var installedVersion = sdkResult.Success ? sdkResult.StandardOutput.Trim() : null;
+
+        if (!sdkResult.Success || 
+            string.IsNullOrWhiteSpace(installedVersion) ||
+            !installedVersion.StartsWith(version, StringComparison.Ordinal))
+        {
+            throw new DotNetSdkVersionMismatchException(
+                requiredVersion: version,
+                installedVersion: installedVersion,
+                projectFilePath: csproj);
+        }
+
+        return version; // e.g. "8.0", "9.0"
     }
 
     private static string Short(string? text)
