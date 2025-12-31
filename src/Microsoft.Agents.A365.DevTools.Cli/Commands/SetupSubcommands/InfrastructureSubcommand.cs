@@ -687,7 +687,8 @@ public static class InfrastructureSubcommand
             else if (result.StandardError.Contains("AuthorizationFailed", StringComparison.OrdinalIgnoreCase))
             {
                 var exception = new AzureResourceException(description, string.Empty, result.StandardError, true);
-                ExceptionHandler.HandleAgent365Exception(exception);
+                var logFilePath = ConfigService.GetCommandLogPath(CommandNames.Setup);
+                ExceptionHandler.HandleAgent365Exception(exception, logFilePath: logFilePath);
             }
             else
             {
