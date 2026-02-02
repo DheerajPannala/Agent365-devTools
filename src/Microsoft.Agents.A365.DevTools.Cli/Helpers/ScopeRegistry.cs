@@ -56,7 +56,6 @@ public static class ScopeRegistry
     /// - ResourceAppId: The resolved resource App ID (null if validation failed)
     /// - ResourceName: The resolved resource display name (null if validation failed)
     /// - UnrecognizedScopes: List of scopes that were not found in the registry
-    /// - ConflictingResources: Dictionary of resources and their scopes if multi-resource conflict detected
     /// </returns>
     public static ScopeValidationResult ValidateScopes(string[] scopes, string environment = "prod")
     {
