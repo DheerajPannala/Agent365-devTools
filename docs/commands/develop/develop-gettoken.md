@@ -111,26 +111,12 @@ curl -H "Authorization: Bearer $TOKEN" https://agent365.svc.cloud.microsoft/agen
 
 ## Scope Validation
 
-When you specify scopes with the `--scopes` flag, the CLI validates them against its internal registry before attempting authentication. This prevents cryptic authentication errors when a scope name is mistyped or unrecognized.
+When you specify scopes with the `--scopes` flag, the CLI validates them against its internal registry before attempting authentication.
 
 ### Validation Behavior
 
 - **--scopes flag**: Scopes are validated. Unrecognized scopes cause an error with a clear message.
 - **Manifest scopes**: Scopes read from `ToolingManifest.json` are not validated (assumed to be correct).
-
-### Valid Scope Names
-
-The following MCP server scopes are recognized:
-
-- `McpServers.Mail.All`
-- `McpServers.Calendar.All`
-- `McpServers.Teams.All`
-- `McpServers.Me.All`
-- `McpServers.SharepointLists.All`
-- `McpServers.OneDriveSharepoint.All`
-- `McpServers.Admin365.All`
-
-> **Note**: Scope names are case-insensitive (`mcpservers.mail.all` works the same as `McpServers.Mail.All`).
 
 ### Error Messages
 
@@ -141,8 +127,6 @@ ERROR: Scope 'InvalidScope.Name' is not recognized.
 
 Please double-check the scope name.
 ```
-
-This is more helpful than the cryptic WAM authentication errors that would otherwise occur.
 
 ## Token Storage for Development
 
@@ -167,30 +151,20 @@ When running `a365 develop get-token` with `--app-id` (no config file), the toke
 
 ## Troubleshooting
 
-### Scope Not Recognized
+### Scope(s) Not Recognized
 
 **Error**:
 ```
 ERROR: Scope 'SomeScopeName' is not recognized.
+ERROR: The following scopes are not recognized: Scope1, Scope2
 ```
 
 **Cause**: The scope name you provided is not in the CLI's registry of known scopes.
 
 **Solution**:
 1. Check for typos in the scope name
-2. Verify the scope is one of the supported MCP scopes (see [Valid Scope Names](#valid-scope-names))
+2. Verify the scope is one of the supported MCP scopes
 3. Scope names are case-insensitive, so capitalization is not the issue
-
-### Multiple Scopes Not Recognized
-
-**Error**:
-```
-ERROR: The following scopes are not recognized: Scope1, Scope2
-```
-
-**Cause**: Multiple scopes provided via `--scopes` are not in the registry.
-
-**Solution**: Correct all unrecognized scope names before retrying.
 
 ### WAM Authentication Errors
 
