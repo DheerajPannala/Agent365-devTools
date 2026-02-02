@@ -100,17 +100,30 @@ internal static class GetTokenSubcommand
                 }
 
                 // Determine manifest path
-                var manifestPath = manifest?.FullName 
+                var manifestPath = manifest?.FullName
                     ?? Path.Combine(setupConfig?.DeploymentProjectPath ?? Environment.CurrentDirectory, "ToolingManifest.json");
 
                 // Determine which scopes to request
                 string[] requestedScopes;
-                
+                var environment = setupConfig?.Environment ?? "prod";
+
                 if (scopes != null && scopes.Length > 0)
                 {
-                    // User provided explicit scopes
+                    // User provided explicit scopes - validate them
                     requestedScopes = scopes;
                     logger.LogInformation("Using user-specified scopes: {Scopes}", string.Join(", ", requestedScopes));
+
+                    // Validate user-provided scopes
+                    var validationResult = ScopeRegistry.ValidateScopes(requestedScopes, environment);
+                    if (!validationResult.IsValid)
+                    {
+                        logger.LogError("{ErrorMessage}", validationResult.ErrorMessage);
+                        logger.LogInformation("");
+                        logger.LogInformation("Please double-check the scope name.");
+                        logger.LogInformation("For the full list of available scopes, see: {Url}", ConfigConstants.Agent365CliDocumentationUrl);
+                        Environment.Exit(1);
+                        return;
+                    }
                 }
                 else
                 {
@@ -140,25 +153,27 @@ internal static class GetTokenSubcommand
                         return;
                     }
 
-                    logger.LogInformation("Collected {Count} unique scope(s) from manifest: {Scopes}", 
+                    logger.LogInformation("Collected {Count} unique scope(s) from manifest: {Scopes}",
                         requestedScopes.Length, string.Join(", ", requestedScopes));
                 }
 
                 logger.LogInformation("");
 
-                // Get the Agent 365 Tools resource App ID for the environment
-                var environment = setupConfig?.Environment ?? "prod";
-                var resourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(environment);
-                logger.LogInformation("Agent 365 Tools Resource App ID: {AppId}", resourceAppId);
+                // Resolve resource from the first scope
+                var (resourceAppId, resourceName) = ScopeRegistry.TryGetResource(requestedScopes[0], environment);
+                resourceAppId ??= ConfigConstants.GetAgent365ToolsResourceAppId(environment);
+                resourceName ??= "Agent 365 Tools";
+
+                logger.LogInformation("{ResourceName} Resource App ID: {AppId}", resourceName, resourceAppId);
                 logger.LogInformation("Requesting scopes: {Scopes}", string.Join(", ", requestedScopes));
                 logger.LogInformation("");
 
                 // Acquire token with explicit scopes
                 logger.LogInformation("Acquiring access token with explicit scopes...");
-                
+
                 // Determine tenant ID (from config or detect from Azure CLI)
                 string? tenantId = await TenantDetectionHelper.DetectTenantIdAsync(setupConfig, logger);
-                
+
                 try
                 {
                     // Determine which client app to use for authentication
@@ -179,9 +194,9 @@ internal static class GetTokenSubcommand
                     {
                         throw new InvalidOperationException("No client application ID specified. Use --app-id or ensure ClientAppId is set in config.");
                     }
-                    
+
                     logger.LogInformation("");
-                    
+
                     // Use GetAccessTokenWithScopesAsync for explicit scope control
                     var token = await authService.GetAccessTokenWithScopesAsync(
                         resourceAppId,
@@ -198,7 +213,7 @@ internal static class GetTokenSubcommand
                         return;
                     }
 
-                logger.LogInformation("[SUCCESS] Token acquired successfully with scopes: {Scopes}", 
+                logger.LogInformation("[SUCCESS] Token acquired successfully with scopes: {Scopes}",
                     string.Join(", ", requestedScopes));
                 logger.LogInformation("");
 
@@ -337,8 +352,8 @@ internal static class GetTokenSubcommand
             cacheFilePath = r.CacheFilePath
         });
 
-        var json = JsonSerializer.Serialize(output, new JsonSerializerOptions 
-        { 
+        var json = JsonSerializer.Serialize(output, new JsonSerializerOptions
+        {
             WriteIndented = true,
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase
         });
@@ -360,10 +375,10 @@ internal static class GetTokenSubcommand
                     Console.Error.WriteLine($"# Scope: {result.Scope}");
                     Console.Error.WriteLine($"# Audience: {result.Audience}");
                 }
-                
+
                 // Write token to stdout for piping to other tools
                 Console.WriteLine(result.Token);
-                
+
                 if (verbose)
                 {
                     Console.Error.WriteLine();
