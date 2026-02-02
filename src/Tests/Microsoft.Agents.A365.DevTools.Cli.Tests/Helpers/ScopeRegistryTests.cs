@@ -26,7 +26,7 @@ public class ScopeRegistryTests
 
         // Assert
         resourceAppId.Should().NotBeNull();
-        resourceAppId.Should().Be(McpConstants.Agent365ToolsProdAppId);
+        resourceAppId.Should().Be(ConfigConstants.GetAgent365ToolsResourceAppId("prod"));
         resourceName.Should().Be("Agent 365 Tools");
     }
 
@@ -41,7 +41,7 @@ public class ScopeRegistryTests
 
         // Assert
         resourceAppId.Should().NotBeNull();
-        resourceAppId.Should().Be(McpConstants.Agent365ToolsProdAppId);
+        resourceAppId.Should().Be(ConfigConstants.GetAgent365ToolsResourceAppId("prod"));
         resourceName.Should().Be("Agent 365 Tools");
     }
 
@@ -56,7 +56,7 @@ public class ScopeRegistryTests
 
         // Assert
         resourceAppId.Should().NotBeNull();
-        resourceAppId.Should().Be(McpConstants.Agent365ToolsProdAppId);
+        resourceAppId.Should().Be(ConfigConstants.GetAgent365ToolsResourceAppId("prod"));
         resourceName.Should().Be("Agent 365 Tools");
     }
 
@@ -125,7 +125,7 @@ public class ScopeRegistryTests
 
         // Assert
         resourceAppId.Should().NotBeNull();
-        resourceAppId.Should().Be(McpConstants.Agent365ToolsProdAppId);
+        resourceAppId.Should().Be(ConfigConstants.GetAgent365ToolsResourceAppId("prod"));
         resourceName.Should().Be("Agent 365 Tools");
     }
 
@@ -139,7 +139,7 @@ public class ScopeRegistryTests
         var (resourceAppId, _) = ScopeRegistry.TryGetResource(validScope, "prod");
 
         // Assert
-        resourceAppId.Should().Be(McpConstants.Agent365ToolsProdAppId);
+        resourceAppId.Should().Be(ConfigConstants.GetAgent365ToolsResourceAppId("prod"));
     }
 
     #endregion
@@ -157,7 +157,7 @@ public class ScopeRegistryTests
 
         // Assert
         result.IsValid.Should().BeTrue();
-        result.ResourceAppId.Should().Be(McpConstants.Agent365ToolsProdAppId);
+        result.ResourceAppId.Should().Be(ConfigConstants.GetAgent365ToolsResourceAppId("prod"));
         result.ResourceName.Should().Be("Agent 365 Tools");
         result.UnrecognizedScopes.Should().BeNull();
         result.ErrorMessage.Should().BeNull();
@@ -174,7 +174,7 @@ public class ScopeRegistryTests
 
         // Assert
         result.IsValid.Should().BeTrue();
-        result.ResourceAppId.Should().Be(McpConstants.Agent365ToolsProdAppId);
+        result.ResourceAppId.Should().Be(ConfigConstants.GetAgent365ToolsResourceAppId("prod"));
         result.ResourceName.Should().Be("Agent 365 Tools");
         result.UnrecognizedScopes.Should().BeNull();
         result.ErrorMessage.Should().BeNull();
@@ -269,7 +269,7 @@ public class ScopeRegistryTests
 
         // Assert
         result.IsValid.Should().BeTrue();
-        result.ResourceAppId.Should().Be(McpConstants.Agent365ToolsProdAppId);
+        result.ResourceAppId.Should().Be(ConfigConstants.GetAgent365ToolsResourceAppId("prod"));
     }
 
     [Theory]
