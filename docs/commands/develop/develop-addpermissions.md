@@ -2,7 +2,12 @@
 
 ## Overview
 
-The `a365 develop add-permissions` command adds MCP (Model Context Protocol) server API permissions to Azure AD applications. This command is designed for **development scenarios** where you need to configure custom applications (not agent blueprints) to access MCP servers.
+The `a365 develop add-permissions` command adds API permissions to Azure AD applications. This command supports:
+
+- **MCP (Model Context Protocol) server permissions** - Default resource for Agent365 Tools
+- **Power Platform API permissions** - For CopilotStudio and other Power Platform services
+
+This command is designed for **development scenarios** where you need to configure custom applications (not agent blueprints) to access various APIs.
 
 ## Usage
 
@@ -15,9 +20,10 @@ a365 develop add-permissions [options]
 | Option | Alias | Description | Default |
 |--------|-------|-------------|---------|
 | `--config` | `-c` | Configuration file path | `a365.config.json` |
-| `--manifest` | `-m` | Path to ToolingManifest.json | `<deploymentProjectPath>/ToolingManifest.json` |
+| `--manifest` | `-m` | Path to ToolingManifest.json (for mcp resource) | `<deploymentProjectPath>/ToolingManifest.json` |
 | `--app-id` | | Application (client) ID to add permissions to | `clientAppId` from config |
-| `--scopes` | | Specific scopes to add (space-separated) | All scopes from ToolingManifest.json |
+| `--resource` | `-r` | Target resource API: 'mcp' (default), 'powerplatform' | `mcp` |
+| `--scopes` | | Specific scopes to add (space-separated) | All scopes from ToolingManifest.json (mcp) or required (powerplatform) |
 | `--verbose` | `-v` | Show detailed output | `false` |
 | `--dry-run` | | Show what would be done without making changes | `false` |
 
@@ -29,7 +35,8 @@ a365 develop add-permissions [options]
 - Third-party integrations calling MCP servers
 
 ### NOT for Agent Blueprints
-- Use `a365 setup permissions mcp` for agent blueprint setup
+- Use `a365 setup permissions mcp` for agent blueprint MCP setup
+- Use `a365 setup permissions copilotstudio` for agent blueprint Power Platform setup
 
 ## Understanding the Application ID
 
@@ -50,7 +57,7 @@ The application you're adding permissions to can be the **same application** you
 ## Prerequisites
 
 1. **Azure CLI Authentication**: `az login` with appropriate permissions
-2. **Client Application**: 
+2. **Client Application**:
    - Must exist in Azure AD
    - Must have `Application.ReadWrite.All` permission (to modify app registrations)
    - Can be configured in `a365.config.json` as `clientAppId` OR provided via `--app-id`
@@ -96,6 +103,12 @@ a365 develop add-permissions --app-id 87654321-4321-4321-4321-210987654321
 a365 develop add-permissions --scopes McpServers.Mail.All McpServers.Calendar.All
 ```
 
+### Add permissions from different resources
+```bash
+# Add CopilotStudio.Copilots.Invoke permission to the app in config
+a365 develop add-permissions --resource powerplatform --scopes CopilotStudio.Copilots.Invoke
+```
+
 ### Combine options with dry-run
 ```bash
 # Preview changes to a specific app with specific scopes
@@ -107,3 +120,19 @@ a365 develop add-permissions --app-id 12345678-1234-1234-1234-123456789abc --sco
 # When no config exists, you must provide --app-id
 a365 develop add-permissions --app-id 12345678-1234-1234-1234-123456789abc --scopes McpServers.Mail.All
 ```
+
+## Resource Types
+
+### MCP Resource (Default)
+- **Resource Key**: `mcp` (default)
+- **Target**: Agent 365 Tools API
+- **Scope Source**: ToolingManifest.json or explicit `--scopes`
+- **Example Scopes**: `McpServers.Mail.All`, `McpServers.Calendar.All`
+
+### Power Platform Resource
+- **Resource Key**: `powerplatform`
+- **Target**: Power Platform API (`8578e004-a5c6-46e7-913e-12f58912df43`)
+- **Scope Source**: **Required** explicit `--scopes` (no defaults)
+- **Example Scopes**: `CopilotStudio.Copilots.Invoke`
+
+**Note**: When using `--resource powerplatform`, the `--scopes` option is required. The command will not default to any scope and will show an error if scopes are not explicitly provided.

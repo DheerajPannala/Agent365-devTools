@@ -10,7 +10,7 @@ using System.CommandLine;
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands.DevelopSubcommands;
 
 /// <summary>
-/// AddPermissions subcommand - Adds MCP server API permissions to a custom application
+/// AddPermissions subcommand - Adds API permissions to a custom application
 /// </summary>
 internal static class AddPermissionsSubcommand
 {
@@ -22,7 +22,7 @@ internal static class AddPermissionsSubcommand
     {
         var command = new Command(
             "add-permissions",
-            "Add MCP server API permissions to a custom application");
+            "Add API permissions to a custom application");
 
         var configOption = new Option<FileInfo>(
             ["--config", "-c"],
@@ -51,6 +51,11 @@ internal static class AddPermissionsSubcommand
             ["--verbose", "-v"],
             description: "Show detailed output");
 
+        var resourceOption = new Option<string>(
+            ["--resource", "-r"],
+            getDefaultValue: () => "mcp",
+            description: "Target resource API: 'mcp' (default), 'powerplatform'");
+
         var dryRunOption = new Option<bool>(
             ["--dry-run"],
             description: "Show what would be done without executing");
@@ -59,30 +64,33 @@ internal static class AddPermissionsSubcommand
         command.AddOption(manifestOption);
         command.AddOption(appIdOption);
         command.AddOption(scopesOption);
+        command.AddOption(resourceOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (config, manifest, appId, scopes, verbose, dryRun) =>
+        command.SetHandler(async (config, manifest, appId, scopes, resource, verbose, dryRun) =>
         {
             try
             {
-                logger.LogInformation("Adding MCP server permissions to application...");
+                logger.LogInformation("Adding API permissions to application...");
                 logger.LogInformation("");
 
                 // Check if config file exists or if --app-id was provided
-                var setupConfig = File.Exists(config.FullName) 
-                    ? await configService.LoadAsync(config.FullName) 
+                var setupConfig = File.Exists(config.FullName)
+                    ? await configService.LoadAsync(config.FullName)
                     : null;
 
                 if (setupConfig == null && string.IsNullOrWhiteSpace(appId))
                 {
                     logger.LogError("Configuration file not found: {ConfigPath}", config.FullName);
                     logger.LogInformation("");
-                    logger.LogInformation("To add MCP server permissions, you must either:");
+                    logger.LogInformation("To add API permissions, you must either:");
                     logger.LogInformation("  1. Create a config file using: a365 config init");
-                    logger.LogInformation("  2. Specify the application ID using: a365 develop addpermissions --app-id <your-app-id>");
+                    logger.LogInformation("  2. Specify the application ID using: a365 develop add-permissions --app-id <your-app-id>");
                     logger.LogInformation("");
-                    logger.LogInformation("Example: a365 develop addpermissions --app-id 12345678-1234-1234-1234-123456789abc --scopes McpServers.Mail.All");
+                    logger.LogInformation("Examples:");
+                    logger.LogInformation("  a365 develop add-permissions --app-id 12345678-1234-1234-1234-123456789abc --scopes McpServers.Mail.All");
+                    logger.LogInformation("  a365 develop add-permissions --app-id 12345678-1234-1234-1234-123456789abc --resource powerplatform --scopes CopilotStudio.Copilots.Invoke");
                     Environment.Exit(1);
                     return;
                 }
@@ -103,18 +111,18 @@ internal static class AddPermissionsSubcommand
                 {
                     logger.LogError("No application ID specified. Use --app-id or ensure ClientAppId is set in config.");
                     logger.LogInformation("");
-                    logger.LogInformation("Example: a365 develop addpermissions --app-id <your-app-id>");
+                    logger.LogInformation("Example: a365 develop add-permissions --app-id <your-app-id>");
                     Environment.Exit(1);
                     return;
                 }
 
                 // Determine manifest path
-                var manifestPath = manifest?.FullName 
+                var manifestPath = manifest?.FullName
                     ?? Path.Combine(setupConfig?.DeploymentProjectPath ?? Environment.CurrentDirectory, "ToolingManifest.json");
 
                 // Determine which scopes to add
                 string[] requestedScopes;
-                
+
                 if (scopes != null && scopes.Length > 0)
                 {
                     // User provided explicit scopes
@@ -124,49 +132,64 @@ internal static class AddPermissionsSubcommand
                 }
                 else
                 {
-                    // Read scopes from ToolingManifest.json
-                    if (!File.Exists(manifestPath))
+                    // Only read scopes from ToolingManifest.json for mcp resource
+                    if (resource.ToLowerInvariant() is "mcp")
                     {
-                        logger.LogError("ToolingManifest.json not found at: {Path}", manifestPath);
+                        // Read scopes from ToolingManifest.json
+                        if (!File.Exists(manifestPath))
+                        {
+                            logger.LogError("ToolingManifest.json not found at: {Path}", manifestPath);
+                            logger.LogInformation("");
+                            logger.LogInformation("Please ensure ToolingManifest.json exists in your project directory");
+                            logger.LogInformation("or specify scopes explicitly with --scopes option.");
+                            logger.LogInformation("");
+                            logger.LogInformation("Example: a365 develop add-permissions --scopes McpServers.Mail.All McpServers.Calendar.All");
+                            Environment.Exit(1);
+                            return;
+                        }
+
+                        logger.LogInformation("Reading MCP server configuration from: {Path}", manifestPath);
+
+                        // Use ManifestHelper to extract scopes (includes fallback to mappings and McpServersMetadata.Read.All)
+                        requestedScopes = await ManifestHelper.GetRequiredScopesAsync(manifestPath);
+
+                        if (requestedScopes.Length == 0)
+                        {
+                            logger.LogError("No scopes found in ToolingManifest.json");
+                            logger.LogInformation("You can specify scopes explicitly with --scopes option.");
+                            Environment.Exit(1);
+                            return;
+                        }
+
+                        logger.LogInformation("Collected {Count} unique scope(s) from manifest: {Scopes}",
+                            requestedScopes.Length, string.Join(", ", requestedScopes));
+                    }
+                    else
+                    {
+                        // For other resources (like powerplatform), scopes are required
+                        logger.LogError("--scopes is required when --resource {resource} is specified.", resource);
                         logger.LogInformation("");
-                        logger.LogInformation("Please ensure ToolingManifest.json exists in your project directory");
-                        logger.LogInformation("or specify scopes explicitly with --scopes option.");
-                        logger.LogInformation("");
-                        logger.LogInformation("Example: a365 develop addpermissions --scopes McpServers.Mail.All McpServers.Calendar.All");
+                        logger.LogInformation("Example: a365 develop add-permissions --resource {resource} --scopes ExampleScope.ReadWrite.All", resource);
                         Environment.Exit(1);
                         return;
                     }
-
-                    logger.LogInformation("Reading MCP server configuration from: {Path}", manifestPath);
-
-                    // Use ManifestHelper to extract scopes (includes fallback to mappings and McpServersMetadata.Read.All)
-                    requestedScopes = await ManifestHelper.GetRequiredScopesAsync(manifestPath);
-
-                    if (requestedScopes.Length == 0)
-                    {
-                        logger.LogError("No scopes found in ToolingManifest.json");
-                        logger.LogInformation("You can specify scopes explicitly with --scopes option.");
-                        Environment.Exit(1);
-                        return;
-                    }
-
-                    logger.LogInformation("Collected {Count} unique scope(s) from manifest: {Scopes}", 
-                        requestedScopes.Length, string.Join(", ", requestedScopes));
                 }
 
                 var environment = setupConfig?.Environment ?? "prod";
-                var resourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(environment);
-                
-                logger.LogInformation("Target resource: Agent 365 Tools ({ResourceAppId})", resourceAppId);
+
+                // Resolve resource configuration based on --resource option
+                var (resourceAppId, resourceName) = GetResourceConfig(resource, environment);
+
+                logger.LogInformation("Target resource: {ResourceName} ({ResourceAppId})", resourceName, resourceAppId);
                 logger.LogInformation("");
 
                 // Dry run mode
                 if (dryRun)
                 {
-                    logger.LogInformation("DRY RUN: Add MCP Server Permissions");
+                    logger.LogInformation("DRY RUN: Add API Permissions");
                     logger.LogInformation("Would add the following permissions to application {AppId}:", targetAppId);
                     logger.LogInformation("");
-                    logger.LogInformation("Resource: {ResourceAppId}", resourceAppId);
+                    logger.LogInformation("Resource: {ResourceName} ({ResourceAppId})", resourceName, resourceAppId);
                     logger.LogInformation("  Scopes: {Scopes}", string.Join(", ", requestedScopes));
                     logger.LogInformation("");
                     logger.LogInformation("No changes made (dry run mode)");
@@ -181,7 +204,7 @@ internal static class AddPermissionsSubcommand
                 string tenantId = await TenantDetectionHelper.DetectTenantIdAsync(setupConfig, logger) ?? string.Empty;
 
                 logger.LogInformation("Processing resource: {ResourceAppId}", resourceAppId);
-                
+
                 bool success;
                 try
                 {
@@ -207,7 +230,7 @@ internal static class AddPermissionsSubcommand
                     logger.LogDebug("    {StackTrace}", ex.StackTrace);
                     success = false;
                 }
-                
+
                 logger.LogInformation("");
 
                 // Summary
@@ -227,11 +250,29 @@ internal static class AddPermissionsSubcommand
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Failed to add MCP server permissions: {Message}", ex.Message);
+                logger.LogError(ex, "Failed to add API permissions: {Message}", ex.Message);
                 Environment.Exit(1);
             }
-        }, configOption, manifestOption, appIdOption, scopesOption, verboseOption, dryRunOption);
+        }, configOption, manifestOption, appIdOption, scopesOption, resourceOption, verboseOption, dryRunOption);
 
         return command;
+    }
+
+    /// <summary>
+    /// Resolves resource configuration based on the resource key and environment
+    /// </summary>
+    /// <param name="resourceKey">Resource identifier (e.g., "agent365tools", "powerplatform")</param>
+    /// <param name="environment">Environment (e.g., "prod", "test")</param>
+    /// <returns>Tuple containing the resource app ID and display name</returns>
+    private static (string AppId, string Name) GetResourceConfig(string resourceKey, string environment)
+    {
+        return resourceKey.ToLowerInvariant() switch
+        {
+            "mcp" =>
+                (ConfigConstants.GetAgent365ToolsResourceAppId(environment), "Agent 365 Tools"),
+            "powerplatform" =>
+                (MosConstants.PowerPlatformApiResourceAppId, "Power Platform API"),
+            _ => throw new ArgumentException($"Unknown resource: {resourceKey}. Valid options are: mcp, powerplatform")
+        };
     }
 }
