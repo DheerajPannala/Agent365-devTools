@@ -89,8 +89,7 @@ internal static class CopilotStudioSubcommand
                 executor,
                 setupConfig,
                 graphApiService,
-                blueprintService,
-                false);
+                blueprintService);
 
         }, configOption, verboseOption, dryRunOption);
 
@@ -109,7 +108,6 @@ internal static class CopilotStudioSubcommand
         Models.Agent365Config setupConfig,
         GraphApiService graphService,
         AgentBlueprintService blueprintService,
-        bool iSetupAll,
         SetupResults? setupResults = null,
         CancellationToken cancellationToken = default)
     {
@@ -141,19 +139,12 @@ internal static class CopilotStudioSubcommand
             logger.LogInformation("");
             logger.LogInformation("CopilotStudio permissions configured successfully");
             logger.LogInformation("");
-            if (!iSetupAll)
-            {
-                logger.LogInformation("Your agent blueprint can now invoke Copilot Studio copilots.");
-            }
+            logger.LogInformation("Your agent blueprint can now invoke Copilot Studio copilots.");
             return true;
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to configure CopilotStudio permissions: {Message}", ex.Message);
-            if (iSetupAll)
-            {
-                throw;
-            }
             return false;
         }
     }
