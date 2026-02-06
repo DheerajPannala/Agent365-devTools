@@ -12,7 +12,9 @@ import logging
 import requests
 from typing import TYPE_CHECKING
 
-# Conditional imports for type hints only (these models don't exist in autoTriage)
+# TODO: These models are placeholders for future daily digest and weekly plan features.
+# The DailyDigestResult and WeeklyPlanResult models do not exist yet.
+# Remove TYPE_CHECKING imports when implementing or remove stub methods if not needed.
 if TYPE_CHECKING:
     from models.daily_digest import DailyDigestResult
     from models.weekly_plan import WeeklyPlanResult
@@ -23,7 +25,8 @@ class TeamsService:
 
     def __init__(self):
         self.webhook_url = os.environ.get("TEAMS_WEBHOOK_URL", "")
-        logging.info(f"TeamsService initialized with webhook URL: {self.webhook_url[:60]}..." if self.webhook_url else "TeamsService: No webhook URL configured")
+        # Note: Do not log webhook URL - it's a secret
+        logging.info("TeamsService initialized" + (" (webhook configured)" if self.webhook_url else " (no webhook configured)"))
 
     def post_adaptive_card(self, card: dict) -> bool:
         """Post an Adaptive Card to Teams."""
@@ -32,7 +35,7 @@ class TeamsService:
             return False
 
         try:
-            logging.info(f"Posting to Teams webhook: {self.webhook_url[:60]}...")
+            logging.info("Posting to Teams webhook...")
             logging.debug(f"Card payload: {json.dumps(card, indent=2)[:500]}...")
             
             response = requests.post(
