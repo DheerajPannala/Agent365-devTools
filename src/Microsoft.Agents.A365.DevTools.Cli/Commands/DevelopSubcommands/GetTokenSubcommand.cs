@@ -255,27 +255,6 @@ internal static class GetTokenSubcommand
     }
 
     /// <summary>
-    /// Resolves a resource keyword to its corresponding resource app ID.
-    /// </summary>
-    /// <param name="keyword">The resource keyword (e.g., "mcp", "powerplatform").</param>
-    /// <param name="environment">The environment to use for MCP resource resolution.</param>
-    /// <returns>A tuple containing the resource app ID and display name, or null if the keyword is unknown.</returns>
-    private static (string resourceAppId, string displayName)? ResolveResourceAppId(string? keyword, string environment)
-    {
-        if (string.IsNullOrWhiteSpace(keyword))
-        {
-            keyword = "mcp"; // Default to MCP if no keyword provided
-        }
-
-        return keyword.ToLowerInvariant() switch
-        {
-            "mcp" => (ConfigConstants.GetAgent365ToolsResourceAppId(environment), "Agent 365 Tools (MCP)"),
-            "powerplatform" => (MosConstants.PowerPlatformApiResourceAppId, "Power Platform API"),
-            _ => null
-        };
-    }
-
-    /// <summary>
     /// Acquires an access token and displays the results.
     /// </summary>
     private static async Task AcquireAndDisplayTokenAsync(
@@ -385,6 +364,27 @@ internal static class GetTokenSubcommand
             logger.LogError("Failed to acquire token: {Message}", ex.Message);
             Environment.Exit(1);
         }
+    }
+
+    /// <summary>
+    /// Resolves a resource keyword to its corresponding resource app ID.
+    /// </summary>
+    /// <param name="keyword">The resource keyword (e.g., "mcp", "powerplatform").</param>
+    /// <param name="environment">The environment to use for MCP resource resolution.</param>
+    /// <returns>A tuple containing the resource app ID and display name, or null if the keyword is unknown.</returns>
+    private static (string resourceAppId, string displayName)? ResolveResourceAppId(string? keyword, string environment)
+    {
+        if (string.IsNullOrWhiteSpace(keyword))
+        {
+            keyword = "mcp"; // Default to MCP if no keyword provided
+        }
+
+        return keyword.ToLowerInvariant() switch
+        {
+            "mcp" => (ConfigConstants.GetAgent365ToolsResourceAppId(environment), "Agent 365 Tools (MCP)"),
+            "powerplatform" => (MosConstants.PowerPlatformApiResourceAppId, "Power Platform API"),
+            _ => null
+        };
     }
 
     private static void DisplayResults(
