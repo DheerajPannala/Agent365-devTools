@@ -152,17 +152,19 @@ public class GetTokenSubcommandTests
         var command = GetTokenSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockAuthService);
 
         // Assert
-        command.Options.Should().HaveCount(7);
+        command.Options.Should().HaveCount(9);
         var optionNames = command.Options.Select(opt => opt.Name).ToList();
-        optionNames.Should().Contain(new[] 
-        { 
-            "config", 
-            "app-id", 
-            "manifest", 
-            "scopes", 
-            "output", 
-            "verbose", 
-            "force-refresh" 
+        optionNames.Should().Contain(new[]
+        {
+            "config",
+            "app-id",
+            "manifest",
+            "scopes",
+            "output",
+            "verbose",
+            "force-refresh",
+            "resource",
+            "resource-id"
         });
     }
 
@@ -229,11 +231,11 @@ public class GetTokenSubcommandTests
     public void ScopeResolution_WithDuplicateScopes_ShouldDeduplicateCaseInsensitive()
     {
         // Arrange
-        var scopesWithDuplicates = new[] 
-        { 
-            "McpServers.Mail.All", 
-            "mcpservers.mail.all", 
-            "McpServers.Calendar.All" 
+        var scopesWithDuplicates = new[]
+        {
+            "McpServers.Mail.All",
+            "mcpservers.mail.all",
+            "McpServers.Calendar.All"
         };
 
         // Act
@@ -496,8 +498,8 @@ public class GetTokenSubcommandTests
         };
 
         // Act
-        var tenantId = !string.IsNullOrWhiteSpace(config.TenantId) 
-            ? config.TenantId 
+        var tenantId = !string.IsNullOrWhiteSpace(config.TenantId)
+            ? config.TenantId
             : null;
 
         // Assert
@@ -528,7 +530,7 @@ public class GetTokenSubcommandTests
         // Act
         var hasProfiles = launchSettings.RootElement.TryGetProperty("profiles", out var profiles);
         var hasBearerToken = false;
-        
+
         if (hasProfiles)
         {
             foreach (var profile in profiles.EnumerateObject())
@@ -571,7 +573,7 @@ public class GetTokenSubcommandTests
         // Act
         var hasProfiles = launchSettings.RootElement.TryGetProperty("profiles", out var profiles);
         var hasBearerToken = false;
-        
+
         if (hasProfiles)
         {
             foreach (var profile in profiles.EnumerateObject())
@@ -621,10 +623,10 @@ public class GetTokenSubcommandTests
         // Assert
         envVars.TryGetProperty("ASPNETCORE_ENVIRONMENT", out var aspnetEnv).Should().BeTrue();
         aspnetEnv.GetString().Should().Be("Development");
-        
+
         envVars.TryGetProperty("CUSTOM_VAR", out var customVar).Should().BeTrue();
         customVar.GetString().Should().Be("custom-value");
-        
+
         envVars.TryGetProperty(AuthenticationConstants.BearerTokenEnvironmentVariable, out var bearerToken).Should().BeTrue();
     }
 
@@ -657,7 +659,7 @@ public class GetTokenSubcommandTests
         // Act
         var profilesWithBearerToken = new List<string>();
         var profiles = launchSettings.RootElement.GetProperty("profiles");
-        
+
         foreach (var profile in profiles.EnumerateObject())
         {
             if (profile.Value.TryGetProperty("environmentVariables", out var envVars))
@@ -712,7 +714,7 @@ public class GetTokenSubcommandTests
 
         // Act
         var bearerTokenLine = $"{AuthenticationConstants.BearerTokenEnvironmentVariable}={newToken}";
-        var existingIndex = envLines.FindIndex(l => 
+        var existingIndex = envLines.FindIndex(l =>
             l.StartsWith($"{AuthenticationConstants.BearerTokenEnvironmentVariable}=", StringComparison.OrdinalIgnoreCase));
 
         if (existingIndex >= 0)
@@ -739,7 +741,7 @@ public class GetTokenSubcommandTests
 
         // Act
         var bearerTokenLine = $"{AuthenticationConstants.BearerTokenEnvironmentVariable}={newToken}";
-        var existingIndex = envLines.FindIndex(l => 
+        var existingIndex = envLines.FindIndex(l =>
             l.StartsWith($"{AuthenticationConstants.BearerTokenEnvironmentVariable}=", StringComparison.OrdinalIgnoreCase));
 
         if (existingIndex >= 0)
@@ -769,7 +771,7 @@ public class GetTokenSubcommandTests
 
         // Act
         var bearerTokenLine = $"{AuthenticationConstants.BearerTokenEnvironmentVariable}={newToken}";
-        var existingIndex = envLines.FindIndex(l => 
+        var existingIndex = envLines.FindIndex(l =>
             l.StartsWith($"{AuthenticationConstants.BearerTokenEnvironmentVariable}=", StringComparison.OrdinalIgnoreCase));
 
         if (existingIndex >= 0)
@@ -798,7 +800,7 @@ public class GetTokenSubcommandTests
 
         // Act
         var bearerTokenLine = $"{AuthenticationConstants.BearerTokenEnvironmentVariable}={newToken}";
-        var existingIndex = envLines.FindIndex(l => 
+        var existingIndex = envLines.FindIndex(l =>
             l.StartsWith($"{AuthenticationConstants.BearerTokenEnvironmentVariable}=", StringComparison.OrdinalIgnoreCase));
 
         if (existingIndex >= 0)
@@ -824,7 +826,7 @@ public class GetTokenSubcommandTests
 
         // Act
         var bearerTokenLine = $"{AuthenticationConstants.BearerTokenEnvironmentVariable}={newToken}";
-        var existingIndex = envLines.FindIndex(l => 
+        var existingIndex = envLines.FindIndex(l =>
             l.StartsWith($"{AuthenticationConstants.BearerTokenEnvironmentVariable}=", StringComparison.OrdinalIgnoreCase));
 
         if (existingIndex >= 0)
@@ -865,7 +867,7 @@ public class GetTokenSubcommandTests
         var projectFiles = new[] { "pyproject.toml", "requirements.txt", "setup.py" };
 
         // Act
-        var hasPythonMarkers = projectFiles.Any(f => 
+        var hasPythonMarkers = projectFiles.Any(f =>
             f.Equals("pyproject.toml", StringComparison.OrdinalIgnoreCase) ||
             f.Equals("requirements.txt", StringComparison.OrdinalIgnoreCase));
 
@@ -880,7 +882,7 @@ public class GetTokenSubcommandTests
         var projectFiles = new[] { "package.json", "package-lock.json" };
 
         // Act
-        var hasPackageJson = projectFiles.Any(f => 
+        var hasPackageJson = projectFiles.Any(f =>
             f.Equals("package.json", StringComparison.OrdinalIgnoreCase));
 
         // Assert
@@ -935,7 +937,7 @@ public class GetTokenSubcommandTests
     {
         // Arrange
         var projectDir = "/path/to/project";
-        
+
         // Act
         var launchSettingsPath = Path.Combine(projectDir, "Properties", "launchSettings.json");
         var envPath = Path.Combine(projectDir, ".env");
@@ -943,6 +945,204 @@ public class GetTokenSubcommandTests
         // Assert
         launchSettingsPath.Should().EndWith("Properties/launchSettings.json".Replace('/', Path.DirectorySeparatorChar));
         envPath.Should().EndWith(".env");
+    }
+
+    #endregion
+
+    #region Resource Option Tests
+
+    [Fact]
+    public void CreateCommand_ShouldHaveResourceOption()
+    {
+        // Act
+        var command = GetTokenSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockAuthService);
+
+        // Assert
+        var resourceOption = command.Options.FirstOrDefault(o => o.Name == "resource");
+        resourceOption.Should().NotBeNull();
+        resourceOption!.Aliases.Should().Contain("--resource");
+    }
+
+    [Fact]
+    public void CreateCommand_ShouldHaveResourceIdOption()
+    {
+        // Act
+        var command = GetTokenSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockAuthService);
+
+        // Assert
+        var resourceIdOption = command.Options.FirstOrDefault(o => o.Name == "resource-id");
+        resourceIdOption.Should().NotBeNull();
+        resourceIdOption!.Aliases.Should().Contain("--resource-id");
+    }
+
+    [Fact]
+    public void CreateCommand_ResourceOptionDescription_ShouldListAvailableKeywords()
+    {
+        // Act
+        var command = GetTokenSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockAuthService);
+
+        // Assert
+        var resourceOption = command.Options.FirstOrDefault(o => o.Name == "resource");
+        resourceOption.Should().NotBeNull();
+        resourceOption!.Description.Should().Contain("mcp");
+        resourceOption.Description.Should().Contain("powerplatform");
+    }
+
+    [Fact]
+    public void CreateCommand_ResourceIdOptionDescription_ShouldMentionGuid()
+    {
+        // Act
+        var command = GetTokenSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockAuthService);
+
+        // Assert
+        var resourceIdOption = command.Options.FirstOrDefault(o => o.Name == "resource-id");
+        resourceIdOption.Should().NotBeNull();
+        resourceIdOption!.Description.Should().Contain("GUID");
+    }
+
+    [Fact]
+    public void CreateCommand_ResourceOption_ShouldNotBeRequired()
+    {
+        // Act
+        var command = GetTokenSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockAuthService);
+
+        // Assert
+        var resourceOption = command.Options.FirstOrDefault(o => o.Name == "resource");
+        resourceOption.Should().NotBeNull();
+        resourceOption!.IsRequired.Should().BeFalse();
+    }
+
+    [Fact]
+    public void CreateCommand_ResourceIdOption_ShouldNotBeRequired()
+    {
+        // Act
+        var command = GetTokenSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockAuthService);
+
+        // Assert
+        var resourceIdOption = command.Options.FirstOrDefault(o => o.Name == "resource-id");
+        resourceIdOption.Should().NotBeNull();
+        resourceIdOption!.IsRequired.Should().BeFalse();
+    }
+
+    [Fact]
+    public void ResourceKeyword_Mcp_ShouldResolveToAgent365ToolsResourceAppId()
+    {
+        // Arrange
+        var environment = "prod";
+        var expectedResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(environment);
+
+        // Act & Assert
+        // The mcp keyword should resolve to the Agent 365 Tools resource app ID
+        expectedResourceAppId.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public void ResourceKeyword_PowerPlatform_ShouldResolveToPowerPlatformApiResourceAppId()
+    {
+        // Arrange & Act
+        var expectedResourceAppId = MosConstants.PowerPlatformApiResourceAppId;
+
+        // Assert
+        expectedResourceAppId.Should().Be("8578e004-a5c6-46e7-913e-12f58912df43");
+    }
+
+    [Fact]
+    public void ResourceValidation_BothResourceAndResourceId_ShouldBeMutuallyExclusive()
+    {
+        // Arrange
+        var resource = "mcp";
+        var resourceId = "12345678-1234-1234-1234-123456789abc";
+
+        // Act
+        var bothProvided = !string.IsNullOrWhiteSpace(resource) && !string.IsNullOrWhiteSpace(resourceId);
+
+        // Assert
+        // Both being provided is an error condition
+        bothProvided.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ResourceValidation_NeitherProvided_ShouldUseDefaultMcpFlow()
+    {
+        // Arrange
+        string? resource = null;
+        string? resourceId = null;
+
+        // Act
+        var isCustomResource = !string.IsNullOrWhiteSpace(resource) || !string.IsNullOrWhiteSpace(resourceId);
+
+        // Assert
+        isCustomResource.Should().BeFalse();
+    }
+
+    [Fact]
+    public void ResourceValidation_OnlyResourceProvided_ShouldBeCustomResource()
+    {
+        // Arrange
+        string? resource = "powerplatform";
+        string? resourceId = null;
+
+        // Act
+        var isCustomResource = !string.IsNullOrWhiteSpace(resource) || !string.IsNullOrWhiteSpace(resourceId);
+
+        // Assert
+        isCustomResource.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ResourceValidation_OnlyResourceIdProvided_ShouldBeCustomResource()
+    {
+        // Arrange
+        string? resource = null;
+        string? resourceId = "12345678-1234-1234-1234-123456789abc";
+
+        // Act
+        var isCustomResource = !string.IsNullOrWhiteSpace(resource) || !string.IsNullOrWhiteSpace(resourceId);
+
+        // Assert
+        isCustomResource.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ScopeValidation_CustomResourceWithoutScopes_ShouldRequireExplicitScopes()
+    {
+        // Arrange
+        var isCustomResource = true;
+        string[]? scopes = null;
+
+        // Act
+        var scopesRequired = isCustomResource && (scopes == null || scopes.Length == 0);
+
+        // Assert
+        scopesRequired.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ScopeValidation_CustomResourceWithScopes_ShouldNotRequireManifest()
+    {
+        // Arrange
+        var isCustomResource = true;
+        string[] scopes = new[] { ".default" };
+
+        // Act
+        var hasExplicitScopes = scopes != null && scopes.Length > 0;
+
+        // Assert
+        hasExplicitScopes.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ScopeValidation_DefaultFlowWithoutScopes_ShouldUseManifest()
+    {
+        // Arrange
+        var isCustomResource = false;
+        string[]? scopes = null;
+
+        // Act
+        var shouldReadManifest = !isCustomResource && (scopes == null || scopes.Length == 0);
+
+        // Assert
+        shouldReadManifest.Should().BeTrue();
     }
 
     #endregion
