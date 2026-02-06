@@ -145,6 +145,7 @@ internal static class GetTokenSubcommand
                 // Resolve resource app ID
                 string resourceAppId;
                 string resourceDisplayName;
+                string? resourceUrl = null;
                 if (!string.IsNullOrWhiteSpace(resourceId))
                 {
                     // User provided explicit resource ID
@@ -155,7 +156,7 @@ internal static class GetTokenSubcommand
                 else
                 {
                     // Resolve resource keyword to GUID (default to "mcp" if null)
-                    var resolved = ResolveResourceAppId(resource, environment);
+                    var resolved = ResolveResourceApp(resource, environment);
                     if (resolved == null)
                     {
                         logger.LogError("Unknown resource keyword '{Resource}'. Valid options: mcp, powerplatform", resource);
@@ -165,6 +166,7 @@ internal static class GetTokenSubcommand
 
                     resourceAppId = resolved.Value.resourceAppId;
                     resourceDisplayName = resolved.Value.displayName;
+                    resourceUrl = resolved.Value.url;
                     logger.LogInformation("Using resource: {DisplayName}", resourceDisplayName);
                 }
 
@@ -233,9 +235,8 @@ internal static class GetTokenSubcommand
                 await AcquireAndDisplayTokenAsync(
                     resourceAppId,
                     resourceDisplayName,
+                    resourceUrl,
                     requestedScopes,
-                    environment,
-                    isCustomResource,
                     appId,
                     setupConfig,
                     outputFormat,
@@ -260,9 +261,8 @@ internal static class GetTokenSubcommand
     private static async Task AcquireAndDisplayTokenAsync(
         string resourceAppId,
         string resourceDisplayName,
+        string? resourceUrl,
         string[] requestedScopes,
-        string environment,
-        bool isCustomResource,
         string? appId,
         Agent365Config? setupConfig,
         string outputFormat,
@@ -328,7 +328,7 @@ internal static class GetTokenSubcommand
             var tokenResult = new McpServerTokenResult
             {
                 ServerName = resourceDisplayName,
-                Url = isCustomResource ? null : ConfigConstants.GetDiscoverEndpointUrl(environment),
+                Url = resourceUrl,
                 Scope = string.Join(", ", requestedScopes),
                 Audience = resourceAppId,
                 Success = true,
@@ -367,12 +367,12 @@ internal static class GetTokenSubcommand
     }
 
     /// <summary>
-    /// Resolves a resource keyword to its corresponding resource app ID.
+    /// Resolves a resource keyword to its corresponding resource app info.
     /// </summary>
     /// <param name="keyword">The resource keyword (e.g., "mcp", "powerplatform").</param>
     /// <param name="environment">The environment to use for MCP resource resolution.</param>
-    /// <returns>A tuple containing the resource app ID and display name, or null if the keyword is unknown.</returns>
-    private static (string resourceAppId, string displayName)? ResolveResourceAppId(string? keyword, string environment)
+    /// <returns>A tuple containing the resource app ID, display name, and URL, or null if the keyword is unknown.</returns>
+    private static (string resourceAppId, string displayName, string? url)? ResolveResourceApp(string? keyword, string environment)
     {
         if (string.IsNullOrWhiteSpace(keyword))
         {
@@ -381,8 +381,8 @@ internal static class GetTokenSubcommand
 
         return keyword.ToLowerInvariant() switch
         {
-            "mcp" => (ConfigConstants.GetAgent365ToolsResourceAppId(environment), "Agent 365 Tools (MCP)"),
-            "powerplatform" => (MosConstants.PowerPlatformApiResourceAppId, "Power Platform API"),
+            "mcp" => (ConfigConstants.GetAgent365ToolsResourceAppId(environment), "Agent 365 Tools (MCP)", ConfigConstants.GetDiscoverEndpointUrl(environment)),
+            "powerplatform" => (MosConstants.PowerPlatformApiResourceAppId, "Power Platform API", null),
             _ => null
         };
     }

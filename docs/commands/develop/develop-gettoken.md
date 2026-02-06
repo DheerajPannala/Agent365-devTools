@@ -66,7 +66,7 @@ The application you're getting a token for should be your **custom client app** 
 ## Prerequisites
 
 1. **Azure CLI**: Run `az login` before using this command
-2. **Client Application**: 
+2. **Client Application**:
    - Must exist in Azure AD
    - Must have the required MCP scopes configured
    - Can be configured in `a365.config.json` as `clientAppId` OR provided via `--app-id`
