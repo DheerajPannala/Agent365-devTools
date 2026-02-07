@@ -106,6 +106,13 @@ public static class ErrorMessages
 
     #endregion
 
+    #region Resource Resolution Messages
+
+    public const string UnknownResourceKeyword =
+        "Unknown resource keyword '{0}'. Valid options: mcp, powerplatform";
+
+    #endregion
+
     #region Client App Validation Messages
 
     public const string ClientAppValidationFailed = 

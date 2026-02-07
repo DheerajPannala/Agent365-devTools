@@ -159,24 +159,25 @@ internal static class GetTokenSubcommand
                     }
 
                     // User provided explicit resource ID
-                    resourceAppId = resourceId;
-                    resourceDisplayName = $"Custom Resource ({resourceId})";
+                    var customResolved = ResourceResolutionHelper.ResolveByCustomId(resourceId);
+                    resourceAppId = customResolved.ResourceAppId;
+                    resourceDisplayName = customResolved.DisplayName;
                     logger.LogInformation("Using custom resource ID: {ResourceId}", resourceId);
                 }
                 else
                 {
                     // Resolve resource keyword to GUID (default to "mcp" if null)
-                    var resolved = ResolveResourceApp(resource, environment);
-                    if (resolved == null)
+                    var resolved = ResourceResolutionHelper.ResolveByKeyword(resource, environment);
+                    if (resolved is null)
                     {
-                        logger.LogError("Unknown resource keyword '{Resource}'. Valid options: mcp, powerplatform", resource);
+                        logger.LogError(ErrorMessages.UnknownResourceKeyword, resource);
                         Environment.Exit(1);
                         return;
                     }
 
-                    resourceAppId = resolved.Value.resourceAppId;
-                    resourceDisplayName = resolved.Value.displayName;
-                    resourceUrl = resolved.Value.url;
+                    resourceAppId = resolved.ResourceAppId;
+                    resourceDisplayName = resolved.DisplayName;
+                    resourceUrl = resolved.Url;
                     logger.LogInformation("Using resource: {DisplayName}", resourceDisplayName);
                 }
 
@@ -374,27 +375,6 @@ internal static class GetTokenSubcommand
             logger.LogError(ex, "Failed to acquire token: {Message}", ex.Message);
             Environment.Exit(1);
         }
-    }
-
-    /// <summary>
-    /// Resolves a resource keyword to its corresponding resource app info.
-    /// </summary>
-    /// <param name="keyword">The resource keyword (e.g., "mcp", "powerplatform").</param>
-    /// <param name="environment">The environment to use for MCP resource resolution.</param>
-    /// <returns>A tuple containing the resource app ID, display name, and URL, or null if the keyword is unknown.</returns>
-    private static (string resourceAppId, string displayName, string? url)? ResolveResourceApp(string? keyword, string environment)
-    {
-        if (string.IsNullOrWhiteSpace(keyword))
-        {
-            keyword = "mcp"; // Default to MCP if no keyword provided
-        }
-
-        return keyword.ToLowerInvariant() switch
-        {
-            "mcp" => (ConfigConstants.GetAgent365ToolsResourceAppId(environment), "Agent 365 Tools (MCP)", ConfigConstants.GetDiscoverEndpointUrl(environment)),
-            "powerplatform" => (MosConstants.PowerPlatformApiResourceAppId, "Power Platform API", null),
-            _ => null
-        };
     }
 
     private static void DisplayResults(

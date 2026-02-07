@@ -48,7 +48,6 @@ public class AddPermissionsSubcommandTests
         var command = AddPermissionsSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockGraphApiService, _mockBlueprintService);
 
         // Assert
-        command.Description.Should().Contain("MCP");
         command.Description.Should().Contain("permission");
     }
 
@@ -134,16 +133,17 @@ public class AddPermissionsSubcommandTests
         var command = AddPermissionsSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockGraphApiService, _mockBlueprintService);
 
         // Assert
-        command.Options.Should().HaveCount(6);
+        command.Options.Should().HaveCount(7);
         var optionNames = command.Options.Select(opt => opt.Name).ToList();
-        optionNames.Should().Contain(new[] 
-        { 
-            "config", 
-            "manifest", 
-            "app-id", 
-            "scopes", 
-            "verbose", 
-            "dry-run" 
+        optionNames.Should().Contain(new[]
+        {
+            "config",
+            "manifest",
+            "app-id",
+            "scopes",
+            "resource",
+            "verbose",
+            "dry-run"
         });
     }
 

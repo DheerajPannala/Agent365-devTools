@@ -178,7 +178,16 @@ internal static class AddPermissionsSubcommand
                 var environment = setupConfig?.Environment ?? "prod";
 
                 // Resolve resource configuration based on --resource option
-                var (resourceAppId, resourceName) = GetResourceConfig(resource, environment);
+                var resolvedResource = ResourceResolutionHelper.ResolveByKeyword(resource, environment);
+                if (resolvedResource is null)
+                {
+                    logger.LogError(ErrorMessages.UnknownResourceKeyword, resource);
+                    Environment.Exit(1);
+                    return;
+                }
+
+                var resourceAppId = resolvedResource.ResourceAppId;
+                var resourceName = resolvedResource.DisplayName;
 
                 logger.LogInformation("Target resource: {ResourceName} ({ResourceAppId})", resourceName, resourceAppId);
                 logger.LogInformation("");
@@ -258,21 +267,4 @@ internal static class AddPermissionsSubcommand
         return command;
     }
 
-    /// <summary>
-    /// Resolves resource configuration based on the resource key and environment
-    /// </summary>
-    /// <param name="resourceKey">Resource identifier (e.g., "agent365tools", "powerplatform")</param>
-    /// <param name="environment">Environment (e.g., "prod", "test")</param>
-    /// <returns>Tuple containing the resource app ID and display name</returns>
-    private static (string AppId, string Name) GetResourceConfig(string resourceKey, string environment)
-    {
-        return resourceKey.ToLowerInvariant() switch
-        {
-            "mcp" =>
-                (ConfigConstants.GetAgent365ToolsResourceAppId(environment), "Agent 365 Tools"),
-            "powerplatform" =>
-                (MosConstants.PowerPlatformApiResourceAppId, "Power Platform API"),
-            _ => throw new ArgumentException($"Unknown resource: {resourceKey}. Valid options are: mcp, powerplatform")
-        };
-    }
 }
