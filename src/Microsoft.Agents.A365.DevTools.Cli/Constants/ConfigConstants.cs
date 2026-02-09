@@ -131,18 +131,18 @@ public static class ConfigConstants
     /// <summary>
     /// environment-aware Agent 365 Tools resource Application ID
     /// </summary>
-public static string GetAgent365ToolsResourceAppId(string environment)
-{
-    // Check for custom app ID in environment variable first
-    var customAppId = Environment.GetEnvironmentVariable($"A365_MCP_APP_ID_{environment?.ToUpper()}");
-    if (!string.IsNullOrEmpty(customAppId))
-        return customAppId;
-
-    // Default to production app ID
-    return environment?.ToLower() switch
+    public static string GetAgent365ToolsResourceAppId(string environment)
     {
-        "prod" => McpConstants.Agent365ToolsProdAppId,
-        _ => McpConstants.Agent365ToolsProdAppId
-    };
-}
+        // Check for custom app ID in environment variable first
+        var customAppId = Environment.GetEnvironmentVariable($"A365_MCP_APP_ID_{environment?.ToUpper()}");
+        if (!string.IsNullOrEmpty(customAppId))
+            return customAppId;
+
+        // Default to production app ID
+        return environment?.ToLower() switch
+        {
+            "prod" => McpConstants.Agent365ToolsProdAppId,
+            _ => McpConstants.Agent365ToolsProdAppId
+        };
+    }
 }
