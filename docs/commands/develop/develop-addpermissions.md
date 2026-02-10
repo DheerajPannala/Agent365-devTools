@@ -23,13 +23,15 @@ a365 develop add-permissions [options]
 | `--manifest` | `-m` | Path to ToolingManifest.json (for mcp resource) | `<deploymentProjectPath>/ToolingManifest.json` |
 | `--app-id` | | Application (client) ID to add permissions to | `clientAppId` from config |
 | `--resource` | `-r` | Target resource API: 'mcp' (default), 'powerplatform' | `mcp` |
-| `--resource-id` | | Resource application ID (GUID) to add permissions to. Overrides `--resource`. Requires `--scopes` | (derived from `--resource`) |
+| `--resource-id` | | Resource application ID (GUID) to add permissions to. Requires `--scopes` | None |
 | `--scopes` | | Specific scopes to add (space-separated). Required when using `--resource` or `--resource-id` | All scopes from ToolingManifest.json (mcp) or required defaults |
 | `--verbose` | `-v` | Show detailed output | `false` |
 | `--dry-run` | | Show what would be done without making changes | `false` |
 
 > **Resource and scopes behavior**:
+> - The `--resource` and `--resource-id` flags are mutually exclusive.
 > - If you specify either `--resourced` or `--resource-id`, you must provide `--scopes` explicitly.
+> - If you wish to use the scopes specified in the ToolingManifest.json, please omit the resource flags.
 
 ## When to Use This Command
 
