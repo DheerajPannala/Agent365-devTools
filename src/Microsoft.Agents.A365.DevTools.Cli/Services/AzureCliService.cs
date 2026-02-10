@@ -8,6 +8,10 @@ using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
+/// <summary>
+/// Service for interacting with Azure CLI to fetch account information, resource groups, and other Azure data.
+/// Wraps Azure CLI commands and provides structured data models for use by the application.
+/// </summary>
 public class AzureCliService : IAzureCliService
 {
     private readonly CommandExecutor _commandExecutor;
@@ -19,6 +23,10 @@ public class AzureCliService : IAzureCliService
         _logger = logger;
     }
 
+    /// <summary>
+    /// Checks if Azure CLI is available and the user is logged in.
+    /// </summary>
+    /// <returns>True if Azure CLI is available and user is authenticated; otherwise, false.</returns>
     public async Task<bool> IsLoggedInAsync()
     {
         try
@@ -37,6 +45,10 @@ public class AzureCliService : IAzureCliService
         }
     }
 
+    /// <summary>
+    /// Gets the current Azure account information from Azure CLI.
+    /// </summary>
+    /// <returns>The current Azure account information, or null if not logged in or an error occurs.</returns>
     public async Task<AzureAccountInfo?> GetCurrentAccountAsync()
     {
         try
@@ -83,6 +95,10 @@ public class AzureCliService : IAzureCliService
         }
     }
 
+    /// <summary>
+    /// Lists all resource groups in the current Azure subscription.
+    /// </summary>
+    /// <returns>A list of resource groups sorted by name, or an empty list if an error occurs.</returns>
     public async Task<List<AzureResourceGroup>> ListResourceGroupsAsync()
     {
         try
@@ -120,6 +136,11 @@ public class AzureCliService : IAzureCliService
         }
     }
 
+    /// <summary>
+    /// Lists all app service plans in the current Azure subscription.
+    /// The location property is normalized to lowercase without spaces for API compatibility.
+    /// </summary>
+    /// <returns>A list of app service plans sorted by name, or an empty list if an error occurs.</returns>
     public async Task<List<AzureAppServicePlan>> ListAppServicePlansAsync()
     {
         try
@@ -167,6 +188,10 @@ public class AzureCliService : IAzureCliService
         }
     }
 
+    /// <summary>
+    /// Lists all available Azure locations for the current subscription.
+    /// </summary>
+    /// <returns>A list of Azure locations sorted by display name, or an empty list if an error occurs.</returns>
     public async Task<List<AzureLocation>> ListLocationsAsync()
     {
         try
