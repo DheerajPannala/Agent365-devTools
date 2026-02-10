@@ -53,7 +53,7 @@ internal static class AddPermissionsSubcommand
         var resourceOption = new Option<string?>(
             ["--resource", "-r"],
             description: "Target resource API: 'mcp' (default), 'powerplatform'. " +
-                         "When specified, --scopes is required for non-mcp resources.")
+                         "When specified, --scopes is required.")
         {
             IsRequired = false
         };
