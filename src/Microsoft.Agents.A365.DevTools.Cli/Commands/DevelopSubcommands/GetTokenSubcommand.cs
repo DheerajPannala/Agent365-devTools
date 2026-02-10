@@ -104,14 +104,6 @@ internal static class GetTokenSubcommand
 
             try
             {
-                // Validate mutual exclusivity of --resource and --resource-id
-                if (!string.IsNullOrWhiteSpace(resource) && !string.IsNullOrWhiteSpace(resourceId))
-                {
-                    logger.LogError("Cannot specify both --resource and --resource-id. Use one or the other.");
-                    Environment.Exit(1);
-                    return;
-                }
-
                 // Determine if custom resource is being used
                 bool isCustomResource = !string.IsNullOrWhiteSpace(resource) || !string.IsNullOrWhiteSpace(resourceId);
 
@@ -143,43 +135,27 @@ internal static class GetTokenSubcommand
                 var environment = setupConfig?.Environment ?? "prod";
 
                 // Resolve resource app ID
-                string resourceAppId;
-                string resourceDisplayName;
-                string? resourceUrl = null;
-                if (!string.IsNullOrWhiteSpace(resourceId))
+                ResolvedResource resolvedResource;
+                try
                 {
-                    // Validate that resource ID is a valid GUID
-                    if (!Guid.TryParse(resourceId, out _))
-                    {
-                        logger.LogError("Invalid resource application ID: {ResourceId}. Expected a valid GUID.", resourceId);
-                        logger.LogInformation("");
-                        logger.LogInformation("Example: a365 develop get-token --resource-id 12345678-1234-1234-1234-123456789abc --scopes .default");
-                        Environment.Exit(1);
-                        return;
-                    }
-
-                    // User provided explicit resource ID
-                    var customResolved = ResourceResolutionHelper.ResolveByCustomId(resourceId);
-                    resourceAppId = customResolved.ResourceAppId;
-                    resourceDisplayName = customResolved.DisplayName;
-                    logger.LogInformation("Using custom resource ID: {ResourceId}", resourceId);
+                    resolvedResource = ResourceResolutionHelper.ResolveResource(resourceId, resource, environment);
                 }
-                else
+                catch (ArgumentException ex)
                 {
-                    // Resolve resource keyword to GUID (default to "mcp" if null)
-                    var resolved = ResourceResolutionHelper.ResolveByKeyword(resource, environment);
-                    if (resolved is null)
-                    {
-                        logger.LogError(ErrorMessages.UnknownResourceKeyword, resource);
-                        Environment.Exit(1);
-                        return;
-                    }
-
-                    resourceAppId = resolved.ResourceAppId;
-                    resourceDisplayName = resolved.DisplayName;
-                    resourceUrl = resolved.Url;
-                    logger.LogInformation("Using resource: {DisplayName}", resourceDisplayName);
+                    logger.LogError("Resource resolution error: {ErrorMessage}", ex.Message);
+                    logger.LogInformation("");
+                    logger.LogInformation("Example: a365 develop get-token --resource-id 12345678-1234-1234-1234-123456789abc --scopes .default");
+                    Environment.Exit(1);
+                    return;
                 }
+
+                var resourceAppId = resolvedResource.ResourceAppId;
+                var resourceDisplayName = resolvedResource.DisplayName;
+                var resourceUrl = resolvedResource.Url;
+
+                // Log which resource was selected
+                logger.LogInformation("Selected resource: {ResourceDisplayName} (App ID: {ResourceAppId})",
+                    resourceDisplayName, resourceAppId);
 
                 // Determine which scopes to request
                 string[] requestedScopes;

@@ -58,4 +58,44 @@ public static class ResourceResolutionHelper
     {
         return new ResolvedResource(resourceId, $"Custom Resource ({resourceId})", null);
     }
+
+    /// <summary>
+    /// Resolves a resource from either a custom resource ID (GUID) or a keyword.
+    /// Handles mutual exclusivity validation and GUID validation.
+    /// </summary>
+    /// <param name="resourceId">The custom resource application ID (GUID), or null.</param>
+    /// <param name="resource">The resource keyword (e.g., "mcp", "powerplatform"), or null.</param>
+    /// <param name="environment">The environment to use for environment-aware resource resolution (e.g., "prod").</param>
+    /// <returns>A <see cref="ResolvedResource"/> containing the app ID, display name, and optional URL.</returns>
+    /// <exception cref="ArgumentException">Thrown when both resourceId and resource are provided, when resourceId is not a valid GUID, or when the resource keyword is unknown.</exception>
+    public static ResolvedResource ResolveResource(string? resourceId, string? resource, string environment)
+    {
+        // Validate mutual exclusivity
+        if (!string.IsNullOrWhiteSpace(resourceId) && !string.IsNullOrWhiteSpace(resource))
+        {
+            throw new ArgumentException("Cannot specify both resourceId and resource. Use one or the other.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(resourceId))
+        {
+            // Validate that resource ID is a valid GUID
+            if (!Guid.TryParse(resourceId, out _))
+            {
+                throw new ArgumentException($"Invalid resource application ID: {resourceId}. Expected a valid GUID.");
+            }
+
+            return ResolveByCustomId(resourceId);
+        }
+        else
+        {
+            // Resolve resource keyword to GUID (defaults to "mcp" if null)
+            var resolved = ResolveByKeyword(resource, environment);
+            if (resolved is null)
+            {
+                throw new ArgumentException($"Unknown resource keyword: {resource}");
+            }
+
+            return resolved;
+        }
+    }
 }

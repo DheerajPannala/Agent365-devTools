@@ -257,6 +257,115 @@ public class ResourceResolutionHelperTests
 
     #endregion
 
+    #region ResolveResource tests
+
+    [Fact]
+    public void ResolveResource_WithValidResourceId_ReturnsCustomResource()
+    {
+        // Arrange
+        var resourceId = "12345678-1234-1234-1234-123456789abc";
+
+        // Act
+        var result = ResourceResolutionHelper.ResolveResource(resourceId, null, DefaultEnvironment);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.ResourceAppId.Should().Be(resourceId);
+        result.DisplayName.Should().Be($"Custom Resource ({resourceId})");
+        result.Url.Should().BeNull();
+    }
+
+    [Fact]
+    public void ResolveResource_WithInvalidResourceId_ThrowsArgumentException()
+    {
+        // Arrange
+        var invalidResourceId = "not-a-guid";
+
+        // Act
+        var act = () => ResourceResolutionHelper.ResolveResource(invalidResourceId, null, DefaultEnvironment);
+
+        // Assert
+        act.Should().Throw<ArgumentException>()
+            .WithMessage("*Invalid resource application ID*");
+    }
+
+    [Fact]
+    public void ResolveResource_WithValidResourceKeyword_ReturnsResource()
+    {
+        // Act
+        var result = ResourceResolutionHelper.ResolveResource(null, "mcp", DefaultEnvironment);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.ResourceAppId.Should().Be(ConfigConstants.GetAgent365ToolsResourceAppId(DefaultEnvironment));
+        result.DisplayName.Should().Be("Agent 365 Tools (MCP)");
+    }
+
+    [Fact]
+    public void ResolveResource_WithUnknownResourceKeyword_ThrowsArgumentException()
+    {
+        // Act
+        var act = () => ResourceResolutionHelper.ResolveResource(null, "unknown", DefaultEnvironment);
+
+        // Assert
+        act.Should().Throw<ArgumentException>()
+            .WithMessage("*Unknown resource keyword*");
+    }
+
+    [Fact]
+    public void ResolveResource_WithBothResourceIdAndKeyword_ThrowsArgumentException()
+    {
+        // Arrange
+        var resourceId = "12345678-1234-1234-1234-123456789abc";
+        var resourceKeyword = "mcp";
+
+        // Act
+        var act = () => ResourceResolutionHelper.ResolveResource(resourceId, resourceKeyword, DefaultEnvironment);
+
+        // Assert
+        act.Should().Throw<ArgumentException>()
+            .WithMessage("*Cannot specify both*");
+    }
+
+    [Fact]
+    public void ResolveResource_WithNeitherResourceIdNorKeyword_DefaultsToMcp()
+    {
+        // Act
+        var result = ResourceResolutionHelper.ResolveResource(null, null, DefaultEnvironment);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.ResourceAppId.Should().Be(ConfigConstants.GetAgent365ToolsResourceAppId(DefaultEnvironment));
+        result.DisplayName.Should().Be("Agent 365 Tools (MCP)");
+    }
+
+    [Fact]
+    public void ResolveResource_WithEmptyResourceKeyword_DefaultsToMcp()
+    {
+        // Act
+        var result = ResourceResolutionHelper.ResolveResource(null, "", DefaultEnvironment);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.ResourceAppId.Should().Be(ConfigConstants.GetAgent365ToolsResourceAppId(DefaultEnvironment));
+        result.DisplayName.Should().Be("Agent 365 Tools (MCP)");
+    }
+
+    [Fact]
+    public void ResolveResource_WithPowerPlatformKeyword_ReturnsPowerPlatformResource()
+    {
+        // Act
+        var result = ResourceResolutionHelper.ResolveResource(null, "powerplatform", DefaultEnvironment);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.ResourceAppId.Should().Be(MosConstants.PowerPlatformApiResourceAppId);
+        result.DisplayName.Should().Be("Power Platform API");
+        result.Url.Should().BeNull();
+    }
+
+    #endregion
+
     #region ErrorMessages constant test
 
     [Fact]

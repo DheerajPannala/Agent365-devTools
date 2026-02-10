@@ -1,7 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
@@ -51,10 +50,21 @@ internal static class AddPermissionsSubcommand
             ["--verbose", "-v"],
             description: "Show detailed output");
 
-        var resourceOption = new Option<string>(
+        var resourceOption = new Option<string?>(
             ["--resource", "-r"],
-            getDefaultValue: () => "mcp",
-            description: "Target resource API: 'mcp' (default), 'powerplatform'");
+            description: "Target resource API: 'mcp' (default), 'powerplatform'. " +
+                         "When specified, --scopes is required for non-mcp resources.")
+        {
+            IsRequired = false
+        };
+
+        var resourceIdOption = new Option<string?>(
+            ["--resource-id"],
+            description: "Resource application ID (GUID) to add permissions for. " +
+                         "When specified, --scopes is required.")
+        {
+            IsRequired = false
+        };
 
         var dryRunOption = new Option<bool>(
             ["--dry-run"],
@@ -65,10 +75,11 @@ internal static class AddPermissionsSubcommand
         command.AddOption(appIdOption);
         command.AddOption(scopesOption);
         command.AddOption(resourceOption);
+        command.AddOption(resourceIdOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (config, manifest, appId, scopes, resource, verbose, dryRun) =>
+        command.SetHandler(async (config, manifest, appId, scopes, resource, resourceId, verbose, dryRun) =>
         {
             try
             {
@@ -120,6 +131,32 @@ internal static class AddPermissionsSubcommand
                 var manifestPath = manifest?.FullName
                     ?? Path.Combine(setupConfig?.DeploymentProjectPath ?? Environment.CurrentDirectory, "ToolingManifest.json");
 
+                var environment = setupConfig?.Environment ?? "prod";
+
+                // Resolve resource app ID
+                ResolvedResource resolvedResource;
+                try
+                {
+                    resolvedResource = ResourceResolutionHelper.ResolveResource(resourceId, resource, environment);
+                }
+                catch (ArgumentException ex)
+                {
+                    logger.LogError("Resource resolution error: {ErrorMessage}", ex.Message);
+                    logger.LogInformation("");
+                    logger.LogInformation("Example: a365 develop add-permissions --resource-id 12345678-1234-1234-1234-123456789abc --scopes .default");
+                    Environment.Exit(1);
+                    return;
+                }
+
+                var resourceAppId = resolvedResource.ResourceAppId;
+                var resourceName = resolvedResource.DisplayName;
+
+                logger.LogInformation("Target resource: {ResourceName} ({ResourceAppId})", resourceName, resourceAppId);
+                logger.LogInformation("");
+
+                // Determine if custom resource is being used
+                bool isCustomResource = !string.IsNullOrWhiteSpace(resource) || !string.IsNullOrWhiteSpace(resourceId);
+
                 // Determine which scopes to add
                 string[] requestedScopes;
 
@@ -130,67 +167,48 @@ internal static class AddPermissionsSubcommand
                     logger.LogInformation("Using user-specified scopes: {Scopes}", string.Join(", ", requestedScopes));
                     logger.LogInformation("");
                 }
-                else
+                else if (isCustomResource)
                 {
-                    // Only read scopes from ToolingManifest.json for mcp resource
-                    if (resource.ToLowerInvariant() is "mcp")
-                    {
-                        // Read scopes from ToolingManifest.json
-                        if (!File.Exists(manifestPath))
-                        {
-                            logger.LogError("ToolingManifest.json not found at: {Path}", manifestPath);
-                            logger.LogInformation("");
-                            logger.LogInformation("Please ensure ToolingManifest.json exists in your project directory");
-                            logger.LogInformation("or specify scopes explicitly with --scopes option.");
-                            logger.LogInformation("");
-                            logger.LogInformation("Example: a365 develop add-permissions --scopes McpServers.Mail.All McpServers.Calendar.All");
-                            Environment.Exit(1);
-                            return;
-                        }
-
-                        logger.LogInformation("Reading MCP server configuration from: {Path}", manifestPath);
-
-                        // Use ManifestHelper to extract scopes (includes fallback to mappings and McpServersMetadata.Read.All)
-                        requestedScopes = await ManifestHelper.GetRequiredScopesAsync(manifestPath);
-
-                        if (requestedScopes.Length == 0)
-                        {
-                            logger.LogError("No scopes found in ToolingManifest.json");
-                            logger.LogInformation("You can specify scopes explicitly with --scopes option.");
-                            Environment.Exit(1);
-                            return;
-                        }
-
-                        logger.LogInformation("Collected {Count} unique scope(s) from manifest: {Scopes}",
-                            requestedScopes.Length, string.Join(", ", requestedScopes));
-                    }
-                    else
-                    {
-                        // For other resources (like powerplatform), scopes are required
-                        logger.LogError("--scopes is required when --resource {resource} is specified.", resource);
-                        logger.LogInformation("");
-                        logger.LogInformation("Example: a365 develop add-permissions --resource {resource} --scopes ExampleScope.ReadWrite.All", resource);
-                        Environment.Exit(1);
-                        return;
-                    }
-                }
-
-                var environment = setupConfig?.Environment ?? "prod";
-
-                // Resolve resource configuration based on --resource option
-                var resolvedResource = ResourceResolutionHelper.ResolveByKeyword(resource, environment);
-                if (resolvedResource is null)
-                {
-                    logger.LogError(ErrorMessages.UnknownResourceKeyword, resource);
+                    logger.LogError("The --scopes option is required when using --resource or --resource-id.");
+                    logger.LogInformation("");
+                    logger.LogInformation("Manifest-based scopes are only supported for the default flow.");
+                    logger.LogInformation("Please omit the --resource and --resource-id options if you'd like to use manifest-based scopes.");
+                    logger.LogInformation("");
+                    logger.LogInformation("Example: a365 develop add-permissions --resource powerplatform --scopes .default");
                     Environment.Exit(1);
                     return;
                 }
+                else
+                {
+                    // Default MCP flow: read scopes from ToolingManifest.json
+                    if (!File.Exists(manifestPath))
+                    {
+                        logger.LogError("ToolingManifest.json not found at: {Path}", manifestPath);
+                        logger.LogInformation("");
+                        logger.LogInformation("Please ensure ToolingManifest.json exists in your project directory");
+                        logger.LogInformation("or specify scopes explicitly with --scopes option.");
+                        logger.LogInformation("");
+                        logger.LogInformation("Example: a365 develop add-permissions --scopes McpServers.Mail.All McpServers.Calendar.All");
+                        Environment.Exit(1);
+                        return;
+                    }
 
-                var resourceAppId = resolvedResource.ResourceAppId;
-                var resourceName = resolvedResource.DisplayName;
+                    logger.LogInformation("Reading MCP server configuration from: {Path}", manifestPath);
 
-                logger.LogInformation("Target resource: {ResourceName} ({ResourceAppId})", resourceName, resourceAppId);
-                logger.LogInformation("");
+                    // Use ManifestHelper to extract scopes (includes fallback to mappings and McpServersMetadata.Read.All)
+                    requestedScopes = await ManifestHelper.GetRequiredScopesAsync(manifestPath);
+
+                    if (requestedScopes.Length == 0)
+                    {
+                        logger.LogError("No scopes found in ToolingManifest.json");
+                        logger.LogInformation("You can specify scopes explicitly with --scopes option.");
+                        Environment.Exit(1);
+                        return;
+                    }
+
+                    logger.LogInformation("Collected {Count} unique scope(s) from manifest: {Scopes}",
+                        requestedScopes.Length, string.Join(", ", requestedScopes));
+                }
 
                 // Dry run mode
                 if (dryRun)
@@ -262,7 +280,7 @@ internal static class AddPermissionsSubcommand
                 logger.LogError(ex, "Failed to add API permissions: {Message}", ex.Message);
                 Environment.Exit(1);
             }
-        }, configOption, manifestOption, appIdOption, scopesOption, resourceOption, verboseOption, dryRunOption);
+        }, configOption, manifestOption, appIdOption, scopesOption, resourceOption, resourceIdOption, verboseOption, dryRunOption);
 
         return command;
     }

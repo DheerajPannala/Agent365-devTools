@@ -115,6 +115,31 @@ public class AddPermissionsSubcommandTests
     }
 
     [Fact]
+    public void CreateCommand_ShouldHaveResourceOption()
+    {
+        // Act
+        var command = AddPermissionsSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockGraphApiService, _mockBlueprintService);
+
+        // Assert
+        var resourceOption = command.Options.FirstOrDefault(o => o.Name == "resource");
+        resourceOption.Should().NotBeNull();
+        resourceOption!.Aliases.Should().Contain("--resource");
+        resourceOption.Aliases.Should().Contain("-r");
+    }
+
+    [Fact]
+    public void CreateCommand_ShouldHaveResourceIdOption()
+    {
+        // Act
+        var command = AddPermissionsSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockGraphApiService, _mockBlueprintService);
+
+        // Assert
+        var resourceIdOption = command.Options.FirstOrDefault(o => o.Name == "resource-id");
+        resourceIdOption.Should().NotBeNull();
+        resourceIdOption!.Aliases.Should().Contain("--resource-id");
+    }
+
+    [Fact]
     public void CreateCommand_ShouldHaveDryRunOption()
     {
         // Act
@@ -133,7 +158,7 @@ public class AddPermissionsSubcommandTests
         var command = AddPermissionsSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockGraphApiService, _mockBlueprintService);
 
         // Assert
-        command.Options.Should().HaveCount(7);
+        command.Options.Should().HaveCount(8);
         var optionNames = command.Options.Select(opt => opt.Name).ToList();
         optionNames.Should().Contain(new[]
         {
@@ -142,6 +167,7 @@ public class AddPermissionsSubcommandTests
             "app-id",
             "scopes",
             "resource",
+            "resource-id",
             "verbose",
             "dry-run"
         });
