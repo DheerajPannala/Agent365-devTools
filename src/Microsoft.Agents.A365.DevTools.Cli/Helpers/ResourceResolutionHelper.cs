@@ -73,7 +73,7 @@ public static class ResourceResolutionHelper
         // Validate mutual exclusivity
         if (!string.IsNullOrWhiteSpace(resourceId) && !string.IsNullOrWhiteSpace(resource))
         {
-            throw new ArgumentException("Cannot specify both resourceId and resource. Use one or the other.");
+            throw new ArgumentException(ErrorMessages.CannotSpecifyBothResourceIdAndKeyword);
         }
 
         if (!string.IsNullOrWhiteSpace(resourceId))
@@ -81,21 +81,19 @@ public static class ResourceResolutionHelper
             // Validate that resource ID is a valid GUID
             if (!Guid.TryParse(resourceId, out _))
             {
-                throw new ArgumentException($"Invalid resource application ID: {resourceId}. Expected a valid GUID.");
+                throw new ArgumentException(string.Format(ErrorMessages.InvalidResourceApplicationId, resourceId));
             }
 
             return ResolveByCustomId(resourceId);
         }
-        else
-        {
-            // Resolve resource keyword to GUID (defaults to "mcp" if null)
-            var resolved = ResolveByKeyword(resource, environment);
-            if (resolved is null)
-            {
-                throw new ArgumentException($"Unknown resource keyword: {resource}");
-            }
 
-            return resolved;
+        // Resolve resource keyword to GUID (defaults to "mcp" if null)
+        var resolved = ResolveByKeyword(resource, environment);
+        if (resolved is null)
+        {
+            throw new ArgumentException(string.Format(ErrorMessages.UnknownResourceKeyword, resource));
         }
+
+        return resolved;
     }
 }

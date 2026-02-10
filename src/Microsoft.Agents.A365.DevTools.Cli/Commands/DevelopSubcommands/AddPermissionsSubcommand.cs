@@ -180,7 +180,7 @@ internal static class AddPermissionsSubcommand
                 }
                 else
                 {
-                    // Default MCP flow: read scopes from ToolingManifest.json
+                    // Read scopes from ToolingManifest.json
                     if (!File.Exists(manifestPath))
                     {
                         logger.LogError("ToolingManifest.json not found at: {Path}", manifestPath);

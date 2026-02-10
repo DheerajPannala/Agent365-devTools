@@ -111,6 +111,12 @@ public static class ErrorMessages
     public const string UnknownResourceKeyword =
         "Unknown resource keyword '{0}'. Valid options: mcp, powerplatform";
 
+    public const string InvalidResourceApplicationId =
+        "Invalid resource application ID: {0}. Expected a valid GUID.";
+
+    public const string CannotSpecifyBothResourceIdAndKeyword =
+        "Cannot specify both resourceId and resource. Use one or the other.";
+
     #endregion
 
     #region Client App Validation Messages
