@@ -23,10 +23,15 @@ a365 develop add-permissions [options]
 | `--manifest` | `-m` | Path to ToolingManifest.json (for mcp resource) | `<deploymentProjectPath>/ToolingManifest.json` |
 | `--app-id` | | Application (client) ID to add permissions to | `clientAppId` from config |
 | `--resource` | `-r` | Target resource API: 'mcp' (default), 'powerplatform' | `mcp` |
-| `--scopes` | | Specific scopes to add (space-separated) | All scopes from ToolingManifest.json (mcp) or required (powerplatform) |
+| `--resource-id` | | Resource application ID (GUID) to add permissions to. Overrides `--resource`. Requires `--scopes` unless the resource and scopes can be resolved from `ToolingManifest.json` (for `mcp`). | (derived from `--resource`/manifest) |
+| `--scopes` | | Specific scopes to add (space-separated). Required when using `--resource-id` for resources whose scopes cannot be inferred from `ToolingManifest.json`. | All scopes from ToolingManifest.json (mcp) or required defaults (powerplatform) |
 | `--verbose` | `-v` | Show detailed output | `false` |
 | `--dry-run` | | Show what would be done without making changes | `false` |
 
+> **Resource and scopes behavior**:
+> - If you only specify `--resource mcp` (default) with a valid `--manifest`, the command reads the resource application ID and default scopes from `ToolingManifest.json`.
+> - If you specify `--resource-id` without `--scopes`, the command can only infer scopes when the resource ID matches the MCP resource defined in `ToolingManifest.json`; otherwise you must pass `--scopes`.
+> - For any other `--resource-id`, you must provide `--scopes` explicitly.
 ## When to Use This Command
 
 ### Development Scenarios
