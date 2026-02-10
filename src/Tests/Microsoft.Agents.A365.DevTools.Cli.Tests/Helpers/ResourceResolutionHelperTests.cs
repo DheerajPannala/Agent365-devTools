@@ -213,7 +213,7 @@ public class ResourceResolutionHelperTests
 
         // Assert
         result.Should().NotBeNull();
-        result.DisplayName.Should().Be($"Custom Resource ({customId})");
+        result.DisplayName.Should().Be("Custom Resource");
     }
 
     [Fact]
@@ -262,7 +262,7 @@ public class ResourceResolutionHelperTests
         // Assert
         result.Should().NotBeNull();
         result.ResourceAppId.Should().Be(resourceId);
-        result.DisplayName.Should().Be($"Custom Resource ({resourceId})");
+        result.DisplayName.Should().Be("Custom Resource");
         result.Url.Should().BeNull();
     }
 
