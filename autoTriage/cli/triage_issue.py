@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """
 CLI script to triage a GitHub issue using the intake service.
 Used by GitHub Actions for auto-triage on new issue creation.
@@ -9,8 +12,8 @@ import os
 import sys
 from pathlib import Path
 
-# Add current directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent))
+# Add parent directory (autoTriage) to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from services.intake_service import triage_issues
 from services.github_service import GitHubService
