@@ -56,7 +56,7 @@ public static class ResourceResolutionHelper
     /// <returns>A <see cref="ResolvedResource"/> with a generic display name and no URL.</returns>
     public static ResolvedResource ResolveByCustomId(string resourceId)
     {
-        return new ResolvedResource(resourceId, $"Custom Resource ({resourceId})", null);
+        return new ResolvedResource(resourceId, $"Custom Resource", null);
     }
 
     /// <summary>
@@ -73,7 +73,7 @@ public static class ResourceResolutionHelper
         // Validate mutual exclusivity
         if (!string.IsNullOrWhiteSpace(resourceId) && !string.IsNullOrWhiteSpace(resource))
         {
-            throw new ArgumentException(ErrorMessages.CannotSpecifyBothResourceIdAndKeyword);
+            throw new ArgumentException(ErrorMessages.CannotSpecifyBothResourceIdAndKeyword, nameof(resource));
         }
 
         if (!string.IsNullOrWhiteSpace(resourceId))
@@ -81,7 +81,7 @@ public static class ResourceResolutionHelper
             // Validate that resource ID is a valid GUID
             if (!Guid.TryParse(resourceId, out _))
             {
-                throw new ArgumentException(string.Format(ErrorMessages.InvalidResourceApplicationId, resourceId));
+                throw new ArgumentException(string.Format(ErrorMessages.InvalidResourceApplicationId, resourceId), nameof(resourceId));
             }
 
             return ResolveByCustomId(resourceId);
@@ -91,7 +91,7 @@ public static class ResourceResolutionHelper
         var resolved = ResolveByKeyword(resource, environment);
         if (resolved is null)
         {
-            throw new ArgumentException(string.Format(ErrorMessages.UnknownResourceKeyword, resource));
+            throw new ArgumentException(string.Format(ErrorMessages.UnknownResourceKeyword, resource), nameof(resource));
         }
 
         return resolved;

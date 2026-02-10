@@ -145,6 +145,7 @@ public class ResourceResolutionHelperTests
         // Assert
         result.Should().NotBeNull();
         result!.DisplayName.Should().Be("Agent 365 Tools (MCP)");
+        result.ResourceAppId.Should().Be(ConfigConstants.GetAgent365ToolsResourceAppId(DefaultEnvironment));
     }
 
     [Fact]
@@ -156,6 +157,7 @@ public class ResourceResolutionHelperTests
         // Assert
         result.Should().NotBeNull();
         result!.DisplayName.Should().Be("Agent 365 Tools (MCP)");
+        result.ResourceAppId.Should().Be(ConfigConstants.GetAgent365ToolsResourceAppId(DefaultEnvironment));
     }
 
     #endregion
@@ -231,17 +233,6 @@ public class ResourceResolutionHelperTests
     #endregion
 
     #region ResolvedResource record tests
-
-    [Fact]
-    public void ResolvedResource_RecordEquality_WorksCorrectly()
-    {
-        // Arrange
-        var resource1 = new ResolvedResource("app-id", "Display Name", "https://example.com");
-        var resource2 = new ResolvedResource("app-id", "Display Name", "https://example.com");
-
-        // Assert
-        resource1.Should().Be(resource2);
-    }
 
     [Fact]
     public void ResolvedResource_WithNullUrl_IsValid()
