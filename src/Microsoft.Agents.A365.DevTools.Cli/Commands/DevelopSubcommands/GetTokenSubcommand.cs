@@ -145,6 +145,8 @@ internal static class GetTokenSubcommand
                     logger.LogError("Resource resolution error: {ErrorMessage}", ex.Message);
                     logger.LogInformation("");
                     logger.LogInformation("Example: a365 develop get-token --resource-id 12345678-1234-1234-1234-123456789abc --scopes .default");
+                    logger.LogInformation("Example: a365 develop get-token --resource powerplatform --scopes .default");
+                    logger.LogInformation("Example: a365 develop get-token");
                     Environment.Exit(1);
                     return;
                 }

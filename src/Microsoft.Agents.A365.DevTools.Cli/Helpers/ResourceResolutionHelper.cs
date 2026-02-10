@@ -56,7 +56,7 @@ public static class ResourceResolutionHelper
     /// <returns>A <see cref="ResolvedResource"/> with a generic display name and no URL.</returns>
     public static ResolvedResource ResolveByCustomId(string resourceId)
     {
-        return new ResolvedResource(resourceId, $"Custom Resource", null);
+        return new ResolvedResource(resourceId, "Custom Resource", null);
     }
 
     /// <summary>

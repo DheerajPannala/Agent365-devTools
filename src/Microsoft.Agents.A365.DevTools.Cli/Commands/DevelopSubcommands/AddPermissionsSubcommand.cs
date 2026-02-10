@@ -144,6 +144,8 @@ internal static class AddPermissionsSubcommand
                     logger.LogError("Resource resolution error: {ErrorMessage}", ex.Message);
                     logger.LogInformation("");
                     logger.LogInformation("Example: a365 develop add-permissions --resource-id 12345678-1234-1234-1234-123456789abc --scopes .default");
+                    logger.LogInformation("Example: a365 develop add-permissions --resource powerplatform --scopes .default");
+                    logger.LogInformation("Example: a365 develop add-permissions");
                     Environment.Exit(1);
                     return;
                 }
