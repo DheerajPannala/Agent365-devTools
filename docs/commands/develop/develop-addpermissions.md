@@ -29,9 +29,8 @@ a365 develop add-permissions [options]
 | `--dry-run` | | Show what would be done without making changes | `false` |
 
 > **Resource and scopes behavior**:
-> - If you only specify `--resource mcp` (default) with a valid `--manifest`, the command reads the resource application ID and default scopes from `ToolingManifest.json`.
-> - If you specify `--resource-id` without `--scopes`, the command can only infer scopes when the resource ID matches the MCP resource defined in `ToolingManifest.json`; otherwise you must pass `--scopes`.
-> - For any other `--resource-id`, you must provide `--scopes` explicitly.
+> - If you specify either `--resourced` or `--resource-id`, you must provide `--scopes` explicitly.
+
 ## When to Use This Command
 
 ### Development Scenarios
@@ -139,5 +138,3 @@ a365 develop add-permissions --app-id 12345678-1234-1234-1234-123456789abc --sco
 - **Target**: Power Platform API (`8578e004-a5c6-46e7-913e-12f58912df43`)
 - **Scope Source**: **Required** explicit `--scopes` (no defaults)
 - **Example Scopes**: `CopilotStudio.Copilots.Invoke`
-
-**Note**: When using `--resource powerplatform`, the `--scopes` option is required. The command will not default to any scope and will show an error if scopes are not explicitly provided.
