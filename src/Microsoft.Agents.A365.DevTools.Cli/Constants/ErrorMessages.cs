@@ -115,7 +115,7 @@ public static class ErrorMessages
         "Invalid resource application ID: {0}. Expected a valid GUID.";
 
     public const string CannotSpecifyBothResourceIdAndKeyword =
-        "Cannot specify both resourceId and resource. Use one or the other.";
+        "Cannot specify both `--resource-id` and `--resource`. Use one or the other.";
 
     #endregion
 
