@@ -30,7 +30,7 @@ a365 develop add-permissions [options]
 
 > **Resource and scopes behavior**:
 > - The `--resource` and `--resource-id` flags are mutually exclusive.
-> - If you specify either `--resourced` or `--resource-id`, you must provide `--scopes` explicitly.
+> - If you specify either `--resource` or `--resource-id`, you must provide `--scopes` explicitly.
 > - If you wish to use the scopes specified in the ToolingManifest.json, please omit the resource flags.
 
 ## When to Use This Command
