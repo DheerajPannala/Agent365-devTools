@@ -71,6 +71,9 @@ nunit-*.xml
 .DS_Store
 Thumbs.db
 
+# Pre-PR review results
+pr-review-*.md
+
 # Python
 __pycache__/
 *.py[cod]
