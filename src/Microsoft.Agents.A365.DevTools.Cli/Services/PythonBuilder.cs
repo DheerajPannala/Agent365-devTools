@@ -549,12 +549,34 @@ public class PythonBuilder : IPlatformBuilder
     {
         var requirementsTxt = Path.Combine(publishPath, "requirements.txt");
         
-        // Azure-native requirements.txt that mirrors local workflow
-        // --pre allows installation of pre-release versions
-        var content = "--find-links dist\n--pre\n-e .\n";
+        // Check if project has pyproject.toml or setup.py
+        var hasPyprojectToml = File.Exists(Path.Combine(publishPath, "pyproject.toml"));
+        var hasSetupPy = File.Exists(Path.Combine(publishPath, "setup.py"));
         
-        await File.WriteAllTextAsync(requirementsTxt, content);
-        _logger.LogInformation("Created requirements.txt for Azure deployment");
+        if (hasPyprojectToml || hasSetupPy)
+        {
+            // Use editable install approach for projects with pyproject.toml or setup.py
+            // Azure-native requirements.txt that mirrors local workflow
+            // --pre allows installation of pre-release versions
+            var content = "--find-links dist\n--pre\n-e .\n";
+            
+            await File.WriteAllTextAsync(requirementsTxt, content);
+            _logger.LogInformation("Created requirements.txt for Azure deployment using editable install (-e .)");
+        }
+        else
+        {
+            // For projects without pyproject.toml or setup.py, preserve the original requirements.txt
+            // The file was already copied from source in CopyProjectFiles step
+            if (File.Exists(requirementsTxt))
+            {
+                _logger.LogInformation("Preserving existing requirements.txt (no pyproject.toml or setup.py found)");
+            }
+            else
+            {
+                _logger.LogWarning("No requirements.txt found in project. Creating an empty one.");
+                await File.WriteAllTextAsync(requirementsTxt, string.Empty);
+            }
+        }
     }
 
     private async Task CreateDeploymentFile(string publishPath)
