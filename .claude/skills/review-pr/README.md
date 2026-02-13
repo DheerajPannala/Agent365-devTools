@@ -54,13 +54,34 @@ For `/review-pr` to work in Claude Code:
 
 ## Features
 
-**Automated Analysis**
-- Detects missing tests
-- Identifies large files (KISS/SRP violations)
-- Flags potential security issues
-- Checks cross-platform compatibility
-- Validates design patterns (SOLID, DRY, YAGNI)
-- Reviews error handling patterns
+**Architectural Review** (New! - Jan 2026)
+- **Design Decision Validation**: Questions "why" a feature exists before reviewing "how" it's built
+- **Scope Creep Detection**: Flags PRs that expand tool's mission beyond Agent365 deployment
+- **Use Case Validation**: Requires concrete Agent365 scenarios for new features
+- **Overlap Detection**: Identifies duplication with Azure CLI, Azure Portal, other tools
+- **YAGNI Enforcement**: Questions features without documented, concrete need
+- **Alternative Evaluation**: Suggests simpler approaches or better scoping
+
+**Semantic Code Analysis**
+- Uses Claude API to analyze actual code logic (not just patterns)
+- Identifies specific logic errors and edge cases with line references
+- Generates actionable test scenarios based on conditional branches
+- Detects missing error handling in specific code paths
+- Provides concrete suggestions with code examples
+
+**Pattern-Based Checks**
+- Detects resource leaks (IDisposable not disposed)
+- Flags hardcoded secrets and API keys
+- Checks for "Kairo" keyword (legacy reference)
+- Validates copyright headers on C# files
+- Reviews workflow permissions (least privilege)
+- Analyzes test quality and coverage
+
+**Context-Aware Analysis**
+- Differentiates CLI code vs GitHub Actions code
+- Understands PR intent (bug fix, feature, refactor)
+- Adjusts severity based on PR context
+- Provides specific recommendations per file type
 
 **Structured Comments**
 - Editable YAML format
@@ -77,7 +98,27 @@ For `/review-pr` to work in Claude Code:
 
 This skill enforces the following code review principles:
 
-### Architecture & Patterns
+### Architectural Review (Phase 1 - NEW!)
+The review now has **two phases**:
+1. **Should we build this?** - Architectural validation
+2. **Did we build it well?** - Code quality review
+
+**Architectural checks:**
+- Design decision validation (why before how)
+- Scope creep detection (mission alignment)
+- Use case validation (concrete scenarios required)
+- Overlap detection (duplication with existing tools)
+- YAGNI enforcement (no speculative features)
+- Alternative evaluation (simpler approaches)
+
+**Red flags automatically detected:**
+- "Swiss Army Knife" options (--resource-id <any-guid>)
+- Azure Portal/CLI duplication
+- Vague use case documentation
+- Missing design rationale
+- Open-ended capabilities without boundaries
+
+### Architecture & Patterns (Phase 2)
 - **.NET Architecture**: Reviews follow .NET architect best practices
 - **Azure CLI Alignment**: Ensures consistency with az cli patterns and conventions
 - **Cross-Platform**: Validates Windows, Linux, and macOS compatibility
