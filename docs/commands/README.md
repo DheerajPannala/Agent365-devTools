@@ -1,8 +1,8 @@
 # Documentation for Agent CLI commands
 
-Reference documenation about using commands is published at [Agent 365 CLI reference](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/).
+Reference documentation about using commands is published at [Agent 365 CLI reference](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/).
 
-There is reference documenation for each command.
+There is reference documentation for each command.
 
 | Command | Description |
 | --- | --- |
