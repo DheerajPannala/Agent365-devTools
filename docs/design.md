@@ -231,7 +231,7 @@ a365 setup all
 
 **Documentation**:
 - Design: [design-custom-resource-permissions.md](./design-custom-resource-permissions.md)
-- Command Reference: [setup-permissions-custom.md](./commands/setup-permissions-custom.md)
+- Command Reference: [setup permissions custom](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/setup#setup-permissions-custom)
 - GitHub Issue: [#194](https://github.com/microsoft/Agent365-devTools/issues/194)
 
 ---
@@ -247,6 +247,6 @@ a365 setup all
 
 ## Related Documentation
 
-- [CLI Usage Guide](../Readme-Usage.md) - End-user documentation
+- [CLI Usage Guide](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/) - End-user documentation
 - [Command Documentation](./commands/) - Individual command reference
 - [Code Standards](../.github/copilot-instructions.md) - Coding conventions and review rules

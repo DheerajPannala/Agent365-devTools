@@ -1,4 +1,4 @@
-# Documentation for Agent CLI commands
+# Documentation for Agent 365 CLI commands
 
 Reference documentation about using commands is published at [Agent 365 CLI reference](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/).
 
@@ -42,10 +42,12 @@ There is reference documentation for each command.
 | [setup permissions](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/setup#setup-permissions) | Configure OAuth2 permission grants and inheritable permissions. |
 | [setup permissions mcp](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/setup#setup-permissions-mcp) | Configure MCP server OAuth2 grants and inheritable permissions. |
 | [setup permissions bot](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/setup#setup-permissions-bot) | Configure Messaging Bot API OAuth2 grants and inheritable permissions. |
+| [setup permissions custom](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/setup#setup-permissions-custom) | Configure custom resource OAuth2 grants and inheritable permissions. |
+| [setup permissions copilotstudio](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/setup#setup-permissions-copilotstudio) | Configure Copilot Studio-related OAuth2 grants and inheritable permissions. |
 | [setup all](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/setup#setup-all) | Perform all setup steps to set up your Agent 365 environment |
 
 ## Documentation policy
 
 As new Agent CLI commands are developed you may find documentation about these commands in this folder. These temporary artifacts support the workflow for developers creating features. After the feature ships, docs must be created or updated on learn.microsoft.com and the documentation in this folder should be deleted.
 
-The only documentation that will persist in this folder is to support developers creating and maintaining the code for commands in this repo, for example [Agent365-devTools Architecture](design.md)
+The only documentation that will persist in this folder is to support developers creating and maintaining the code for commands in this repo, for example [Agent365-devTools Architecture](../design.md)
