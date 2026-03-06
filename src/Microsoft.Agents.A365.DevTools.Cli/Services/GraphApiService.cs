@@ -209,8 +209,11 @@ public class GraphApiService
         if (scopes != null && _tokenProvider != null)
         {
             // Use token provider with delegated scopes (interactive browser auth with caching)
+            // On Linux, use device code flow since interactive browser auth is unreliable
+            // (no platform browser integration and PowerShell runs with -NonInteractive)
+            var useDeviceCode = !OperatingSystem.IsWindows() && !OperatingSystem.IsMacOS();
             _logger.LogDebug("Acquiring Graph token with specific scopes via token provider: {Scopes}", string.Join(", ", scopes));
-            token = await _tokenProvider.GetMgGraphAccessTokenAsync(tenantId, scopes, false, CustomClientAppId, ct);
+            token = await _tokenProvider.GetMgGraphAccessTokenAsync(tenantId, scopes, useDeviceCode, CustomClientAppId, ct);
 
             if (string.IsNullOrWhiteSpace(token))
             {
