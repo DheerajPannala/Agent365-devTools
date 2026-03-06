@@ -10,18 +10,19 @@ There is reference documentation for each command.
 | [cleanup blueprint](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/cleanup#cleanup-blueprint) | Remove Entra ID blueprint application and service principal. |
 | [cleanup azure](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/cleanup#cleanup-azure) | Remove Azure resources (App Service, App Service Plan). |
 | [cleanup instance](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/cleanup#cleanup-instance) | Remove agent instance identity and user from Entra ID. |
+| [config](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/config) | Manage Agent 365 CLI configuration. Provides options to manage Agent 365 CLI configuration settings. |
 | [config init](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/config#config-init) | Interactively configure Agent 365 CLI or import from a file. |
 | [config display](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/config#config-display) | Show current Agent 365 CLI configuration. |
 | [create-instance](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/create-instance) | Temporarily removed - This command is removed temporarily. Use a365 publish and create an agent instance via Teams instead. |
 | [deploy](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/deploy) | Deploy Agent 365 application binaries to the configured Azure App Service and update Agent 365 Tool permissions |
 | [deploy app](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/deploy#deploy-app) | Deploys your agent code to the Azure Web App created during setup. |
 | [deploy mcp](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/deploy#deploy-mcp) | Updates MCP server permissions on your agent blueprint. |
-| [develop](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/develop) | Manage MCP tool servers for agent development |
+| [develop](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/develop) | Manage MCP tool servers for agent development. |
 | [develop list-available](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/develop#develop-list-available) | List all MCP servers available in the catalog (what you can install). |
 | [develop list-configured](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/develop#develop-list-configured) | List currently configured MCP servers from your local ToolingManifest.json. |
 | [develop add-mcp-servers](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/develop#develop-add-mcp-servers) | Add MCP Servers to the current agent configuration. |
 | [develop remove-mcp-servers](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/develop#develop-remove-mcp-servers) | Remove MCP Servers from the current agent configuration. |
-| [develop add-permissions](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/develop#develop-add-permissions) | Add MCP server API permissions to Azure AD applications for development scenarios where you need to configure custom applications to access MCP servers. |
+| [develop add-permissions](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/develop#develop-add-permissions) | Add MCP server API permissions to Microsoft Entra applications for development scenarios where you need to configure custom applications to access MCP servers. |
 | [develop get-token](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/develop#develop-get-token) | Retrieve bearer tokens for testing MCP servers during development using interactive browser authentication. |
 | [develop start-mock-tooling-server](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/develop#develop-start-mock-tooling-server) | Start a mock tooling server for testing and development purposes. |
 | [develop-mcp](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/develop-mcp) | Manage MCP servers in Dataverse environments. |
@@ -33,6 +34,7 @@ There is reference documentation for each command.
 | [develop-mcp block](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/develop-mcp#develop-mcp-block) | Block an MCP server. |
 | [develop-mcp package-mcp-server](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/develop-mcp#develop-mcp-package-mcp-server) | Generate MCP server package for submission on Microsoft admin center. |
 | [publish](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/publish) | Update manifest.json ID values and publish the package. Configure federated identity and app role assignments. |
+| [query-entra](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/query-entra) | Query Microsoft Entra ID for agent information (scopes, permissions, consent status). Provides options to query Microsoft Entra ID for agent information including scopes, permissions, and consent status. |
 | [query-entra blueprint-scopes](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/query-entra#query-entra-blueprint-scopes) | List configured scopes and consent status for the agent blueprint. |
 | [query-entra instance-scopes](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/query-entra#query-entra-instance-scopes) | List configured scopes and consent status for the agent instance. |
 | [setup](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/setup) | Set up your Agent 365 environment with granular control over each step. |
@@ -42,8 +44,8 @@ There is reference documentation for each command.
 | [setup permissions](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/setup#setup-permissions) | Configure OAuth2 permission grants and inheritable permissions. |
 | [setup permissions mcp](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/setup#setup-permissions-mcp) | Configure MCP server OAuth2 grants and inheritable permissions. |
 | [setup permissions bot](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/setup#setup-permissions-bot) | Configure Messaging Bot API OAuth2 grants and inheritable permissions. |
-| [setup permissions custom](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/setup#setup-permissions-custom) | Configure custom resource OAuth2 grants and inheritable permissions. |
-| [setup permissions copilotstudio](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/setup#setup-permissions-copilotstudio) | Configure Copilot Studio-related OAuth2 grants and inheritable permissions. |
+| [setup permissions copilotstudio](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/setup#setup-permissions-copilotstudio) | Configures OAuth2 permission grants and inheritable permissions for the agent blueprint to invoke Copilot Studio copilots via the Power Platform API. |
+| [setup permissions custom](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/setup#setup-permissions-custom) | Applies custom API permissions to your agent blueprint that go beyond the standard permissions required for agent operation. |
 | [setup all](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/setup#setup-all) | Perform all setup steps to set up your Agent 365 environment |
 
 ## Documentation policy
