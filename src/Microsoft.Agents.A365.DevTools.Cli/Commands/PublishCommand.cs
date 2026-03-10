@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
@@ -8,6 +9,8 @@ using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
 using System.IO.Compression;
@@ -83,6 +86,13 @@ public class PublishCommand
         }
     }
 
+    /// <summary>
+    /// Requirement checks for publish: MOS service principals must exist and be configured.
+    /// Runs before the interactive manifest editing pause to avoid wasted work.
+    /// </summary>
+    internal static List<IRequirementCheck> GetChecks(GraphApiService graphApiService, AgentBlueprintService blueprintService)
+        => [new MosPrerequisitesRequirementCheck(graphApiService, blueprintService)];
+
     public static Command CreateCommand(
         ILogger<PublishCommand> logger,
         IConfigService configService,
@@ -140,6 +150,12 @@ public class PublishCommand
                     return;
                 }
 
+                if (!skipGraph && string.IsNullOrWhiteSpace(config.ClientAppId))
+                {
+                    logger.LogError("clientAppId is not configured. Run 'a365 setup blueprint' first to configure client app authentication.");
+                    return;
+                }
+
                 // Use deploymentProjectPath from config for portability
                 var baseDir = GetProjectDirectory(config, logger);
                 var manifestDir = Path.Combine(baseDir, "manifest");
@@ -190,10 +206,14 @@ public class PublishCommand
                 var mosTitlesBaseUrl = GetMosTitlesUrl(tenantId);
                 logger.LogInformation("Using MOS Titles URL: {Url} (Tenant: {TenantId})", mosTitlesBaseUrl, tenantId ?? "unknown");
 
-                // Warn if tenantId is missing
                 if (string.IsNullOrWhiteSpace(tenantId))
                 {
-                    logger.LogWarning("tenantId missing in configuration; using default production MOS URL. Graph operations will be skipped.");
+                    if (!skipGraph)
+                    {
+                        logger.LogError("tenantId is not configured. Graph operations require tenantId. Use --skip-graph to publish without Graph operations, or run 'a365 setup all' to complete setup.");
+                        return;
+                    }
+                    logger.LogWarning("tenantId missing in configuration; using default production MOS URL. Graph operations will be skipped (--skip-graph).");
                 }
 
                 string updatedManifest = await UpdateManifestFileAsync(logger, agentBlueprintDisplayName, blueprintId, manifestPath);
@@ -216,6 +236,14 @@ public class PublishCommand
                 logger.LogInformation("Agentic user manifest template updated successfully with agentBlueprintId {Id}", blueprintId);
 
                 logger.LogDebug("Manifest files written to disk");
+
+                // Verify MOS prerequisites before asking user to edit manifest (fail fast)
+                // Skip when --skip-graph is set: MOS checks perform Graph operations
+                if (!skipGraph)
+                {
+                    await RequirementsSubcommand.RunChecksOrExitAsync(
+                        GetChecks(graphApiService, blueprintService), config, logger, context.GetCancellationToken());
+                }
 
                 // Interactive pause for user customization
                 logger.LogInformation("");
@@ -313,33 +341,6 @@ public class PublishCommand
                     }
                 }
                 logger.LogInformation("Created archive {ZipPath}", zipPath);
-
-                // Ensure MOS prerequisites are configured (service principals + permissions)
-                try
-                {
-                    logger.LogInformation("");
-                    logger.LogDebug("Checking MOS prerequisites (service principals and permissions)...");
-                    var mosPrereqsConfigured = await PublishHelpers.EnsureMosPrerequisitesAsync(
-                        graphApiService, blueprintService, config, logger);
-                    
-                    if (!mosPrereqsConfigured)
-                    {
-                        logger.LogError("Failed to configure MOS prerequisites. Aborting publish.");
-                        return;
-                    }
-                    logger.LogInformation("");
-                }
-                catch (SetupValidationException ex)
-                {
-                    logger.LogError("MOS prerequisites configuration failed: {Message}", ex.Message);
-                    logger.LogInformation("");
-                    logger.LogInformation("To manually create MOS service principals, run:");
-                    logger.LogInformation("  az ad sp create --id 6ec511af-06dc-4fe2-b493-63a37bc397b1");
-                    logger.LogInformation("  az ad sp create --id 8578e004-a5c6-46e7-913e-12f58912df43");
-                    logger.LogInformation("  az ad sp create --id e8be65d6-d430-4289-a665-51bf2a194bda");
-                    logger.LogInformation("");
-                    return;
-                }
 
                 // Acquire MOS token using native C# service
                 logger.LogDebug("Acquiring MOS authentication token for environment: {Environment}", mosEnv);

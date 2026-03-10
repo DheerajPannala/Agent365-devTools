@@ -5,6 +5,7 @@ using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using System.CommandLine;
@@ -24,7 +25,7 @@ public class SetupCommandTests
     private readonly CommandExecutor _mockExecutor;
     private readonly DeploymentService _mockDeploymentService;
     private readonly IBotConfigurator _mockBotConfigurator;
-    private readonly IAzureValidator _mockAzureValidator;
+    private readonly AzureAuthValidator _mockAuthValidator;
     private readonly PlatformDetector _mockPlatformDetector;
     private readonly GraphApiService _mockGraphApiService;
     private readonly AgentBlueprintService _mockBlueprintService;
@@ -52,7 +53,7 @@ public class SetupCommandTests
             mockNodeLogger,
             mockPythonLogger);
         _mockBotConfigurator = Substitute.For<IBotConfigurator>();
-        _mockAzureValidator = Substitute.For<IAzureValidator>();
+        _mockAuthValidator = Substitute.ForPartsOf<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, _mockExecutor);
         _mockGraphApiService = Substitute.For<GraphApiService>();
         _mockBlueprintService = Substitute.ForPartsOf<AgentBlueprintService>(Substitute.For<ILogger<AgentBlueprintService>>(), _mockGraphApiService);
         _mockClientAppValidator = Substitute.For<IClientAppValidator>();
@@ -79,15 +80,15 @@ public class SetupCommandTests
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(config));
         
         var command = SetupCommand.CreateCommand(
-            _mockLogger, 
-            _mockConfigService, 
-            _mockExecutor, 
-            _mockDeploymentService, 
-            _mockBotConfigurator, 
-            _mockAzureValidator,
+            _mockLogger,
+            _mockConfigService,
+            _mockExecutor,
+            _mockDeploymentService,
+            _mockBotConfigurator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator);
-        
+
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
 
@@ -99,7 +100,6 @@ public class SetupCommandTests
 
         // Dry-run mode does not load config or call Azure/Bot services - it just displays what would be done
         await _mockConfigService.DidNotReceiveWithAnyArgs().LoadAsync(Arg.Any<string>(), Arg.Any<string>());
-        await _mockAzureValidator.DidNotReceiveWithAnyArgs().ValidateAllAsync(default!);
         await _mockBotConfigurator.DidNotReceiveWithAnyArgs().CreateEndpointWithAgentBlueprintAsync(default!, default!, default!, default!, default!);
     }
 
@@ -129,8 +129,8 @@ public class SetupCommandTests
             _mockConfigService, 
             _mockExecutor, 
             _mockDeploymentService, 
-            _mockBotConfigurator, 
-            _mockAzureValidator,
+            _mockBotConfigurator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator);
         
@@ -156,8 +156,8 @@ public class SetupCommandTests
             _mockConfigService, 
             _mockExecutor, 
             _mockDeploymentService, 
-            _mockBotConfigurator, 
-            _mockAzureValidator,
+            _mockBotConfigurator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator);
 
@@ -180,8 +180,8 @@ public class SetupCommandTests
             _mockConfigService, 
             _mockExecutor, 
             _mockDeploymentService, 
-            _mockBotConfigurator, 
-            _mockAzureValidator,
+            _mockBotConfigurator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator);
 
@@ -207,8 +207,8 @@ public class SetupCommandTests
             _mockConfigService, 
             _mockExecutor, 
             _mockDeploymentService, 
-            _mockBotConfigurator, 
-            _mockAzureValidator,
+            _mockBotConfigurator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator);
         
@@ -252,8 +252,8 @@ public class SetupCommandTests
             _mockConfigService, 
             _mockExecutor, 
             _mockDeploymentService, 
-            _mockBotConfigurator, 
-            _mockAzureValidator,
+            _mockBotConfigurator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator);
 
@@ -295,7 +295,7 @@ public class SetupCommandTests
             _mockExecutor,
             _mockDeploymentService,
             _mockBotConfigurator,
-            _mockAzureValidator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator);
 
@@ -336,7 +336,7 @@ public class SetupCommandTests
             _mockExecutor,
             _mockDeploymentService,
             _mockBotConfigurator,
-            _mockAzureValidator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockGraphApiService,
             _mockBlueprintService,
@@ -379,7 +379,7 @@ public class SetupCommandTests
             _mockExecutor,
             _mockDeploymentService,
             _mockBotConfigurator,
-            _mockAzureValidator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockGraphApiService,
             _mockBlueprintService,

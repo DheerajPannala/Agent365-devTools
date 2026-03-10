@@ -7,6 +7,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using System.CommandLine;
 using System.CommandLine.Builder;
@@ -26,7 +27,7 @@ public class BlueprintSubcommandTests
     private readonly ILogger _mockLogger;
     private readonly IConfigService _mockConfigService;
     private readonly CommandExecutor _mockExecutor;
-    private readonly IAzureValidator _mockAzureValidator;
+    private readonly AzureAuthValidator _mockAuthValidator;
     private readonly PlatformDetector _mockPlatformDetector;
     private readonly IBotConfigurator _mockBotConfigurator;
     private readonly GraphApiService _mockGraphApiService;
@@ -41,7 +42,7 @@ public class BlueprintSubcommandTests
         _mockConfigService = Substitute.For<IConfigService>();
         var mockExecutorLogger = Substitute.For<ILogger<CommandExecutor>>();
         _mockExecutor = Substitute.ForPartsOf<CommandExecutor>(mockExecutorLogger);
-        _mockAzureValidator = Substitute.For<IAzureValidator>();
+        _mockAuthValidator = Substitute.ForPartsOf<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, _mockExecutor);
         var mockPlatformDetectorLogger = Substitute.For<ILogger<PlatformDetector>>();
         _mockPlatformDetector = Substitute.ForPartsOf<PlatformDetector>(mockPlatformDetectorLogger);
         _mockBotConfigurator = Substitute.For<IBotConfigurator>();
@@ -60,7 +61,7 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -77,7 +78,7 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -95,7 +96,7 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -115,7 +116,7 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -135,7 +136,7 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -154,7 +155,7 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -182,7 +183,7 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -196,7 +197,6 @@ public class BlueprintSubcommandTests
         // Assert
         result.Should().Be(0);
         await _mockConfigService.Received(1).LoadAsync(Arg.Any<string>(), Arg.Any<string>());
-        await _mockAzureValidator.DidNotReceiveWithAnyArgs().ValidateAllAsync(default!);
     }
 
     [Fact]
@@ -216,7 +216,7 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -252,20 +252,17 @@ public class BlueprintSubcommandTests
 
         var configFile = new FileInfo("test-config.json");
 
-        _mockAzureValidator.ValidateAllAsync(Arg.Any<string>())
-            .Returns(true);
-
         // Note: Since DelegatedConsentService needs to run and will fail with invalid tenant,
         // the method returns false rather than throwing for missing display name upfront.
         // The display name check happens after consent, so this test verifies
         // the method can handle failures gracefully.
-        
+
         // Act
         var result = await BlueprintSubcommand.CreateBlueprintImplementationAsync(
                 config,
                 configFile,
                 _mockExecutor,
-                _mockAzureValidator,
+                _mockAuthValidator,
                 _mockLogger,
                 skipInfrastructure: false,
                 isSetupAll: false,
@@ -280,44 +277,6 @@ public class BlueprintSubcommandTests
         result.EndpointRegistered.Should().BeFalse();
     }
 
-    [Fact]
-    public async Task CreateBlueprintImplementation_WithAzureValidationFailure_ShouldReturnFalse()
-    {
-        // Arrange
-        var config = new Agent365Config
-        {
-            TenantId = "00000000-0000-0000-0000-000000000000",
-            ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6", // Required for validation
-            SubscriptionId = "test-sub",
-            AgentBlueprintDisplayName = "Test Blueprint",
-            Location = "eastus" // Required for endpoint registration; location guard runs before Azure validation
-        };
-
-        var configFile = new FileInfo("test-config.json");
-
-        _mockAzureValidator.ValidateAllAsync(Arg.Any<string>())
-            .Returns(false); // Validation fails
-
-        // Act
-        var result = await BlueprintSubcommand.CreateBlueprintImplementationAsync(
-            config,
-            configFile,
-            _mockExecutor,
-            _mockAzureValidator,
-            _mockLogger,
-            skipInfrastructure: false,
-            isSetupAll: false,
-            _mockConfigService,
-            _mockBotConfigurator,
-            _mockPlatformDetector,
-            _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService);
-
-        // Assert
-        result.Should().NotBeNull();
-        result.BlueprintCreated.Should().BeFalse();
-        result.EndpointRegistered.Should().BeFalse();
-        await _mockAzureValidator.Received(1).ValidateAllAsync(config.SubscriptionId);
-    }
 
     [Fact]
     public void CommandDescription_ShouldMentionRequiredPermissions()
@@ -327,7 +286,7 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -354,7 +313,7 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -389,7 +348,7 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -416,7 +375,7 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -441,7 +400,7 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -462,7 +421,7 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -488,15 +447,12 @@ public class BlueprintSubcommandTests
 
         var configFile = new FileInfo("test-config.json");
 
-        _mockAzureValidator.ValidateAllAsync(Arg.Any<string>())
-            .Returns(false); // Fail fast for this test
-
         // Act
         var result = await BlueprintSubcommand.CreateBlueprintImplementationAsync(
             config,
             configFile,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockAuthValidator,
             _mockLogger,
             skipInfrastructure: false,
             isSetupAll: false,
@@ -527,7 +483,7 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -554,7 +510,7 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -587,7 +543,7 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -618,7 +574,7 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -1307,7 +1263,7 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -1640,7 +1596,7 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -1674,7 +1630,7 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -1708,7 +1664,7 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockAuthValidator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
