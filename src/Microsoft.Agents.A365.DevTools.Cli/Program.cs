@@ -90,7 +90,7 @@ class Program
             var configService = serviceProvider.GetRequiredService<IConfigService>();
             var executor = serviceProvider.GetRequiredService<CommandExecutor>();
             var authService = serviceProvider.GetRequiredService<AuthenticationService>();
-            var authValidator = serviceProvider.GetRequiredService<AzureAuthValidator>();
+            var azureAuthValidator = serviceProvider.GetRequiredService<AzureAuthValidator>();
             var toolingService = serviceProvider.GetRequiredService<IAgent365ToolingService>();
 
             // Get services needed by commands
@@ -98,7 +98,6 @@ class Program
             var deploymentService = serviceProvider.GetRequiredService<DeploymentService>();
             var botConfigurator = serviceProvider.GetRequiredService<IBotConfigurator>();
             var graphApiService = serviceProvider.GetRequiredService<GraphApiService>();
-            var agentPublishService = serviceProvider.GetRequiredService<AgentPublishService>();
             var agentBlueprintService = serviceProvider.GetRequiredService<AgentBlueprintService>();
             var blueprintLookupService = serviceProvider.GetRequiredService<BlueprintLookupService>();
             var federatedCredentialService = serviceProvider.GetRequiredService<FederatedCredentialService>();
@@ -110,11 +109,11 @@ class Program
             rootCommand.AddCommand(DevelopCommand.CreateCommand(developLogger, configService, executor, authService, graphApiService, agentBlueprintService, processService));
             rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService));
             rootCommand.AddCommand(SetupCommand.CreateCommand(setupLogger, configService, executor,
-                deploymentService, botConfigurator, authValidator, platformDetector, graphApiService, agentBlueprintService, blueprintLookupService, federatedCredentialService, clientAppValidator));
+                deploymentService, botConfigurator, azureAuthValidator, platformDetector, graphApiService, agentBlueprintService, blueprintLookupService, federatedCredentialService, clientAppValidator));
             rootCommand.AddCommand(CreateInstanceCommand.CreateCommand(createInstanceLogger, configService, executor,
                 botConfigurator, graphApiService));
             rootCommand.AddCommand(DeployCommand.CreateCommand(deployLogger, configService, executor,
-                deploymentService, authValidator, graphApiService, agentBlueprintService));
+                deploymentService, azureAuthValidator, graphApiService, agentBlueprintService));
 
             // Register ConfigCommand
             var configLoggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
@@ -124,8 +123,8 @@ class Program
             var confirmationProvider = serviceProvider.GetRequiredService<IConfirmationProvider>();
             rootCommand.AddCommand(ConfigCommand.CreateCommand(configLogger, wizardService: wizardService, clientAppValidator: clientAppValidator));
             rootCommand.AddCommand(QueryEntraCommand.CreateCommand(queryEntraLogger, configService, executor, graphApiService, agentBlueprintService));
-            rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, authValidator));
-            rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, agentPublishService, graphApiService, agentBlueprintService, manifestTemplateService));
+            rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, azureAuthValidator));
+            rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, manifestTemplateService));
 
             // Wrap all command handlers with exception handling
             // Build with middleware for global exception handling
@@ -227,9 +226,10 @@ class Program
             return new Agent365ToolingService(configService, authService, logger, environment);
         });
 
-        // Add Azure validators
+        // Add Azure validators (individual validators for composition)
         services.AddSingleton<AzureAuthValidator>();
         services.AddSingleton<IAzureEnvironmentValidator, AzureEnvironmentValidator>();
+
 
         // Add multi-platform deployment services
         services.AddSingleton<PlatformDetector>();
@@ -242,7 +242,6 @@ class Program
         services.AddSingleton<IMicrosoftGraphTokenProvider, MicrosoftGraphTokenProvider>();
 
         services.AddSingleton<GraphApiService>();
-        services.AddSingleton<AgentPublishService>();
         services.AddSingleton<AgentBlueprintService>();
         services.AddSingleton<BlueprintLookupService>();
         services.AddSingleton<FederatedCredentialService>();

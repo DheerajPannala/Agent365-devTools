@@ -1,59 +1,25 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
-using Microsoft.Agents.A365.DevTools.Cli.Constants;
-using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
-using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
-using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
-using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
-using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
-using System.IO.Compression;
-using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 
 /// <summary>
-/// Publish command – updates manifest.json ids based on the generated agent blueprint id.
-/// Native C# implementation - no PowerShell dependencies.
+/// Publish command – updates manifest.json IDs based on the agent blueprint ID
+/// and packages the manifest files into a zip ready for manual upload.
 /// </summary>
 public class PublishCommand
 {
-    // MOS Titles service URLs
-    private const string MosTitlesUrlProd = "https://titles.prod.mos.microsoft.com";
-
-    /// <summary>
-    /// Gets the appropriate MOS Titles URL based on environment variable override or defaults to production.
-    /// Set MOS_TITLES_URL environment variable to override the default production URL.
-    /// </summary>
-    /// <param name="tenantId">Tenant ID (not used, kept for backward compatibility)</param>
-    /// <returns>MOS Titles base URL from environment variable or production default</returns>
-    private static string GetMosTitlesUrl(string? tenantId)
-    {
-        // Check for environment variable override
-        var envUrl = Environment.GetEnvironmentVariable("MOS_TITLES_URL");
-        if (!string.IsNullOrWhiteSpace(envUrl))
-        {
-            return envUrl;
-        }
-
-        return MosTitlesUrlProd;
-    }
-
     /// <summary>
     /// Gets the project directory from config, with fallback to current directory.
-    /// Ensures absolute path resolution for portability.
     /// </summary>
-    /// <param name="config">Configuration containing deploymentProjectPath</param>
-    /// <param name="logger">Logger for warnings</param>
-    /// <returns>Absolute path to project directory</returns>
     private static string GetProjectDirectory(Agent365Config config, ILogger logger)
     {
         var projectPath = config.DeploymentProjectPath;
@@ -64,7 +30,6 @@ public class PublishCommand
             return Environment.CurrentDirectory;
         }
 
-        // Resolve to absolute path (handles both relative and absolute paths)
         try
         {
             var absolutePath = Path.IsPathRooted(projectPath)
@@ -86,63 +51,28 @@ public class PublishCommand
         }
     }
 
-    /// <summary>
-    /// Requirement checks for publish: MOS service principals must exist and be configured.
-    /// Runs before the interactive manifest editing pause to avoid wasted work.
-    /// </summary>
-    internal static List<IRequirementCheck> GetChecks(GraphApiService graphApiService, AgentBlueprintService blueprintService)
-        => [new MosPrerequisitesRequirementCheck(graphApiService, blueprintService)];
-
     public static Command CreateCommand(
         ILogger<PublishCommand> logger,
         IConfigService configService,
-        AgentPublishService agentPublishService,
-        GraphApiService graphApiService,
-        AgentBlueprintService blueprintService,
         ManifestTemplateService manifestTemplateService)
     {
-        var command = new Command("publish", "Update manifest.json IDs and publish package; configure federated identity and app role assignments");
+        var command = new Command("publish", "Update manifest IDs and create a package for upload to Microsoft 365 Admin Center");
 
-        var dryRunOption = new Option<bool>("--dry-run", "Show changes without writing file or calling APIs");
-        var skipGraphOption = new Option<bool>("--skip-graph", "Skip Graph federated identity and role assignment steps");
-        var mosEnvOption = new Option<string>("--mos-env", () => "prod", "MOS environment identifier (e.g. prod, dev) - use MOS_TITLES_URL environment variable for custom URLs");
-        var mosPersonalTokenOption = new Option<string?>("--mos-token", () => Environment.GetEnvironmentVariable("MOS_PERSONAL_TOKEN"), "Override MOS token (personal token) - bypass script & cache");
-        var verboseOption = new Option<bool>(
-            ["--verbose", "-v"],
-            description: "Enable verbose logging");
-        
+        var dryRunOption = new Option<bool>("--dry-run", "Show changes without writing files or creating the zip");
+
         command.AddOption(dryRunOption);
-        command.AddOption(skipGraphOption);
-        command.AddOption(mosEnvOption);
-        command.AddOption(mosPersonalTokenOption);
-        command.AddOption(verboseOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
-            // Extract options from invocation context (enables context.ExitCode on error paths)
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
-            var skipGraph = context.ParseResult.GetValueForOption(skipGraphOption);
-            var mosEnv = context.ParseResult.GetValueForOption(mosEnvOption) ?? "prod";
-            var mosPersonalToken = context.ParseResult.GetValueForOption(mosPersonalTokenOption);
-            var verbose = context.ParseResult.GetValueForOption(verboseOption);
 
-            // Track whether the command completed normally (success or expected early exit)
-            // All unhandled error paths will set context.ExitCode = 1
             var isNormalExit = false;
-
-            // Generate correlation ID at workflow entry point
-            var correlationId = HttpClientFactory.GenerateCorrelationId();
 
             try
             {
-                // Load configuration using ConfigService
                 var config = await configService.LoadAsync();
-                logger.LogDebug("Configuration loaded successfully (CorrelationId: {CorrelationId})", correlationId);
-
-                // Extract required values from config
-                var tenantId = config.TenantId;
-                var agentBlueprintDisplayName = config.AgentBlueprintDisplayName;
                 var blueprintId = config.AgentBlueprintId;
+                var displayName = config.AgentBlueprintDisplayName;
 
                 if (string.IsNullOrWhiteSpace(blueprintId))
                 {
@@ -150,477 +80,100 @@ public class PublishCommand
                     return;
                 }
 
-                if (!skipGraph && string.IsNullOrWhiteSpace(config.ClientAppId))
-                {
-                    logger.LogError("clientAppId is not configured. Run 'a365 setup blueprint' first to configure client app authentication.");
-                    return;
-                }
-
-                // Use deploymentProjectPath from config for portability
                 var baseDir = GetProjectDirectory(config, logger);
                 var manifestDir = Path.Combine(baseDir, "manifest");
                 var manifestPath = Path.Combine(manifestDir, "manifest.json");
-                var agenticUserManifestTemplatePath = Path.Combine(manifestDir, "agenticUserTemplateManifest.json");
+                var agenticUserManifestPath = Path.Combine(manifestDir, "agenticUserTemplateManifest.json");
 
-                logger.LogDebug("Using project directory: {BaseDir}", baseDir);
-                logger.LogDebug("Using manifest directory: {ManifestDir}", manifestDir);
-                logger.LogDebug("Using blueprint ID: {BlueprintId}", blueprintId);
+                logger.LogDebug("Project directory: {BaseDir}", baseDir);
+                logger.LogDebug("Blueprint ID: {BlueprintId}", blueprintId);
 
-                // If manifest directory doesn't exist, extract templates from embedded resources
                 if (!Directory.Exists(manifestDir))
                 {
-                    logger.LogInformation("Manifest directory not found. Extracting templates from embedded resources...");
+                    logger.LogInformation("Extracting manifest templates...");
                     Directory.CreateDirectory(manifestDir);
 
                     if (!manifestTemplateService.ExtractTemplates(manifestDir))
                     {
-                        logger.LogError("Failed to extract manifest templates from embedded resources");
+                        logger.LogError("Failed to extract manifest templates from embedded resources.");
                         return;
                     }
-
-                    logger.LogInformation("Successfully extracted manifest templates to {ManifestDir}", manifestDir);
-                    logger.LogInformation("Please customize the manifest files before publishing");
                 }
 
-                // Ensure agenticUserTemplateManifest.json exists in the manifest directory.
-                // It may be missing if the manifest directory was created by a previous partial run
-                // or an older CLI version that did not include this file.
-                if (!File.Exists(agenticUserManifestTemplatePath))
+                if (!File.Exists(agenticUserManifestPath))
                 {
-                    logger.LogInformation("agenticUserTemplateManifest.json not found. Extracting from embedded resources...");
                     if (!manifestTemplateService.EnsureTemplateFile(manifestDir, "agenticUserTemplateManifest.json"))
                     {
-                        logger.LogError("Failed to extract agenticUserTemplateManifest.json from embedded resources");
+                        logger.LogError("Failed to extract agenticUserTemplateManifest.json from embedded resources.");
                         return;
                     }
                 }
 
                 if (!File.Exists(manifestPath))
                 {
-                    logger.LogError("Manifest file not found at {Path}", manifestPath);
-                    logger.LogError("Expected location based on deploymentProjectPath: {ProjectPath}", baseDir);
+                    logger.LogError("Manifest not found: {Path}", manifestPath);
                     return;
                 }
 
-                // Determine MOS Titles URL based on tenant
-                var mosTitlesBaseUrl = GetMosTitlesUrl(tenantId);
-                logger.LogInformation("Using MOS Titles URL: {Url} (Tenant: {TenantId})", mosTitlesBaseUrl, tenantId ?? "unknown");
-
-                if (string.IsNullOrWhiteSpace(tenantId))
-                {
-                    if (!skipGraph)
-                    {
-                        logger.LogError("tenantId is not configured. Graph operations require tenantId. Use --skip-graph to publish without Graph operations, or run 'a365 setup all' to complete setup.");
-                        return;
-                    }
-                    logger.LogWarning("tenantId missing in configuration; using default production MOS URL. Graph operations will be skipped (--skip-graph).");
-                }
-
-                string updatedManifest = await UpdateManifestFileAsync(logger, agentBlueprintDisplayName, blueprintId, manifestPath);
-
-                string updatedAgenticUserManifestTemplate = await UpdateAgenticUserManifestTemplateFileAsync(logger, agentBlueprintDisplayName, blueprintId, agenticUserManifestTemplatePath);
+                var updatedManifest = await UpdateManifestFileAsync(displayName, blueprintId, manifestPath);
+                var updatedAgenticUserManifest = await UpdateAgenticUserManifestTemplateFileAsync(blueprintId, agenticUserManifestPath);
 
                 if (dryRun)
                 {
-                    logger.LogInformation("DRY RUN: Updated manifest (not saved):\n{Json}", updatedManifest);
-                    logger.LogInformation("DRY RUN: Updated agentic user manifest template (not saved):\n{Json}", updatedAgenticUserManifestTemplate);
-                    logger.LogInformation("DRY RUN: Skipping zipping & API calls");
+                    logger.LogInformation("DRY RUN: manifest.json (not saved):\n{Json}", updatedManifest);
+                    logger.LogInformation("DRY RUN: agenticUserTemplateManifest.json (not saved):\n{Json}", updatedAgenticUserManifest);
                     isNormalExit = true;
                     return;
                 }
 
                 await File.WriteAllTextAsync(manifestPath, updatedManifest);
-                logger.LogInformation("Manifest updated successfully with agentBlueprintId {Id}", blueprintId);
+                await File.WriteAllTextAsync(agenticUserManifestPath, updatedAgenticUserManifest);
 
-                await File.WriteAllTextAsync(agenticUserManifestTemplatePath, updatedAgenticUserManifestTemplate);
-                logger.LogInformation("Agentic user manifest template updated successfully with agentBlueprintId {Id}", blueprintId);
+                logger.LogInformation("Manifest updated: {Path}", manifestPath);
+                logger.LogInformation("");
+                logger.LogInformation("Customize before packaging:");
+                logger.LogInformation("  version              - increment for republishing (e.g., 1.0.1), must be higher than previous");
 
-                logger.LogDebug("Manifest files written to disk");
+                if (string.IsNullOrWhiteSpace(displayName))
+                    logger.LogWarning("  name.short           - not set; edit manifest.json to provide a short name (30 chars max) before packaging");
+                else if (displayName.Length > 30)
+                    logger.LogWarning("  name.short           - EXCEEDS 30 chars ({Length}), currently: \"{Name}\" -- shorten before packaging", displayName.Length, displayName);
+                else
+                    logger.LogInformation("  name.short           - 30 chars max, currently: \"{Name}\"", displayName);
 
-                // Verify MOS prerequisites before asking user to edit manifest (fail fast)
-                // Skip when --skip-graph is set: MOS checks perform Graph operations
-                if (!skipGraph)
-                {
-                    await RequirementsSubcommand.RunChecksOrExitAsync(
-                        GetChecks(graphApiService, blueprintService), config, logger, context.GetCancellationToken());
-                }
+                logger.LogInformation("  name.full            - displayed in Microsoft 365");
+                logger.LogInformation("  description.short    - 1-2 sentences");
+                logger.LogInformation("  description.full     - detailed capabilities");
+                logger.LogInformation("  developer.*          - name, websiteUrl, privacyUrl");
+                logger.LogInformation("  icons                - replace color.png and outline.png with your branding");
+                logger.LogInformation("");
 
-                // Interactive pause for user customization
-                logger.LogInformation("");
-                logger.LogInformation("=== MANIFEST UPDATED ===");
-                Console.WriteLine($"Location: {manifestPath}");
-                logger.LogInformation("");
-                logger.LogInformation("");
-                logger.LogInformation("=== CUSTOMIZE YOUR AGENT MANIFEST ===");
-                logger.LogInformation("");
-                logger.LogInformation("Please customize these fields before publishing:");
-                logger.LogInformation("");
-                logger.LogInformation("  Version ('version')");
-                logger.LogInformation("    - Increment for republishing (e.g., 1.0.0 to 1.0.1)");
-                logger.LogInformation("    - REQUIRED: Must be higher than previously published version");
-                logger.LogInformation("");
-                logger.LogInformation("  Agent Name ('name.short' and 'name.full')");
-                logger.LogInformation("    - Make it descriptive and user-friendly");
-                logger.LogInformation("    - Currently: {Name}", agentBlueprintDisplayName);
-                logger.LogInformation("    - IMPORTANT: 'name.short' must be 30 characters or less");
-                logger.LogInformation("");
-                logger.LogInformation("  Descriptions ('description.short' and 'description.full')");
-                logger.LogInformation("    - Short: 1-2 sentences");
-                logger.LogInformation("    - Full: Detailed capabilities");
-                logger.LogInformation("");
-                logger.LogInformation("  Developer Info ('developer.name', 'developer.websiteUrl', 'developer.privacyUrl')");
-                logger.LogInformation("    - Should reflect your organization details");
-                logger.LogInformation("");
-                logger.LogInformation("  Icons");
-                logger.LogInformation("    - Replace 'color.png' and 'outline.png' with your custom branding");
-                logger.LogInformation("");
-                
-                // Ask if user wants to open the file now (skip when stdin is not a terminal)
                 if (!Console.IsInputRedirected)
                 {
                     Console.Write("Open manifest in your default editor now? (Y/n): ");
                     var openResponse = Console.ReadLine()?.Trim().ToLowerInvariant();
-
                     if (openResponse != "n" && openResponse != "no")
-                    {
                         FileHelper.TryOpenFileInDefaultEditor(manifestPath, logger);
-                    }
 
-                    Console.Write("Press Enter when you have finished editing the manifest to continue with publish: ");
+                    Console.Write("Press Enter when you have finished editing the manifest to continue: ");
                     Console.Out.Flush();
                     Console.ReadLine();
+                    Console.WriteLine();
                 }
 
-                logger.LogInformation("Continuing with publish process...");
-                logger.LogInformation("");
-
-                // Step 1: Create manifest.zip including the four required files
                 var zipPath = Path.Combine(manifestDir, "manifest.zip");
-                if (File.Exists(zipPath))
-                {
-                    try { File.Delete(zipPath); } catch { /* ignore */ }
-                }
 
-                // Identify files to include in zip; agenticUserTemplateManifest.json is explicitly listed
-                // to ensure it is always included regardless of other files present in the directory
-                var expectedFiles = new List<string>();
-                string[] candidateNames = ["manifest.json", "agenticUserTemplateManifest.json", "color.png", "outline.png", "logo.png", "icon.png"];
-                foreach (var name in candidateNames)
+                if (!await manifestTemplateService.CreateManifestZipAsync(manifestDir, zipPath))
                 {
-                    var p = Path.Combine(manifestDir, name);
-                    if (File.Exists(p)) expectedFiles.Add(p);
-                    if (expectedFiles.Count == 4) break;
-                }
-                // If still fewer than 4, add any other files to reach 4 (non recursive)
-                if (expectedFiles.Count < 4)
-                {
-                    foreach (var f in Directory.EnumerateFiles(manifestDir).Where(f => !expectedFiles.Contains(f)))
-                    {
-                        expectedFiles.Add(f);
-                        if (expectedFiles.Count == 4) break;
-                    }
-                }
-
-                if (expectedFiles.Count == 0)
-                {
-                    logger.LogError("No manifest files found to zip in {Dir}", manifestDir);
+                    logger.LogError("Failed to create manifest package in {Dir}", manifestDir);
                     return;
                 }
 
-                using (var zipStream = new FileStream(zipPath, FileMode.Create, FileAccess.ReadWrite))
-                using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create))
-                {
-                    foreach (var file in expectedFiles)
-                    {
-                        var entryName = Path.GetFileName(file);
-                        var entry = archive.CreateEntry(entryName, CompressionLevel.Optimal);
-                        await using var entryStream = entry.Open();
-                        await using var src = File.OpenRead(file);
-                        await src.CopyToAsync(entryStream);
-                        logger.LogInformation("Added {File} to manifest.zip", entryName);
-                    }
-                }
-                logger.LogInformation("Created archive {ZipPath}", zipPath);
+                logger.LogInformation("Package created: {ZipPath}", zipPath);
+                logger.LogInformation("");
+                logger.LogInformation("To publish: https://admin.microsoft.com > Agents > All agents > Upload custom agent");
+                logger.LogInformation("For details: https://learn.microsoft.com/en-us/copilot/microsoft-365/agent-essentials/agent-lifecycle/agent-upload-agents");
 
-                // Acquire MOS token using native C# service
-                logger.LogDebug("Acquiring MOS authentication token for environment: {Environment}", mosEnv);
-                var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
-                var mosTokenService = new MosTokenService(
-                    cleanLoggerFactory.CreateLogger<MosTokenService>(),
-                    configService);
-
-                string? mosToken = null;
-                try
-                {
-                    mosToken = await mosTokenService.AcquireTokenAsync(mosEnv, mosPersonalToken);
-                    logger.LogDebug("MOS token acquired successfully");
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError(ex, "Failed to acquire MOS token: {Message}", ex.Message);
-                    return;
-                }
-
-                if (string.IsNullOrWhiteSpace(mosToken))
-                {
-                    logger.LogError("Unable to acquire MOS token. Aborting publish.");
-                    return;
-                }
-                
-                using var http = HttpClientFactory.CreateAuthenticatedClient(mosToken, correlationId: correlationId);
-
-                // Log token info for debugging (first/last chars only for security)
-                if (mosToken.Length >= 20)
-                {
-                    var prefixLen = Math.Min(10, mosToken.Length / 2);
-                    var suffixLen = Math.Min(10, mosToken.Length / 2);
-                    logger.LogDebug("Using MOS token: {TokenStart}...{TokenEnd} (length: {Length})", 
-                        mosToken[..prefixLen], mosToken[^suffixLen..], mosToken.Length);
-                }
-
-                // Step 2: POST packages (multipart form) - using tenant-specific URL
-                logger.LogInformation("Uploading package to Titles service...");
-                var packagesUrl = $"{mosTitlesBaseUrl}/admin/v1/tenants/packages";
-                logger.LogDebug("Upload URL: {Url}", packagesUrl);
-                logger.LogDebug("Package file: {ZipPath}", zipPath);
-                using var form = new MultipartFormDataContent();
-                await using (var zipFs = File.OpenRead(zipPath))
-                {
-                    var fileContent = new StreamContent(zipFs);
-                    fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/zip");
-                    form.Add(fileContent, "package", Path.GetFileName(zipPath));
-
-                    HttpResponseMessage uploadResp;
-                    try
-                    {
-                        uploadResp = await http.PostAsync(packagesUrl, form);
-                    }
-                    catch (HttpRequestException ex)
-                    {
-                        logger.LogError("Network error during package upload: {Message}", ex.Message);
-                        logger.LogInformation("The manifest package is available at: {ZipPath}", zipPath);
-                        logger.LogInformation("You can manually upload it at: {Url}", packagesUrl);
-                        logger.LogInformation("When network connectivity is restored, you can retry the publish command.");
-                        return;
-                    }
-                    catch (TaskCanceledException ex)
-                    {
-                        logger.LogError("Upload request timed out: {Message}", ex.Message);
-                        logger.LogInformation("The manifest package is available at: {ZipPath}", zipPath);
-                        logger.LogInformation("You can manually upload it at: {Url}", packagesUrl);
-                        logger.LogInformation("When network connectivity is restored, you can retry the publish command.");
-                        return;
-                    }
-
-                    var uploadBody = await uploadResp.Content.ReadAsStringAsync();
-                    logger.LogInformation("Titles upload HTTP {StatusCode}. Raw body length={Length} bytes", (int)uploadResp.StatusCode, uploadBody?.Length ?? 0);
-                    if (!uploadResp.IsSuccessStatusCode)
-                    {
-                        logger.LogError("Package upload failed ({Status}). Body:\n{Body}", uploadResp.StatusCode, uploadBody);
-                        
-                        // Log response headers for additional diagnostic info
-                        logger.LogDebug("Response headers:");
-                        foreach (var header in uploadResp.Headers)
-                        {
-                            logger.LogDebug("  {HeaderName}: {HeaderValue}", header.Key, string.Join(", ", header.Value));
-                        }
-                        foreach (var header in uploadResp.Content.Headers)
-                        {
-                            logger.LogDebug("  {HeaderName}: {HeaderValue}", header.Key, string.Join(", ", header.Value));
-                        }
-                        
-                        // Provide helpful troubleshooting info for 401
-                        if (uploadResp.StatusCode == System.Net.HttpStatusCode.Unauthorized)
-                        {
-                            logger.LogError("");
-                            logger.LogError("TROUBLESHOOTING 401 UNAUTHORIZED:");
-                            logger.LogError("1. Verify MOS API permissions are configured correctly");
-                            logger.LogError("   - Required permission: Title.ReadWrite.All");
-                            logger.LogError("   - Admin consent must be granted");
-                            logger.LogError("2. Check that the token contains the correct scopes");
-                            logger.LogError("   - Run 'a365 publish -v' to see token scopes in debug logs");
-                            logger.LogError("3. Ensure you're signed in with the correct account");
-                            logger.LogError("   - Run 'az account show' to verify current account");
-                            logger.LogError("4. Try clearing the MOS token cache and re-authenticating:");
-                            logger.LogError("   - Delete: {CachePath}", Path.Combine(FileHelper.GetSecureCrossOsDirectory(), "mos-token-cache.json"));
-                            logger.LogError("   - Run: a365 publish");
-                            logger.LogError("");
-                        }
-                        
-                        return;
-                    }
-
-                    JsonDocument? uploadJson = null;
-                    try
-                    {
-                        if (string.IsNullOrWhiteSpace(uploadBody))
-                        {
-                            logger.LogError("Upload response body is null or empty. Cannot parse JSON.");
-                            return;
-                        }
-                        uploadJson = JsonDocument.Parse(uploadBody);
-                    }
-                    catch (Exception jex)
-                    {
-                        logger.LogError(jex, "Failed to parse upload response JSON. Body was:\n{Body}", uploadBody);
-                        return;
-                    }
-                    // Extract operationId (required)
-                    if (!uploadJson.RootElement.TryGetProperty("operationId", out var opIdEl))
-                    {
-                        var propertyNames = string.Join(
-                            ", ",
-                            uploadJson.RootElement.EnumerateObject().Select(p => p.Name));
-                        logger.LogError("operationId missing in upload response. Present properties: [{Props}] Raw body:\n{Body}", propertyNames, uploadBody);
-                        return;
-                    }
-                    var operationId = opIdEl.GetString();
-                    if (string.IsNullOrWhiteSpace(operationId))
-                    {
-                        logger.LogError("operationId property empty/null. Raw body:\n{Body}", uploadBody);
-                        return;
-                    }
-                    // Extract titleId only from titlePreview block
-                    string? titleId = null;
-                    if (uploadJson.RootElement.TryGetProperty("titlePreview", out var previewEl) &&
-                        previewEl.ValueKind == JsonValueKind.Object &&
-                        previewEl.TryGetProperty("titleId", out var previewTitleIdEl))
-                    {
-                        titleId = previewTitleIdEl.GetString();
-                    }
-                    if (string.IsNullOrWhiteSpace(titleId))
-                    {
-                        logger.LogError("titleId not found under titlePreview.titleId. Raw body:\n{Body}", uploadBody);
-                        return;
-                    }
-
-                    logger.LogInformation("Upload succeeded. operationId={Op} titleId={Title}", operationId, titleId);
-
-                    logger.LogDebug("Proceeding to title creation step...");
-
-                    // POST titles with operationId - using tenant-specific URL
-                    var titlesUrl = $"{mosTitlesBaseUrl}/admin/v1/tenants/packages/titles";
-                    logger.LogDebug("Title creation URL: {Url}", titlesUrl);
-                    var titlePayload = JsonSerializer.Serialize(new { operationId });
-
-                    HttpResponseMessage titlesResp;
-                    try
-                    {
-                        using (var content = new StringContent(titlePayload, System.Text.Encoding.UTF8, "application/json"))
-                        {
-                            titlesResp = await http.PostAsync(titlesUrl, content);
-                        }
-                    }
-                    catch (HttpRequestException ex)
-                    {
-                        logger.LogError("Network error during title creation: {Message}", ex.Message);
-                        logger.LogInformation("Package was uploaded successfully (operationId={Op}), but title creation failed.", operationId);
-                        return;
-                    }
-                    catch (TaskCanceledException ex)
-                    {
-                        logger.LogError("Title creation request timed out: {Message}", ex.Message);
-                        logger.LogInformation("Package was uploaded successfully (operationId={Op}), but title creation failed.", operationId);
-                        return;
-                    }
-
-                    var titlesBody = await titlesResp.Content.ReadAsStringAsync();
-                    if (!titlesResp.IsSuccessStatusCode)
-                    {
-                        logger.LogError("Titles creation failed ({Status}). Payload sent={Payload}. Body:\n{Body}", titlesResp.StatusCode, titlePayload, titlesBody);
-                        return;
-                    }
-                    logger.LogInformation("Title creation initiated. Response body length={Length} bytes", titlesBody?.Length ?? 0);
-
-                    // Wait 10 seconds before allowing all users to ensure title is fully created
-                    logger.LogInformation("Configuring title access for all users with retry and exponential backoff...");
-                    var allowUrl = $"{mosTitlesBaseUrl}/admin/v1/tenants/titles/{titleId}/allowed";
-                    var allowedPayload = JsonSerializer.Serialize(new
-                    {
-                        EntityCollection = new
-                        {
-                            ForAllUsers = true,
-                            Entities = Array.Empty<object>()
-                        }
-                    });
-
-                    // Use custom retry helper
-                    var retryHelper = new RetryHelper(logger);
-
-                    var allowResult = await retryHelper.ExecuteWithRetryAsync(
-                        async ct =>
-                        {
-                            using var content = new StringContent(allowedPayload, System.Text.Encoding.UTF8, "application/json");
-                            var resp = await http.PostAsync(allowUrl, content, ct);
-                            var body = await resp.Content.ReadAsStringAsync(ct);
-                            return (resp, body);
-                        },
-                        result =>
-                        {
-                            var (resp, body) = result;
-
-                            if (resp.IsSuccessStatusCode)
-                            {
-                                return false;
-                            }
-
-                            if ((int)resp.StatusCode == 404 && body.Contains("Title Not Found", StringComparison.OrdinalIgnoreCase))
-                            {
-                                logger.LogWarning("Title not found yet (HTTP 404). Will retry...");
-                                return true;
-                            }
-
-                            return false;
-                        },
-                        maxRetries: 5,
-                        baseDelaySeconds: 10,
-                        CancellationToken.None);
-
-                    var (allowResp, allowBody) = allowResult;
-                    if (!allowResp.IsSuccessStatusCode)
-                    {
-                        logger.LogError("Allow users failed ({Status}). URL={Url} Payload={Payload} Body:\n{Body}", allowResp.StatusCode, allowUrl, allowedPayload, allowBody);
-                        return;
-                    }
-                    logger.LogInformation("Title access configured for all users. Allow response length={Length} bytes", allowBody?.Length ?? 0);
-                    logger.LogDebug("Allow users response body:\n{Body}", allowBody);
-                }
-
-                // ================= Graph API Operations =================
-                if (skipGraph)
-                {
-                    logger.LogInformation("--skip-graph specified; skipping federated identity credential and role assignment.");
-                    isNormalExit = true;
-                    return;
-                }
-
-                if (string.IsNullOrWhiteSpace(tenantId))
-                {
-                    logger.LogWarning("tenantId unavailable; skipping Graph operations.");
-                    // Treat as normal exit (exit code 0) because MOS publish completed successfully
-                    // and Graph operations are optional. Users who need Graph operations should ensure
-                    // tenantId is configured or use --skip-graph explicitly.
-                    isNormalExit = true;
-                    return;
-                }
-
-                logger.LogDebug("Configuring Graph API permissions (federated identity and role assignments)...");
-                logger.LogInformation("Executing Graph API operations...");
-                logger.LogInformation("TenantId: {TenantId}, BlueprintId: {BlueprintId}", tenantId, blueprintId);
-
-                var graphSuccess = await agentPublishService.ExecutePublishGraphStepsAsync(
-                    tenantId,
-                    blueprintId,
-                    blueprintId, // Using blueprintId as manifestId
-                    CancellationToken.None);
-
-                if (!graphSuccess)
-                {
-                    logger.LogError("Graph API operations failed");
-                    return;
-                }
-
-                logger.LogInformation("Publish completed successfully!");
                 isNormalExit = true;
             }
             catch (Exception ex)
@@ -629,10 +182,6 @@ public class PublishCommand
             }
             finally
             {
-                // Set exit code 1 for all error paths (different from ConfigCommand's per-site approach,
-                // but more robust as it catches all error returns and exceptions automatically).
-                // This ensures any error path that doesn't explicitly set isNormalExit=true will
-                // return exit code 1, preventing the bug where ~27 error paths returned 0.
                 if (!isNormalExit)
                 {
                     context.ExitCode = 1;
@@ -643,68 +192,45 @@ public class PublishCommand
         return command;
     }
 
-    private static async Task<string> UpdateManifestFileAsync(ILogger<PublishCommand> logger, string? agentBlueprintDisplayName, string blueprintId, string manifestPath)
+    private static async Task<string> UpdateManifestFileAsync(string? displayName, string blueprintId, string manifestPath)
     {
-        // Load manifest as mutable JsonNode
         var manifestText = await File.ReadAllTextAsync(manifestPath);
         var node = JsonNode.Parse(manifestText) ?? new JsonObject();
 
-        // Update top-level id
         node["id"] = blueprintId;
 
-        // Update name.short and name.full if agentBlueprintDisplayName is available
-        if (!string.IsNullOrWhiteSpace(agentBlueprintDisplayName))
+        if (!string.IsNullOrWhiteSpace(displayName))
         {
             if (node["name"] is not JsonObject nameObj)
             {
                 nameObj = new JsonObject();
                 node["name"] = nameObj;
             }
-            else
-            {
-                nameObj = (JsonObject)node["name"]!;
-            }
 
-            nameObj["short"] = agentBlueprintDisplayName;
-            nameObj["full"] = agentBlueprintDisplayName;
-            logger.LogInformation("Updated manifest name to: {Name}", agentBlueprintDisplayName);
+            nameObj["short"] = displayName;
+            nameObj["full"] = displayName;
         }
 
-        // bots[0].botId
         if (node["bots"] is JsonArray bots && bots.Count > 0 && bots[0] is JsonObject botObj)
-        {
             botObj["botId"] = blueprintId;
-        }
 
-        // webApplicationInfo.id + resource
         if (node["webApplicationInfo"] is JsonObject webInfo)
         {
             webInfo["id"] = blueprintId;
             webInfo["resource"] = $"api://{blueprintId}";
         }
 
-        // copilotAgents.customEngineAgents[0].id
         if (node["copilotAgents"] is JsonObject ca && ca["customEngineAgents"] is JsonArray cea && cea.Count > 0 && cea[0] is JsonObject ceObj)
-        {
             ceObj["id"] = blueprintId;
-        }
 
-        var updated = node.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
-        return updated;
+        return node.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
     }
 
-    private static async Task<string> UpdateAgenticUserManifestTemplateFileAsync(ILogger<PublishCommand> logger, string? agentBlueprintDisplayName, string blueprintId, string agenticUserManifestTemplateFilePath)
+    private static async Task<string> UpdateAgenticUserManifestTemplateFileAsync(string blueprintId, string agenticUserManifestPath)
     {
-        // Load manifest as mutable JsonNode
-        var agenticUserManifestTemplateFileContents = await File.ReadAllTextAsync(agenticUserManifestTemplateFilePath);
-        var node = JsonNode.Parse(agenticUserManifestTemplateFileContents) ?? new JsonObject();
-
-        // Update top-level id
+        var contents = await File.ReadAllTextAsync(agenticUserManifestPath);
+        var node = JsonNode.Parse(contents) ?? new JsonObject();
         node["agentIdentityBlueprintId"] = blueprintId;
-
-        var updated = node.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
-        return updated;
+        return node.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
     }
-
 }
-
