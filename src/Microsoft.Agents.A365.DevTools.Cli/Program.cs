@@ -48,13 +48,51 @@ class Program
             ConfigureServices(services, logLevel, logFilePath);
             var serviceProvider = services.BuildServiceProvider();
 
-            // Check for updates (non-blocking, with timeout)
+            // Notice and version checks run concurrently — worst-case startup delay is ~2s, not ~4s.
+            using var noticeCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            using var versionCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+
+            var noticeService = serviceProvider.GetRequiredService<INoticeService>();
+            var versionCheckService = serviceProvider.GetRequiredService<IVersionCheckService>();
+
+            var noticeTask = noticeService.CheckForNoticeAsync(noticeCts.Token);
+            var versionTask = versionCheckService.CheckForUpdatesAsync(versionCts.Token);
+
+            await Task.WhenAll(
+                noticeTask.ContinueWith(_ => { }, TaskContinuationOptions.None),
+                versionTask.ContinueWith(_ => { }, TaskContinuationOptions.None));
+
+            // Display notice result
             try
             {
-                var versionCheckService = serviceProvider.GetRequiredService<IVersionCheckService>();
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-                var result = await versionCheckService.CheckForUpdatesAsync(cts.Token);
+                var noticeResult = await noticeTask;
+                if (noticeResult.HasNotice)
+                {
+                    const string separator = "------------------------------------------------------------";
+                    startupLogger.LogWarning("");
+                    startupLogger.LogWarning(separator);
+                    startupLogger.LogWarning("URGENT NOTICE");
+                    startupLogger.LogWarning(separator);
+                    startupLogger.LogWarning("{Message}", noticeResult.Message);
+                    startupLogger.LogWarning("");
+                    startupLogger.LogWarning("To update, run: {Command}", noticeResult.UpdateCommand);
+                    startupLogger.LogWarning(separator);
+                    startupLogger.LogWarning("");
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                startupLogger.LogDebug("Notice check timed out");
+            }
+            catch (Exception ex)
+            {
+                startupLogger.LogDebug(ex, "Notice check failed: {Message}", ex.Message);
+            }
 
+            // Display version check result
+            try
+            {
+                var result = await versionTask;
                 if (result.UpdateAvailable)
                 {
                     startupLogger.LogWarning("");
@@ -194,6 +232,7 @@ class Program
         services.AddSingleton<AuthenticationService>();
         services.AddSingleton<IClientAppValidator, ClientAppValidator>();
         services.AddSingleton<IVersionCheckService, VersionCheckService>();
+        services.AddSingleton<INoticeService, NoticeService>();
 
         // Add Microsoft Agent 365 Tooling Service with environment detection
         services.AddSingleton<IAgent365ToolingService>(provider =>
