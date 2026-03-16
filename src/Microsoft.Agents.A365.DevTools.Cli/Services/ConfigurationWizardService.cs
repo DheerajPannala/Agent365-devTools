@@ -595,8 +595,12 @@ public class ConfigurationWizardService : IConfigurationWizardService
         Console.WriteLine("  4. S1  - Standard (auto-scale, staging slots)");
         Console.WriteLine("  5. P1V3 - Premium V3 (high performance)");
         Console.WriteLine();
-        Console.WriteLine("NOTE: Free tier (F1) is recommended for development and testing.");
-        Console.WriteLine("      Basic tier (B1) often has zero quota by default - may require quota increase.");
+            Console.WriteLine("NOTE: B1 (Basic) is the recommended default. It handles the Node.js/TypeScript");
+            Console.WriteLine("      Oryx remote build (npm install + tsc) within the startup timeout.");
+            Console.WriteLine("      F1 (Free) has a 230s cold-start limit that is routinely exceeded by");
+            Console.WriteLine("      TypeScript agent projects during remote build — avoid F1 for Node.js/TS.");
+            Console.WriteLine("      B1 may have zero quota in new subscriptions — if creation fails, request");
+            Console.WriteLine("      a quota increase or try a different Azure region.");
         Console.WriteLine();
 
         var defaultSku = existingConfig?.AppServicePlanSku ?? ConfigConstants.DefaultAppServicePlanSku;

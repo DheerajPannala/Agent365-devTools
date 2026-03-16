@@ -101,6 +101,8 @@ Required **delegated** Microsoft Graph permissions (all must have **admin consen
 | `DelegatedPermissionGrant.ReadWrite.All` | Grant delegated permissions |
 | `Directory.Read.All` | Read directory data |
 
+> ⚠️ **WARNING — Do NOT use "Grant admin consent" in the Entra portal for this app registration.** The `AgentIdentityBlueprint.*` permissions above are beta-only and are not visible in the Entra admin center UI. If a Global Admin clicks "Grant admin consent" in the portal after these permissions have been granted via Graph API, the portal's consent mechanism will **silently delete** the `AgentIdentityBlueprint.*` grants. All permission grants for this app must be managed exclusively via the Graph API `appRoleAssignments` endpoint. If the permissions are accidentally removed, re-run the Graph API grants to restore them.
+
 If the app does not exist, permissions are missing, or admin consent has not been granted, see "What to do if validation fails" below.
 
 **If validation fails** (app not found, permissions missing, or no admin consent):
@@ -559,12 +561,15 @@ Ask the user: **"Please review and update your manifest.json file with your agen
 
 ### Publish the agent manifest
 
-Run `a365 publish`. This step updates the agent's manifest identifiers and publishes the agent package to Microsoft Online Services (specifically, it registers the agent with the Microsoft 365 admin center under your tenant). What this does:
+Run `a365 publish`. This command updates the agent's manifest identifiers and packages the manifest files into a zip ready for **manual** upload to the Microsoft 365 Admin Center. What this does:
 
-- It takes your project's `manifest.json` (which should define your agent's identity and capabilities) and updates certain identifiers in it (the CLI will inject the Azure AD application blueprint ID where needed).
-- It then publishes the agent manifest/package to your tenant's catalog (so that the agent can be "hired" or installed in Teams and other apps).
+- Updates `manifest.json` and `agenticUserTemplateManifest.json` with your agent blueprint ID.
+- Creates `manifest/manifest.zip` in your project directory.
+- Prints the manual upload URL (Microsoft 365 Admin Center > Agents > All agents > Upload custom agent).
 
-Watch for output messages. Successful publish will indicate that the agent manifest is updated and that you can proceed to create an instance of the agent. If there's an error during publish, read it closely. For example, if the CLI complains about being unable to update some manifest or reach the admin center, ensure your account has the necessary privileges and that the custom app registration has the permissions for `Application.ReadWrite.All` (since publish might call Graph to update applications). Also, ensure your internet connectivity is good.
+> **Important:** `a365 publish` does **not** automatically upload to the Microsoft 365 Admin Center. After the command completes, you must upload `manifest.zip` manually through the admin center (a browser-only step). Follow the printed instructions or see the post-deployment section below.
+
+Watch for output messages indicating the package was created successfully. If there is an error, check that `agentBlueprintId` is populated in your config (run `a365 setup all` first if it is not).
 
 ### Deploy the agent code to Azure
 
@@ -620,9 +625,12 @@ Provide the user with the following instructions:
 
 Provide the user with the following instructions:
 
-1. Open **Teams > Apps** and search for your agent name
-2. Select your agent and click **Request Instance** (or **Create Instance**)
-3. Teams sends the request to your tenant admin for approval
+> **Note (Frontier preview):** During Frontier preview, the blueprint is discoverable via **Microsoft 365 Copilot > Apps**, not Teams > Apps. The "Agents for your team" category in Teams may not be visible even after publishing. Search for your agent in M365 Copilot to Request or Create an instance. After an instance is created, the agent becomes accessible in Teams chat.
+
+1. Open **Microsoft 365 Copilot > Apps** and search for your agent name.
+  *(If not found there, also try Teams > Apps — availability depends on tenant rollout.)*
+2. Select your agent and click **Request Instance** (or **Create Instance**).
+3. Teams sends the request to your tenant admin for approval.
 
 Admins can review and approve requests from the [Microsoft admin center - Requested Agents](https://admin.cloud.microsoft/#/agents/all/requested) page. After approval, Teams creates the agent instance and makes it available.
 

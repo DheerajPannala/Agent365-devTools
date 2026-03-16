@@ -249,10 +249,26 @@ public class NodeBuilder : IPlatformBuilder
             var buildValue = buildScript.GetString();
             if (!string.IsNullOrWhiteSpace(buildValue))
             {
-                // We always call through npm so it picks up the script from package.json
-                buildCommand = "npm run build";
-                buildRequired = true;
-                _logger.LogInformation("Detected build script; using Oryx build command: {Command}", buildCommand);
+                    // If a dist/ folder was already produced by the local build, do NOT ask Oryx to
+                    // re-run npm run build on Azure. Azure App Service Oryx runs `npm install --production`
+                    // which skips devDependencies, so tools like `tsc` (commonly in devDependencies) are
+                    // not available, causing the Oryx build to fail with "sh: tsc: not found".
+                    // When dist/ exists the compiled output is already in the publish package.
+                    var distPath = Path.Combine(publishPath, "dist");
+                    if (Directory.Exists(distPath))
+                    {
+                        buildCommand = "";
+                        buildRequired = false;
+                        _logger.LogInformation("dist/ folder found in publish output; skipping Oryx remote build " +
+                            "(TypeScript already compiled locally — avoids tsc-not-found on Azure).");
+                    }
+                    else
+                    {
+                        // We always call through npm so it picks up the script from package.json
+                        buildCommand = "npm run build";
+                        buildRequired = true;
+                        _logger.LogInformation("Detected build script; using Oryx build command: {Command}", buildCommand);
+                    }
             }
         }
         else
