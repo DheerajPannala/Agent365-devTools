@@ -149,6 +149,16 @@ public class Agent365Config
     [JsonPropertyName("needDeployment")]
     public bool NeedDeployment { get; init; } = true;
 
+    /// <summary>
+    /// Base URL for Microsoft Graph API.
+    /// Override this to target sovereign / government clouds:
+    ///   GCC High / DoD : "https://graph.microsoft.us"
+    ///   China (21Vianet): "https://microsoftgraph.chinacloudapi.cn"
+    /// Defaults to "https://graph.microsoft.com" when omitted.
+    /// </summary>
+    [JsonPropertyName("graphBaseUrl")]
+    public string GraphBaseUrl { get; init; } = Constants.GraphApiConstants.BaseUrl;
+
     #endregion
 
     #region Authentication Configuration
@@ -420,9 +430,14 @@ public class Agent365Config
     public string? BotMsaAppId { get; set; }
 
     /// <summary>
-    /// Messaging endpoint URL for the bot.
+    /// Messaging endpoint URL for the agent (stored in generated config as "messagingEndpoint").
+    /// [JsonIgnore] prevents a duplicate-key collision with the static <see cref="MessagingEndpoint"/>
+    /// property when Agent365Config is serialized directly via System.Text.Json (both would emit
+    /// the same "messagingEndpoint" key). GetGeneratedConfig() uses reflection to read
+    /// [JsonPropertyName] independently, so persistence to the generated config file is unaffected.
     /// </summary>
-    [JsonPropertyName("botMessagingEndpoint")]
+    [JsonIgnore]
+    [JsonPropertyName("messagingEndpoint")]
     public string? BotMessagingEndpoint { get; set; }
 
     #endregion

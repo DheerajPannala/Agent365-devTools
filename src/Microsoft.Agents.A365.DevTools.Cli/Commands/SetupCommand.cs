@@ -39,7 +39,9 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
             AgentBlueprintService blueprintService,
             BlueprintLookupService blueprintLookupService,
             FederatedCredentialService federatedCredentialService,
-            IClientAppValidator clientAppValidator)
+            IClientAppValidator clientAppValidator,
+            IConfirmationProvider confirmationProvider,
+            ArmApiService? armApiService = null)
         {
             var command = new Command("setup",
                 "Set up your Agent 365 environment with granular control over each step\n\n" +
@@ -51,7 +53,9 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
                 "  4. a365 setup permissions bot\n" +
                 "Or run all steps at once:\n" +
                 "  a365 setup all                      # Full setup (includes infrastructure)\n" +
-                "  a365 setup all --skip-infrastructure # Skip infrastructure if it already exists");
+                "  a365 setup all --skip-infrastructure # Skip infrastructure if it already exists\n\n" +
+                "For non-admin users — complete GA-only grants after setup all:\n" +
+                "  a365 setup admin --config-dir \"<path>\"  # Run as Global Administrator");
 
             // Add subcommands
             command.AddCommand(RequirementsSubcommand.CreateCommand(
@@ -67,7 +71,10 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
                 logger, authValidator, configService, executor, graphApiService, blueprintService));
 
             command.AddCommand(AllSubcommand.CreateCommand(
-                logger, configService, executor, botConfigurator, authValidator, platformDetector, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService));
+                logger, configService, executor, botConfigurator, authValidator, platformDetector, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService, armApiService));
+
+            command.AddCommand(AdminSubcommand.CreateCommand(
+                logger, configService, authValidator, graphApiService, confirmationProvider));
 
             return command;
         }

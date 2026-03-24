@@ -3,6 +3,7 @@
 
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -23,29 +24,38 @@ public class GraphApiService
     private readonly CommandExecutor _executor;
     private readonly HttpClient _httpClient;
     private readonly IMicrosoftGraphTokenProvider? _tokenProvider;
+    private string _graphBaseUrl;
 
-    // Azure CLI token cache to avoid spawning az subprocess for every Graph API call.
-    // Tokens acquired via 'az account get-access-token' are typically valid for 60+ minutes;
-    // we cache them for a shorter window so the CLI still picks up token refreshes promptly.
-    private string? _cachedAzCliToken;
-    private string? _cachedAzCliTenantId;
-    private DateTimeOffset _cachedAzCliTokenExpiry = DateTimeOffset.MinValue;
-    internal static readonly TimeSpan AzCliTokenCacheDuration = TimeSpan.FromMinutes(5);
+    // Token caching is handled at the process level by AzCliHelper.AcquireAzCliTokenAsync.
+    // All GraphApiService instances (and other services) share a single token per
+    // (resource, tenantId) pair — no per-instance cache needed.
 
-    /// <summary>
-    /// Expiry time for the cached Azure CLI token. Internal for testing purposes.
-    /// </summary>
-    internal DateTimeOffset CachedAzCliTokenExpiry
-    {
-        get => _cachedAzCliTokenExpiry;
-        set => _cachedAzCliTokenExpiry = value;
-    }
-    
+    // Login hint resolved once per GraphApiService instance from 'az account show'.
+    // Used to direct MSAL/WAM to the correct Azure CLI identity, preventing the Windows
+    // account (WAM default) or a stale cached MSAL account from being used instead.
+    private string? _loginHint;
+    private bool _loginHintResolved;
+
+    // Resolver delegate for the login hint. Defaults to AzCliHelper.ResolveLoginHintAsync;
+    // injectable via constructor so unit tests can bypass the real 'az account show' process.
+    private readonly Func<Task<string?>> _loginHintResolver;
+
     /// <summary>
     /// Optional custom client app ID to use for authentication with Microsoft Graph PowerShell.
     /// When set, this will be passed to Connect-MgGraph -ClientId parameter.
     /// </summary>
     public string? CustomClientAppId { get; set; }
+
+    /// <summary>
+    /// Override the Microsoft Graph base URL for sovereign / government cloud tenants.
+    /// Defaults to <see cref="GraphApiConstants.BaseUrl"/> (commercial cloud).
+    /// Set this after construction when the config is available (e.g. from Agent365Config.GraphBaseUrl).
+    /// </summary>
+    public string GraphBaseUrl
+    {
+        get => _graphBaseUrl;
+        set => _graphBaseUrl = string.IsNullOrWhiteSpace(value) ? GraphApiConstants.BaseUrl : value;
+    }
 
     // Lightweight wrapper to surface HTTP status, reason and body to callers
     public record GraphResponse
@@ -57,47 +67,58 @@ public class GraphApiService
         public JsonDocument? Json { get; init; }
     }
 
-    // Allow injecting a custom HttpMessageHandler for unit testing
-    public GraphApiService(ILogger<GraphApiService> logger, CommandExecutor executor, HttpMessageHandler? handler = null, IMicrosoftGraphTokenProvider? tokenProvider = null)
+    // Allow injecting a custom HttpMessageHandler for unit testing.
+    // loginHintResolver: optional override for 'az account show' login-hint resolution.
+    // Pass () => Task.FromResult<string?>(null) in unit tests to skip the real az process.
+    public GraphApiService(ILogger<GraphApiService> logger, CommandExecutor executor, HttpMessageHandler? handler = null, IMicrosoftGraphTokenProvider? tokenProvider = null, Func<Task<string?>>? loginHintResolver = null, string? graphBaseUrl = null)
     {
         _logger = logger;
         _executor = executor;
         _httpClient = handler != null ? new HttpClient(handler) : HttpClientFactory.CreateAuthenticatedClient();
         _tokenProvider = tokenProvider;
+        _loginHintResolver = loginHintResolver ?? AzCliHelper.ResolveLoginHintAsync;
+        _graphBaseUrl = string.IsNullOrWhiteSpace(graphBaseUrl) ? GraphApiConstants.BaseUrl : graphBaseUrl;
     }
 
     // Parameterless constructor to ease test mocking/substitution frameworks which may
     // require creating proxy instances without providing constructor arguments.
     public GraphApiService()
-        : this(NullLogger<GraphApiService>.Instance, new CommandExecutor(NullLogger<CommandExecutor>.Instance), null)
+        : this(NullLogger<GraphApiService>.Instance, new CommandExecutor(NullLogger<CommandExecutor>.Instance), null, null, null)
     {
     }
 
     // Two-argument convenience constructor used by tests and callers that supply
     // a logger and an existing CommandExecutor (no custom handler).
     public GraphApiService(ILogger<GraphApiService> logger, CommandExecutor executor)
-        : this(logger ?? NullLogger<GraphApiService>.Instance, executor ?? throw new ArgumentNullException(nameof(executor)), null, null)
+        : this(logger ?? NullLogger<GraphApiService>.Instance, executor ?? throw new ArgumentNullException(nameof(executor)), null, null, null)
     {
     }
 
     /// <summary>
     /// Get access token for Microsoft Graph API using Azure CLI
     /// </summary>
-    public async Task<string?> GetGraphAccessTokenAsync(string tenantId, CancellationToken ct = default)
+    public virtual async Task<string?> GetGraphAccessTokenAsync(string tenantId, CancellationToken ct = default)
     {
         _logger.LogDebug("Acquiring Graph API access token for tenant {TenantId}", tenantId);
-        
+
         try
         {
-            // Check if Azure CLI is authenticated
-            var accountCheck = await _executor.ExecuteAsync(
-                "az", 
-                "account show", 
-                captureOutput: true, 
-                suppressErrorLogging: true,
-                cancellationToken: ct);
+            var resource = GraphApiConstants.GetResource(_graphBaseUrl);
 
-            if (!accountCheck.Success)
+            // Check the process-level cache first. AzCliHelper caches tokens per (resource, tenantId)
+            // for the process lifetime — avoids spawning duplicate 'az account get-access-token'
+            // subprocesses when multiple services request the same token.
+            var cachedToken = await AzCliHelper.AcquireAzCliTokenAsync(resource, tenantId);
+            if (!string.IsNullOrWhiteSpace(cachedToken))
+            {
+                _logger.LogDebug("Graph API access token acquired from cache");
+                return cachedToken;
+            }
+
+            // Cache miss or az CLI not authenticated — check login state via the injectable resolver.
+            // Using _loginHintResolver (not the static helper directly) keeps the test seam consistent.
+            var loginHint = await _loginHintResolver();
+            if (loginHint == null)
             {
                 _logger.LogInformation("Azure CLI not authenticated. Initiating login...");
                 _logger.LogInformation("A browser window will open for authentication. Please check your taskbar or browser if you don't see it.");
@@ -111,18 +132,26 @@ public class GraphApiService
                     _logger.LogError("Azure CLI login failed");
                     return null;
                 }
+
+                // Bust the caches so the fresh login identity and token are picked up.
+                AzCliHelper.InvalidateLoginHintCache();
+                AzCliHelper.InvalidateAzCliTokenCache();
             }
 
-            // Get access token for Microsoft Graph
+            // Acquire the token — this goes through AzCliHelper so it is cached for all
+            // subsequent callers (including those that call AzCliHelper directly).
             var tokenResult = await _executor.ExecuteAsync(
                 "az",
-                $"account get-access-token --resource https://graph.microsoft.com/ --tenant {tenantId} --query accessToken -o tsv",
+                $"account get-access-token --resource {resource} --tenant {tenantId} --query accessToken -o tsv",
                 captureOutput: true,
                 cancellationToken: ct);
 
             if (tokenResult.Success && !string.IsNullOrWhiteSpace(tokenResult.StandardOutput))
             {
                 var token = tokenResult.StandardOutput.Trim();
+                // Warm the shared cache so other services that call AzCliHelper.AcquireAzCliTokenAsync
+                // directly receive this token without spawning another subprocess.
+                AzCliHelper.WarmAzCliTokenCache(resource, tenantId, token);
                 _logger.LogDebug("Graph API access token acquired successfully");
                 return token;
             }
@@ -134,38 +163,43 @@ public class GraphApiService
                 errorOutput.Contains("expired", StringComparison.OrdinalIgnoreCase))
             {
                 _logger.LogWarning("Authentication session may have expired. Attempting fresh login...");
-                
+
                 // Force logout and re-login
                 _logger.LogInformation("Logging out of Azure CLI...");
                 await _executor.ExecuteAsync("az", "logout", suppressErrorLogging: true, cancellationToken: ct);
-                
+
                 _logger.LogInformation("Initiating fresh login...");
                 var freshLoginResult = await _executor.ExecuteAsync(
                     "az",
                     $"login --tenant {tenantId}",
                     cancellationToken: ct);
-                
+
                 if (!freshLoginResult.Success)
                 {
                     _logger.LogError("Fresh login failed. Please manually run: az login --tenant {TenantId}", tenantId);
                     return null;
                 }
-                
+
+                // Bust caches after re-authentication so stale tokens are not returned.
+                AzCliHelper.InvalidateLoginHintCache();
+                AzCliHelper.InvalidateAzCliTokenCache();
+
                 // Retry token acquisition
                 _logger.LogInformation("Retrying token acquisition...");
                 var retryTokenResult = await _executor.ExecuteAsync(
                     "az",
-                    $"account get-access-token --resource https://graph.microsoft.com/ --tenant {tenantId} --query accessToken -o tsv",
+                    $"account get-access-token --resource {resource} --tenant {tenantId} --query accessToken -o tsv",
                     captureOutput: true,
                     cancellationToken: ct);
-                
+
                 if (retryTokenResult.Success && !string.IsNullOrWhiteSpace(retryTokenResult.StandardOutput))
                 {
                     var token = retryTokenResult.StandardOutput.Trim();
+                    AzCliHelper.WarmAzCliTokenCache(resource, tenantId, token);
                     _logger.LogInformation("Graph API access token acquired successfully after re-authentication");
                     return token;
                 }
-                
+
                 _logger.LogError("Failed to acquire token after re-authentication: {Error}", retryTokenResult.StandardError);
                 return null;
             }
@@ -210,7 +244,8 @@ public class GraphApiService
         {
             // Use token provider with delegated scopes (interactive browser auth with caching)
             _logger.LogDebug("Acquiring Graph token with specific scopes via token provider: {Scopes}", string.Join(", ", scopes));
-            token = await _tokenProvider.GetMgGraphAccessTokenAsync(tenantId, scopes, false, CustomClientAppId, ct);
+            var loginHint = await ResolveLoginHintAsync();
+            token = await _tokenProvider.GetMgGraphAccessTokenAsync(tenantId, scopes, false, CustomClientAppId, ct, loginHint);
 
             if (string.IsNullOrWhiteSpace(token))
             {
@@ -228,37 +263,25 @@ public class GraphApiService
         }
         else
         {
-            // Use Azure CLI token (default fallback for operations that don't need special scopes)
-            // Check if we have a cached token for this tenant that hasn't expired
-            if (_cachedAzCliToken != null
-                && string.Equals(_cachedAzCliTenantId, tenantId, StringComparison.OrdinalIgnoreCase)
-                && DateTimeOffset.UtcNow < _cachedAzCliTokenExpiry)
+            // Use the process-level token cache in AzCliHelper — shared across all service
+            // instances so a token acquired in any phase is reused by subsequent phases.
+            token = await AzCliHelper.AcquireAzCliTokenAsync(GraphApiConstants.GetResource(_graphBaseUrl), tenantId);
+
+            if (string.IsNullOrWhiteSpace(token))
             {
-                _logger.LogDebug("Using cached Azure CLI Graph token (expires in {Minutes:F1} minutes)",
-                    (_cachedAzCliTokenExpiry - DateTimeOffset.UtcNow).TotalMinutes);
-                token = _cachedAzCliToken;
-            }
-            else
-            {
-                _logger.LogDebug("Acquiring Graph token via Azure CLI (no specific scopes required)");
+                // Cache miss or az CLI not authenticated — run full auth + recovery flow.
+                _logger.LogDebug("Process-level token cache miss; running full auth flow for tenant {TenantId}", tenantId);
                 token = await GetGraphAccessTokenAsync(tenantId, ct);
 
                 if (string.IsNullOrWhiteSpace(token))
                 {
-                    // Clear cache on failure to ensure clean state
-                    _cachedAzCliToken = null;
-                    _cachedAzCliTenantId = null;
-                    _cachedAzCliTokenExpiry = DateTimeOffset.MinValue;
-
                     _logger.LogError("Failed to acquire Graph token via Azure CLI. Ensure 'az login' is completed.");
                     return false;
                 }
 
-                // Cache the token for subsequent calls within the same command execution
-                _cachedAzCliToken = token;
-                _cachedAzCliTenantId = tenantId;
-                _cachedAzCliTokenExpiry = DateTimeOffset.UtcNow.Add(AzCliTokenCacheDuration);
-                _logger.LogDebug("Cached Azure CLI Graph token for {Duration} minutes", AzCliTokenCacheDuration.TotalMinutes);
+                // Warm the process-level cache so subsequent callers (including other
+                // GraphApiService instances and services) skip the auth flow entirely.
+                AzCliHelper.WarmAzCliTokenCache(GraphApiConstants.GetResource(_graphBaseUrl), tenantId, token);
             }
         }
 
@@ -275,15 +298,36 @@ public class GraphApiService
     }
 
     /// <summary>
+    /// Returns the object ID of the currently signed-in user via GET /v1.0/me.
+    /// Replaces 'az ad signed-in-user show --query id -o tsv' (~30s) with a Graph HTTP call (~200ms).
+    /// Returns null if the call fails (caller should fall back to az CLI).
+    /// </summary>
+    public virtual async Task<string?> GetCurrentUserObjectIdAsync(string tenantId, CancellationToken ct = default)
+    {
+        using var doc = await GraphGetAsync(tenantId, "/v1.0/me?$select=id", ct);
+        if (doc == null) return null;
+        return doc.RootElement.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
+    }
+
+    /// <summary>
+    /// Checks whether a service principal with the given object ID exists in the tenant.
+    /// Replaces 'az ad sp show --id {principalId}' (~30s) with a Graph HTTP call (~200ms).
+    /// Used for MSI propagation polling — returns true when the SP is visible in the tenant.
+    /// </summary>
+    public virtual async Task<bool> ServicePrincipalExistsAsync(string tenantId, string principalId, CancellationToken ct = default)
+    {
+        using var doc = await GraphGetAsync(tenantId, $"/v1.0/servicePrincipals/{principalId}?$select=id", ct);
+        return doc != null;
+    }
+
+    /// <summary>
     /// Executes a GET request to Microsoft Graph API.
     /// Virtual to allow mocking in unit tests using Moq.
     /// </summary>
     public virtual async Task<JsonDocument?> GraphGetAsync(string tenantId, string relativePath, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
         if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes)) return null;
-        var url = relativePath.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-            ? relativePath
-            : $"https://graph.microsoft.com{relativePath}";
+        var url = GraphApiConstants.BuildUrl(_graphBaseUrl, relativePath);
         using var resp = await _httpClient.GetAsync(url, ct);
         if (!resp.IsSuccessStatusCode)
         {
@@ -296,12 +340,52 @@ public class GraphApiService
         return JsonDocument.Parse(json);
     }
 
+    /// <summary>
+    /// GET from Graph and always return HTTP response details (status, body, parsed JSON).
+    /// Use this instead of GraphGetAsync when the caller needs to distinguish auth failures
+    /// (401) from transient server errors (503, 429, network exceptions).
+    /// </summary>
+    public virtual async Task<GraphResponse> GraphGetWithResponseAsync(string tenantId, string relativePath, CancellationToken ct = default, IEnumerable<string>? scopes = null)
+    {
+        if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes))
+            return new GraphResponse { IsSuccess = false, StatusCode = 0, ReasonPhrase = "NoAuth", Body = "Failed to acquire token" };
+
+        var url = GraphApiConstants.BuildUrl(_graphBaseUrl, relativePath);
+
+        try
+        {
+            using var resp = await _httpClient.GetAsync(url, ct);
+            var body = await resp.Content.ReadAsStringAsync(ct);
+
+            JsonDocument? json = null;
+            if (resp.IsSuccessStatusCode && !string.IsNullOrWhiteSpace(body))
+            {
+                try { json = JsonDocument.Parse(body); } catch { /* ignore parse errors */ }
+            }
+
+            if (!resp.IsSuccessStatusCode)
+                _logger.LogDebug("Graph GET {Url} failed {Code} {Reason}: {Body}", url, (int)resp.StatusCode, resp.ReasonPhrase, body);
+
+            return new GraphResponse
+            {
+                IsSuccess = resp.IsSuccessStatusCode,
+                StatusCode = (int)resp.StatusCode,
+                ReasonPhrase = resp.ReasonPhrase ?? string.Empty,
+                Body = body ?? string.Empty,
+                Json = json
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Graph GET {Url} threw an exception", url);
+            return new GraphResponse { IsSuccess = false, StatusCode = 0, ReasonPhrase = ex.Message, Body = string.Empty };
+        }
+    }
+
     public virtual async Task<JsonDocument?> GraphPostAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
         if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes)) return null;
-        var url = relativePath.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-            ? relativePath
-            : $"https://graph.microsoft.com{relativePath}";
+        var url = GraphApiConstants.BuildUrl(_graphBaseUrl, relativePath);
         var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
         using var resp = await _httpClient.PostAsync(url, content, ct);
         var body = await resp.Content.ReadAsStringAsync(ct);
@@ -309,9 +393,9 @@ public class GraphApiService
         {
             var errorMessage = TryExtractGraphErrorMessage(body);
             if (errorMessage != null)
-                _logger.LogError("Graph POST {Url} failed: {ErrorMessage}", url, errorMessage);
+                _logger.LogWarning("Graph POST {Url} failed: {ErrorMessage}", url, errorMessage);
             else
-                _logger.LogError("Graph POST {Url} failed {Code} {Reason}", url, (int)resp.StatusCode, resp.ReasonPhrase);
+                _logger.LogWarning("Graph POST {Url} failed {Code} {Reason}", url, (int)resp.StatusCode, resp.ReasonPhrase);
             _logger.LogDebug("Graph POST response body: {Body}", body);
             return null;
         }
@@ -329,9 +413,7 @@ public class GraphApiService
             return new GraphResponse { IsSuccess = false, StatusCode = 0, ReasonPhrase = "NoAuth", Body = "Failed to acquire token" };
         }
 
-        var url = relativePath.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-            ? relativePath
-            : $"https://graph.microsoft.com{relativePath}";
+        var url = GraphApiConstants.BuildUrl(_graphBaseUrl, relativePath);
 
         var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
         using var resp = await _httpClient.PostAsync(url, content, ct);
@@ -360,9 +442,7 @@ public class GraphApiService
     public virtual async Task<bool> GraphPatchAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
         if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes)) return false;
-        var url = relativePath.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-            ? relativePath
-            : $"https://graph.microsoft.com{relativePath}";
+        var url = GraphApiConstants.BuildUrl(_graphBaseUrl, relativePath);
         var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
         using var request = new HttpRequestMessage(new HttpMethod("PATCH"), url) { Content = content };
         using var resp = await _httpClient.SendAsync(request, ct);
@@ -391,9 +471,7 @@ public class GraphApiService
     {
         if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes)) return false;
 
-        var url = relativePath.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-            ? relativePath
-            : $"https://graph.microsoft.com{relativePath}";
+        var url = GraphApiConstants.BuildUrl(_graphBaseUrl, relativePath);
 
         using var req = new HttpRequestMessage(HttpMethod.Delete, url);
         using var resp = await _httpClient.SendAsync(req, ct);
@@ -488,20 +566,28 @@ public class GraphApiService
     {
         var desiredScopeString = string.Join(' ', scopes);
 
-        // Read existing
-        var listDoc = await GraphGetAsync(
+        // Read existing — extract string values immediately so JsonDocument can be disposed
+        string? existingId = null;
+        string existingScopes = "";
+
+        using (var listDoc = await GraphGetAsync(
             tenantId,
             $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{clientSpObjectId}' and resourceId eq '{resourceSpObjectId}'",
             ct,
-            permissionGrantScopes);
-
-        var existing = listDoc?.RootElement.TryGetProperty("value", out var arr) == true && arr.GetArrayLength() > 0
-            ? arr[0]
-            : (JsonElement?)null;
-
-        if (existing is null)
+            permissionGrantScopes))
         {
-            // Create
+            if (listDoc?.RootElement.TryGetProperty("value", out var arr) == true && arr.GetArrayLength() > 0)
+            {
+                var grant = arr[0];
+                existingId = grant.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
+                existingScopes = grant.TryGetProperty("scope", out var scopeProp) ? scopeProp.GetString() ?? "" : "";
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(existingId))
+        {
+            // AllPrincipals (tenant-wide) grants require Global Administrator.
+            // Only called from admin paths (setup admin or setup all run by GA).
             var payload = new
             {
                 clientId = clientSpObjectId,
@@ -509,13 +595,45 @@ public class GraphApiService
                 resourceId = resourceSpObjectId,
                 scope = desiredScopeString
             };
-            var created = await GraphPostAsync(tenantId, "/v1.0/oauth2PermissionGrants", payload, ct, permissionGrantScopes);
-            return created != null; // success if response parsed
+
+            _logger.LogDebug("Graph POST /v1.0/oauth2PermissionGrants body: {Body}", JsonSerializer.Serialize(payload));
+
+            // A freshly-created service principal may not yet be visible to the
+            // oauth2PermissionGrants replica (Directory_ObjectNotFound). Retry with
+            // exponential back-off so the command is self-healing without user intervention.
+            const int maxRetries = 8;
+            const int baseDelaySeconds = 5;
+            for (int attempt = 0; attempt < maxRetries; attempt++)
+            {
+                var grantResponse = await GraphPostWithResponseAsync(tenantId, "/v1.0/oauth2PermissionGrants", payload, ct, permissionGrantScopes);
+                // Dispose the error JSON immediately — only IsSuccess and Body are needed below.
+                grantResponse.Json?.Dispose();
+
+                if (grantResponse.IsSuccess)
+                    return true;
+
+                if (!grantResponse.Body.Contains("Directory_ObjectNotFound", StringComparison.OrdinalIgnoreCase))
+                    return false; // non-transient error, do not retry
+
+                if (attempt < maxRetries - 1)
+                {
+                    var delaySecs = (int)Math.Min(baseDelaySeconds * Math.Pow(2, attempt), 60);
+                    _logger.LogWarning(
+                        "Service principal not yet replicated to grants endpoint — retrying in {Delay}s (attempt {Attempt}/{Max})...",
+                        delaySecs, attempt + 1, maxRetries - 1);
+                    await Task.Delay(TimeSpan.FromSeconds(delaySecs), ct);
+                }
+            }
+
+            _logger.LogWarning(
+                "OAuth2 permission grant failed after {MaxRetries} retries — service principal may still be propagating. " +
+                "Re-run 'a365 setup admin' to retry.",
+                maxRetries);
+            return false;
         }
 
         // Merge scopes if needed
-        var current = existing.Value.TryGetProperty("scope", out var s) ? s.GetString() ?? "" : "";
-        var currentSet = new HashSet<string>(current.Split(' ', StringSplitOptions.RemoveEmptyEntries), StringComparer.OrdinalIgnoreCase);
+        var currentSet = new HashSet<string>(existingScopes.Split(' ', StringSplitOptions.RemoveEmptyEntries), StringComparer.OrdinalIgnoreCase);
         var desiredSet = new HashSet<string>(desiredScopeString.Split(' ', StringSplitOptions.RemoveEmptyEntries), StringComparer.OrdinalIgnoreCase);
 
         if (desiredSet.IsSubsetOf(currentSet)) return true; // already satisfied
@@ -523,10 +641,7 @@ public class GraphApiService
         currentSet.UnionWith(desiredSet);
         var merged = string.Join(' ', currentSet);
 
-        var id = existing.Value.GetProperty("id").GetString();
-        if (string.IsNullOrWhiteSpace(id)) return false;
-
-        return await GraphPatchAsync(tenantId, $"/v1.0/oauth2PermissionGrants/{id}", new { scope = merged }, ct, permissionGrantScopes);
+        return await GraphPatchAsync(tenantId, $"/v1.0/oauth2PermissionGrants/{existingId}", new { scope = merged }, ct, permissionGrantScopes);
     }
 
     /// <summary>
@@ -555,10 +670,10 @@ public class GraphApiService
             token = token.Trim();
 
             using var request = new HttpRequestMessage(HttpMethod.Get,
-                "https://graph.microsoft.com/v1.0/me/memberOf/microsoft.graph.directoryRole");
+                $"{_graphBaseUrl}/v1.0/me/memberOf/microsoft.graph.directoryRole");
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-            var response = await _httpClient.SendAsync(request, ct);
+            using var response = await _httpClient.SendAsync(request, ct);
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning("Could not retrieve user's directory roles: {Status}", response.StatusCode);
@@ -638,7 +753,7 @@ public class GraphApiService
                 }
 
                 using var meRequest = new HttpRequestMessage(HttpMethod.Get,
-                    "https://graph.microsoft.com/v1.0/me?$select=id");
+                    $"{_graphBaseUrl}/v1.0/me?$select=id");
                 meRequest.Headers.Authorization = _httpClient.DefaultRequestHeaders.Authorization;
 
                 using var meResponse = await _httpClient.SendAsync(meRequest, ct);
@@ -686,6 +801,103 @@ public class GraphApiService
             _logger.LogWarning(ex, "Error checking if user is owner of application: {Message}", ex.Message);
             return false;
         }
+    }
+
+    /// <summary>
+    /// Checks whether the currently signed-in user holds the Global Administrator role,
+    /// which is required to grant tenant-wide admin consent interactively.
+    /// Uses only <see cref="AuthenticationConstants.UserReadScope"/> — works for both admin and non-admin users.
+    /// Returns <see cref="Models.RoleCheckResult.Unknown"/> (non-blocking) if the check cannot be completed.
+    /// </summary>
+    public virtual async Task<Models.RoleCheckResult> IsCurrentUserAdminAsync(
+        string tenantId,
+        CancellationToken ct = default)
+    {
+        return await CheckDirectoryRoleAsync(tenantId, AuthenticationConstants.GlobalAdminRoleTemplateId, ct);
+    }
+
+    /// <summary>
+    /// Checks whether the currently signed-in user holds the Agent ID Administrator role,
+    /// which is required to create or update inheritable permissions on agent blueprints.
+    /// Uses only <see cref="AuthenticationConstants.UserReadScope"/> — works for both admin and non-admin users.
+    /// Returns <see cref="Models.RoleCheckResult.Unknown"/> (non-blocking) if the check cannot be completed.
+    /// </summary>
+    public virtual async Task<Models.RoleCheckResult> IsCurrentUserAgentIdAdminAsync(
+        string tenantId,
+        CancellationToken ct = default)
+    {
+        return await CheckDirectoryRoleAsync(tenantId, AuthenticationConstants.AgentIdAdminRoleTemplateId, ct);
+    }
+
+    /// <summary>
+    /// Returns <see cref="Models.RoleCheckResult.HasRole"/> if the role is confirmed active,
+    /// <see cref="Models.RoleCheckResult.DoesNotHaveRole"/> if confirmed absent, or
+    /// <see cref="Models.RoleCheckResult.Unknown"/> if the check itself failed (e.g. network error,
+    /// throttling, auth failure) — in which case the caller should attempt the operation
+    /// anyway and let the API surface the real error.
+    /// Queries /me/transitiveMemberOf/microsoft.graph.directoryRole, which requires only
+    /// User.Read and succeeds for both admin and non-admin users.
+    /// Note: PIM-eligible-but-not-activated assignments are not considered active.
+    /// </summary>
+    private async Task<Models.RoleCheckResult> CheckDirectoryRoleAsync(string tenantId, string roleTemplateId, CancellationToken ct)
+    {
+        try
+        {
+            // /me/transitiveMemberOf is a directory query — Directory.Read.All is required.
+            // User.Read is insufficient and would return Unknown for most users.
+            IEnumerable<string>? scopes = _tokenProvider != null
+                ? [AuthenticationConstants.DirectoryReadAllScope]
+                : null;
+
+            string? nextUrl = "/v1.0/me/transitiveMemberOf/microsoft.graph.directoryRole?$select=roleTemplateId";
+
+            while (nextUrl != null)
+            {
+                using var doc = await GraphGetAsync(tenantId, nextUrl, ct, scopes);
+
+                if (doc == null)
+                    return Models.RoleCheckResult.Unknown;
+
+                if (!doc.RootElement.TryGetProperty("value", out var roles))
+                {
+                    _logger.LogWarning("Unexpected Graph response shape — 'value' property missing from transitiveMemberOf response.");
+                    return Models.RoleCheckResult.Unknown;
+                }
+
+                if (roles.EnumerateArray().Any(r =>
+                        r.TryGetProperty("roleTemplateId", out var id) &&
+                        string.Equals(id.GetString(), roleTemplateId, StringComparison.OrdinalIgnoreCase)))
+                    return Models.RoleCheckResult.HasRole;
+
+                nextUrl = doc.RootElement.TryGetProperty("@odata.nextLink", out var nextLink)
+                    ? nextLink.GetString()
+                    : null;
+            }
+
+            return Models.RoleCheckResult.DoesNotHaveRole;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Role check for {TemplateId} failed — will attempt operation anyway: {Message}",
+                roleTemplateId, ex.Message);
+            return Models.RoleCheckResult.Unknown;
+        }
+    }
+
+    /// <summary>
+    /// Resolves the Azure CLI login hint once per instance from 'az account show'.
+    /// The hint is passed to MSAL so that WAM and silent auth target the correct
+    /// Azure CLI identity instead of the Windows default account.
+    /// Returns null if az account show fails or the user field is absent.
+    /// </summary>
+    private async Task<string?> ResolveLoginHintAsync()
+    {
+        if (_loginHintResolved)
+            return _loginHint;
+
+        _loginHintResolved = true;
+        _loginHint = await _loginHintResolver();
+        return _loginHint;
     }
 
     /// <summary>

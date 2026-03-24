@@ -32,13 +32,17 @@ public class SetupCommandTests
     private readonly IClientAppValidator _mockClientAppValidator;
     private readonly BlueprintLookupService _mockBlueprintLookupService;
     private readonly FederatedCredentialService _mockFederatedCredentialService;
+    private readonly IConfirmationProvider _mockConfirmationProvider;
 
     public SetupCommandTests()
     {
         _mockLogger = Substitute.For<ILogger<SetupCommand>>();
         _mockConfigService = Substitute.For<IConfigService>();
         var mockExecutorLogger = Substitute.For<ILogger<CommandExecutor>>();
-        _mockExecutor = Substitute.ForPartsOf<CommandExecutor>(mockExecutorLogger);
+        // Full mock — ForPartsOf would fall through to real CommandExecutor.ExecuteAsync and spawn real processes
+        _mockExecutor = Substitute.For<CommandExecutor>(mockExecutorLogger);
+        _mockExecutor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new Microsoft.Agents.A365.DevTools.Cli.Services.CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty }));
         var mockDeployLogger = Substitute.For<ILogger<DeploymentService>>();
         var mockPlatformDetectorLogger = Substitute.For<ILogger<PlatformDetector>>();
         _mockPlatformDetector = Substitute.ForPartsOf<PlatformDetector>(mockPlatformDetectorLogger);
@@ -46,19 +50,24 @@ public class SetupCommandTests
         var mockNodeLogger = Substitute.For<ILogger<NodeBuilder>>();
         var mockPythonLogger = Substitute.For<ILogger<PythonBuilder>>();
         _mockDeploymentService = Substitute.ForPartsOf<DeploymentService>(
-            mockDeployLogger, 
-            _mockExecutor, 
+            mockDeployLogger,
+            _mockExecutor,
             _mockPlatformDetector,
             mockDotNetLogger,
             mockNodeLogger,
             mockPythonLogger);
         _mockBotConfigurator = Substitute.For<IBotConfigurator>();
-        _mockAuthValidator = Substitute.ForPartsOf<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, _mockExecutor);
+        // Full mock — both virtual methods are always stubbed so the real az CLI is never spawned
+        _mockAuthValidator = Substitute.For<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, _mockExecutor);
+        _mockAuthValidator.ValidateAuthenticationAsync(Arg.Any<string?>(), Arg.Any<CancellationToken>()).Returns(Task.FromResult(true));
+        _mockAuthValidator.GetAppServiceTokenAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult(true));
         _mockGraphApiService = Substitute.For<GraphApiService>();
         _mockBlueprintService = Substitute.ForPartsOf<AgentBlueprintService>(Substitute.For<ILogger<AgentBlueprintService>>(), _mockGraphApiService);
         _mockClientAppValidator = Substitute.For<IClientAppValidator>();
         _mockBlueprintLookupService = Substitute.ForPartsOf<BlueprintLookupService>(Substitute.For<ILogger<BlueprintLookupService>>(), _mockGraphApiService);
         _mockFederatedCredentialService = Substitute.ForPartsOf<FederatedCredentialService>(Substitute.For<ILogger<FederatedCredentialService>>(), _mockGraphApiService);
+        _mockConfirmationProvider = Substitute.For<IConfirmationProvider>();
+        _mockConfirmationProvider.ConfirmAsync(Arg.Any<string>()).Returns(true);
     }
 
     [Fact]
@@ -87,7 +96,7 @@ public class SetupCommandTests
             _mockBotConfigurator,
             _mockAuthValidator,
             _mockPlatformDetector,
-            _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator, _mockConfirmationProvider);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -132,7 +141,7 @@ public class SetupCommandTests
             _mockBotConfigurator,
             _mockAuthValidator,
             _mockPlatformDetector,
-            _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator, _mockConfirmationProvider);
         
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -159,7 +168,7 @@ public class SetupCommandTests
             _mockBotConfigurator,
             _mockAuthValidator,
             _mockPlatformDetector,
-            _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator, _mockConfirmationProvider);
 
         // Assert - Verify all required subcommands exist
         var subcommandNames = command.Subcommands.Select(c => c.Name).ToList();
@@ -183,7 +192,7 @@ public class SetupCommandTests
             _mockBotConfigurator,
             _mockAuthValidator,
             _mockPlatformDetector,
-            _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator, _mockConfirmationProvider);
 
         var permissionsCmd = command.Subcommands.FirstOrDefault(c => c.Name == "permissions");
 
@@ -210,7 +219,7 @@ public class SetupCommandTests
             _mockBotConfigurator,
             _mockAuthValidator,
             _mockPlatformDetector,
-            _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator, _mockConfirmationProvider);
         
         // Assert - Command structure should support clear error messaging
         command.Should().NotBeNull();
@@ -255,7 +264,7 @@ public class SetupCommandTests
             _mockBotConfigurator,
             _mockAuthValidator,
             _mockPlatformDetector,
-            _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator, _mockConfirmationProvider);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -297,7 +306,7 @@ public class SetupCommandTests
             _mockBotConfigurator,
             _mockAuthValidator,
             _mockPlatformDetector,
-            _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator, _mockConfirmationProvider);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -340,7 +349,7 @@ public class SetupCommandTests
             _mockPlatformDetector,
             _mockGraphApiService,
             _mockBlueprintService,
-            _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator);
+            _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator, _mockConfirmationProvider);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -383,7 +392,7 @@ public class SetupCommandTests
             _mockPlatformDetector,
             _mockGraphApiService,
             _mockBlueprintService,
-            _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator);
+            _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator, _mockConfirmationProvider);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();

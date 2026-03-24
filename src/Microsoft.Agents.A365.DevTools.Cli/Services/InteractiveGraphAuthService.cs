@@ -4,6 +4,7 @@
 using Azure.Core;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Graph;
 using Microsoft.Identity.Client;
@@ -26,6 +27,7 @@ public sealed class InteractiveGraphAuthService
     private readonly ILogger<InteractiveGraphAuthService> _logger;
     private readonly string _clientAppId;
     private readonly Func<string, string, TokenCredential>? _credentialFactory;
+    private readonly Func<Task<string?>> _loginHintResolver;
     private GraphServiceClient? _cachedClient;
     private string? _cachedTenantId;
 
@@ -41,7 +43,8 @@ public sealed class InteractiveGraphAuthService
     public InteractiveGraphAuthService(
         ILogger<InteractiveGraphAuthService> logger,
         string clientAppId,
-        Func<string, string, TokenCredential>? credentialFactory = null)
+        Func<string, string, TokenCredential>? credentialFactory = null,
+        Func<Task<string?>>? loginHintResolver = null)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
@@ -61,6 +64,7 @@ public sealed class InteractiveGraphAuthService
 
         _clientAppId = clientAppId;
         _credentialFactory = credentialFactory;
+        _loginHintResolver = loginHintResolver ?? ResolveAzLoginHintAsync;
     }
 
     /// <summary>
@@ -82,18 +86,7 @@ public sealed class InteractiveGraphAuthService
             return _cachedClient;
         }
 
-        _logger.LogInformation("Attempting to authenticate to Microsoft Graph interactively...");
-        _logger.LogInformation("This requires permissions defined in AuthenticationConstants.RequiredClientAppPermissions for Agent Blueprint operations.");
-        _logger.LogInformation("");
-        _logger.LogInformation("IMPORTANT: Interactive authentication is required.");
-        _logger.LogInformation("Please sign in with an account that has Global Administrator or similar privileges.");
-        _logger.LogInformation("");
-
         _logger.LogInformation("Authenticating to Microsoft Graph...");
-        _logger.LogInformation("IMPORTANT: You must grant consent for all required permissions.");
-        _logger.LogInformation("Required permissions are defined in AuthenticationConstants.RequiredClientAppPermissions.");
-        _logger.LogInformation($"See {ConfigConstants.Agent365CliDocumentationUrl} for the complete list.");
-        _logger.LogInformation("");
 
         // Eagerly acquire a token so authentication failures are detected here rather than
         // surfacing later from inside GraphServiceClient's lazy token acquisition.
@@ -102,9 +95,12 @@ public sealed class InteractiveGraphAuthService
         TokenCredential? credential = null;
         try
         {
+            // Resolve the current az CLI user so MSAL/WAM targets the correct identity.
+            var loginHint = await _loginHintResolver();
+
             // Resolve credential: use injected factory (for tests) or default MsalBrowserCredential
             credential = _credentialFactory?.Invoke(_clientAppId, tenantId)
-                ?? new MsalBrowserCredential(_clientAppId, tenantId, redirectUri: null, _logger);
+                ?? new MsalBrowserCredential(_clientAppId, tenantId, redirectUri: null, _logger, loginHint: loginHint);
 
             await credential.GetTokenAsync(tokenContext, cancellationToken);
         }
@@ -162,4 +158,13 @@ public sealed class InteractiveGraphAuthService
             "Insufficient permissions - you must be a Global Administrator or have all required permissions defined in AuthenticationConstants.RequiredClientAppPermissions",
             isPermissionIssue: true);
     }
+
+    /// <summary>
+    /// Resolves the current Azure CLI user UPN from 'az account show'.
+    /// Used as a login hint for MSAL/WAM so the correct identity is selected
+    /// instead of the default OS-level Windows account.
+    /// Returns null if az CLI is unavailable or the user field is absent (non-fatal).
+    /// </summary>
+    internal static Task<string?> ResolveAzLoginHintAsync()
+        => AzCliHelper.ResolveLoginHintAsync();
 }

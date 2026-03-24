@@ -136,6 +136,7 @@ class Program
             var deploymentService = serviceProvider.GetRequiredService<DeploymentService>();
             var botConfigurator = serviceProvider.GetRequiredService<IBotConfigurator>();
             var graphApiService = serviceProvider.GetRequiredService<GraphApiService>();
+            var armApiService = serviceProvider.GetRequiredService<ArmApiService>();
             var agentBlueprintService = serviceProvider.GetRequiredService<AgentBlueprintService>();
             var blueprintLookupService = serviceProvider.GetRequiredService<BlueprintLookupService>();
             var federatedCredentialService = serviceProvider.GetRequiredService<FederatedCredentialService>();
@@ -146,8 +147,9 @@ class Program
             // Add commands
             rootCommand.AddCommand(DevelopCommand.CreateCommand(developLogger, configService, executor, authService, graphApiService, agentBlueprintService, processService));
             rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService));
+            var confirmationProvider = serviceProvider.GetRequiredService<IConfirmationProvider>();
             rootCommand.AddCommand(SetupCommand.CreateCommand(setupLogger, configService, executor,
-                deploymentService, botConfigurator, azureAuthValidator, platformDetector, graphApiService, agentBlueprintService, blueprintLookupService, federatedCredentialService, clientAppValidator));
+                deploymentService, botConfigurator, azureAuthValidator, platformDetector, graphApiService, agentBlueprintService, blueprintLookupService, federatedCredentialService, clientAppValidator, confirmationProvider, armApiService));
             rootCommand.AddCommand(CreateInstanceCommand.CreateCommand(createInstanceLogger, configService, executor,
                 botConfigurator, graphApiService));
             rootCommand.AddCommand(DeployCommand.CreateCommand(deployLogger, configService, executor,
@@ -158,7 +160,6 @@ class Program
             var configLogger = configLoggerFactory.CreateLogger("ConfigCommand");
             var wizardService = serviceProvider.GetRequiredService<IConfigurationWizardService>();
             var manifestTemplateService = serviceProvider.GetRequiredService<ManifestTemplateService>();
-            var confirmationProvider = serviceProvider.GetRequiredService<IConfirmationProvider>();
             rootCommand.AddCommand(ConfigCommand.CreateCommand(configLogger, wizardService: wizardService, clientAppValidator: clientAppValidator));
             rootCommand.AddCommand(QueryEntraCommand.CreateCommand(queryEntraLogger, configService, executor, graphApiService, agentBlueprintService));
             rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, azureAuthValidator));
@@ -170,7 +171,15 @@ class Program
                 .UseDefaults()
                 .UseExceptionHandler((exception, context) =>
                 {
-                    if (exception is Agent365Exception myEx)
+                    if (exception is CleanExitException cleanExit)
+                    {
+                        context.ExitCode = cleanExit.ExitCode;
+                    }
+                    else if (exception is OperationCanceledException)
+                    {
+                        context.ExitCode = 1;
+                    }
+                    else if (exception is Agent365Exception myEx)
                     {
                         ExceptionHandler.HandleAgent365Exception(myEx, logFilePath: logFilePath);
                         context.ExitCode = myEx.ExitCode;
@@ -193,6 +202,21 @@ class Program
 
             var parser = builder.Build();
             return await parser.InvokeAsync(args);
+        }
+        catch (Exception ex)
+        {
+            // Catch anything that escapes before or after the System.CommandLine pipeline
+            // (e.g. DI setup failures, exceptions in InvokeAsync itself).
+            // Log the full details to the file; show only a clean one-liner to the user.
+            startupLogger.LogCritical(ex, "Unhandled exception in CLI startup");
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.Error.WriteLine($"ERROR: {ex.Message}");
+            Console.ResetColor();
+            Console.Error.WriteLine();
+            if (!string.IsNullOrEmpty(logFilePath))
+                Console.Error.WriteLine($"For details, see the log file at: {logFilePath}");
+            Console.Error.WriteLine("If this error persists, please report it at: https://github.com/microsoft/Agent365-devTools/issues");
+            return 1;
         }
         finally
         {
@@ -281,6 +305,7 @@ class Program
         services.AddSingleton<IMicrosoftGraphTokenProvider, MicrosoftGraphTokenProvider>();
 
         services.AddSingleton<GraphApiService>();
+        services.AddSingleton<ArmApiService>();
         services.AddSingleton<AgentBlueprintService>();
         services.AddSingleton<BlueprintLookupService>();
         services.AddSingleton<FederatedCredentialService>();
