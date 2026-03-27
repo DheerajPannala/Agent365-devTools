@@ -109,7 +109,7 @@ If the app does not exist, permissions are missing, or admin consent has not bee
 
 1. STOP — do not proceed to run any `a365` CLI commands.
 2. Inform the user the custom client app registration is missing or incomplete.
-3. Direct the user to the official setup guide: register the app, configure as a Public client with redirect URI `http://localhost:8400`, add all five permissions above, and have a Global Admin grant admin consent.
+3. Direct the user to the official setup guide: register the app, configure as a Public client with redirect URI `http://localhost:8400`, add all five permissions above, and apply all permission grants exclusively via the Graph API `appRoleAssignments` endpoint (do NOT use the "Grant admin consent" button in the Entra portal — see warning above).
 4. Wait for the user to confirm the app is properly configured, then re-run the same validation command above.
 
 Save the `clientAppId` value — it will be used automatically in Step 3 (do NOT ask the user for it again).

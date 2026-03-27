@@ -263,8 +263,8 @@ public class NodeBuilder : IPlatformBuilder
                 {
                     buildCommand = "";
                     buildRequired = false;
-                    _logger.LogInformation("dist/ folder found in publish output for TypeScript project; skipping Oryx remote build " +
-                        "(TypeScript already compiled locally — avoids tsc-not-found on Azure).");
+                    _logger.LogInformation("dist/ folder found in publish output for TypeScript project; skipping npm run build step in Oryx manifest " +
+                        "(TypeScript compiled locally - Oryx will still run npm install but will not invoke the build script).");
                 }
                 else
                 {
