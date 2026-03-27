@@ -59,15 +59,16 @@ public class CleanupCommandBotEndpointTests
         
         _mockTokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
         _mockTokenProvider.GetMgGraphAccessTokenAsync(
-            Arg.Any<string>(), 
-            Arg.Any<IEnumerable<string>>(), 
-            Arg.Any<bool>(), 
+            Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(),
+            Arg.Any<bool>(),
             Arg.Any<string?>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<string?>())
             .Returns("test-token");
         
         var mockGraphLogger = Substitute.For<ILogger<GraphApiService>>();
-        _graphApiService = new GraphApiService(mockGraphLogger, _mockExecutor, null, _mockTokenProvider);
+        _graphApiService = new GraphApiService(mockGraphLogger, _mockExecutor, Substitute.For<IAuthenticationService>(), null, _mockTokenProvider);
         
         var mockBlueprintLogger = Substitute.For<ILogger<AgentBlueprintService>>();
         _agentBlueprintService = new AgentBlueprintService(mockBlueprintLogger, _graphApiService);

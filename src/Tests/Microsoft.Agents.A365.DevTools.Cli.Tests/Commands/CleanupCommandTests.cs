@@ -11,6 +11,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
 using NSubstitute;
 using Xunit;
+using Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 
@@ -35,7 +36,8 @@ public class CleanupCommandTests
         _mockConfigService = Substitute.For<IConfigService>();
         
         var mockExecutorLogger = Substitute.For<ILogger<CommandExecutor>>();
-        _mockExecutor = Substitute.ForPartsOf<CommandExecutor>(mockExecutorLogger);
+        // Full mock — ForPartsOf would fall through to real CommandExecutor.ExecuteAsync and spawn real processes
+        _mockExecutor = Substitute.For<CommandExecutor>(mockExecutorLogger);
 
         // Default executor behavior for tests: return success for any external command to avoid launching real CLI tools
         _mockExecutor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
@@ -47,16 +49,22 @@ public class CleanupCommandTests
         
         // Configure token provider to return a test token
         _mockTokenProvider.GetMgGraphAccessTokenAsync(
-            Arg.Any<string>(), 
-            Arg.Any<IEnumerable<string>>(), 
-            Arg.Any<bool>(), 
+            Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(),
+            Arg.Any<bool>(),
             Arg.Any<string?>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<string?>())
             .Returns("test-token");
         
-        // Create a real GraphApiService instance with mocked dependencies
+        // Create a real GraphApiService instance with mocked dependencies.
+        // Pass a no-op loginHintResolver to prevent AzCliHelper.ResolveLoginHintAsync from spawning
+        // a real "az account show" process during test setup.
+        // Pass a TestHttpMessageHandler (returns 404 when queue empty) instead of null to avoid
+        // real HTTPS calls to graph.microsoft.com — the handler returns immediately, no network needed.
         var mockGraphLogger = Substitute.For<ILogger<GraphApiService>>();
-        _graphApiService = new GraphApiService(mockGraphLogger, _mockExecutor, null, _mockTokenProvider);
+        _graphApiService = new GraphApiService(mockGraphLogger, _mockExecutor, Substitute.For<IAuthenticationService>(), new TestHttpMessageHandler(), _mockTokenProvider,
+            loginHintResolver: () => Task.FromResult<string?>(null));
         
         // Create AgentBlueprintService wrapping GraphApiService
         var mockBlueprintLogger = Substitute.For<ILogger<AgentBlueprintService>>();
@@ -77,7 +85,9 @@ public class CleanupCommandTests
                 Arg.Any<ILogger>(),
                 Arg.Any<CancellationToken>())
             .Returns(true);
-        _mockAuthValidator = Substitute.ForPartsOf<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, _mockExecutor);
+        // Full mock — both virtual methods (ValidateAuthenticationAsync, GetAppServiceTokenAsync) are
+        // always stubbed by callers, so ForPartsOf would only add risk of real auth code running.
+        _mockAuthValidator = Substitute.For<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, _mockExecutor);
     }
 
     [Fact(Skip = "Test requires interactive confirmation - cleanup commands now enforce user confirmation instead of --force")]
@@ -617,16 +627,26 @@ public class CleanupCommandTests
         // Arrange
         var config = CreateValidConfig();
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
-        
+
+        // First confirmation passes, typed confirmation fails — command aborts after both prompts
+        // without running the Azure deletion loop. Explicit stubs make intent clear regardless
+        // of constructor defaults.
+        _mockConfirmationProvider.ConfirmAsync(Arg.Any<string>()).Returns(true);
+        _mockConfirmationProvider.ConfirmWithTypedResponseAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(false);
+
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
         var args = new[] { "cleanup", "--config", "test.json" };
 
         // Act
         await command.InvokeAsync(args);
 
-        // Assert
+        // Assert — both prompts were shown with the correct text
         await _mockConfirmationProvider.Received(1).ConfirmAsync(Arg.Is<string>(s => s.Contains("DELETE ALL resources")));
         await _mockConfirmationProvider.Received(1).ConfirmWithTypedResponseAsync(Arg.Is<string>(s => s.Contains("Type 'DELETE'")), "DELETE");
+
+        // Assert — abort path taken: no deletion should have started after the typed confirmation failed
+        await _mockBotConfigurator.DidNotReceive().DeleteEndpointWithAgentBlueprintAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>());
     }
 
     /// <summary>

@@ -5,6 +5,7 @@ using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using System.Net.Http;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -41,12 +42,17 @@ public class BlueprintSubcommandTests
         _mockLogger = Substitute.For<ILogger>();
         _mockConfigService = Substitute.For<IConfigService>();
         var mockExecutorLogger = Substitute.For<ILogger<CommandExecutor>>();
-        _mockExecutor = Substitute.ForPartsOf<CommandExecutor>(mockExecutorLogger);
-        _mockAuthValidator = Substitute.ForPartsOf<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, _mockExecutor);
+        // Full mock — ForPartsOf would fall through to real CommandExecutor.ExecuteAsync and spawn real processes
+        _mockExecutor = Substitute.For<CommandExecutor>(mockExecutorLogger);
+        _mockExecutor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new Microsoft.Agents.A365.DevTools.Cli.Services.CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty }));
+        // Full mock — both virtual methods are always stubbed by callers
+        _mockAuthValidator = Substitute.For<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, _mockExecutor);
         var mockPlatformDetectorLogger = Substitute.For<ILogger<PlatformDetector>>();
         _mockPlatformDetector = Substitute.ForPartsOf<PlatformDetector>(mockPlatformDetectorLogger);
         _mockBotConfigurator = Substitute.For<IBotConfigurator>();
-        _mockGraphApiService = Substitute.ForPartsOf<GraphApiService>(Substitute.For<ILogger<GraphApiService>>(), _mockExecutor);
+        _mockGraphApiService = Substitute.ForPartsOf<GraphApiService>(
+            Substitute.For<ILogger<GraphApiService>>(), _mockExecutor, (Func<Task<string?>>)(() => Task.FromResult<string?>(null)));
         _mockBlueprintService = Substitute.ForPartsOf<AgentBlueprintService>(Substitute.For<ILogger<AgentBlueprintService>>(), _mockGraphApiService);
         _mockClientAppValidator = Substitute.For<IClientAppValidator>();
         _mockBlueprintLookupService = Substitute.ForPartsOf<BlueprintLookupService>(Substitute.For<ILogger<BlueprintLookupService>>(), _mockGraphApiService);
@@ -1709,20 +1715,14 @@ public class BlueprintSubcommandTests
             graphService: _mockGraphApiService,
             setupConfig: setupConfig,
             configService: _mockConfigService,
-            logger: _mockLogger);
+            logger: _mockLogger,
+            loginHintResolver: () => Task.FromResult<string?>(null));
 
-        // Assert — all required permission guidance must be logged
+        // Assert — documentation link must be logged (covers required permissions)
         _mockLogger.Received().Log(
             LogLevel.Warning,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Application Administrator")),
-            Arg.Any<Exception>(),
-            Arg.Any<Func<object, Exception?, string>>());
-
-        _mockLogger.Received().Log(
-            LogLevel.Warning,
-            Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Cloud Application Administrator")),
+            Arg.Is<object>(o => o.ToString()!.Contains("how-to-add-credentials")),
             Arg.Any<Exception>(),
             Arg.Any<Func<object, Exception?, string>>());
     }
@@ -1747,13 +1747,14 @@ public class BlueprintSubcommandTests
             graphService: _mockGraphApiService,
             setupConfig: setupConfig,
             configService: _mockConfigService,
-            logger: _mockLogger);
+            logger: _mockLogger,
+            loginHintResolver: () => Task.FromResult<string?>(null));
 
-        // Assert — agentBlueprintClientSecretProtected: false must be mentioned
+        // Assert — config file name must be mentioned so user knows where to add the secret
         _mockLogger.Received().Log(
-            LogLevel.Information,
+            LogLevel.Warning,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("agentBlueprintClientSecretProtected")),
+            Arg.Is<object>(o => o.ToString()!.Contains("a365.generated.config.json")),
             Arg.Any<Exception>(),
             Arg.Any<Func<object, Exception?, string>>());
     }
@@ -1778,11 +1779,12 @@ public class BlueprintSubcommandTests
             graphService: _mockGraphApiService,
             setupConfig: setupConfig,
             configService: _mockConfigService,
-            logger: _mockLogger);
+            logger: _mockLogger,
+            loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Assert — re-run instruction must be logged
         _mockLogger.Received().Log(
-            LogLevel.Information,
+            LogLevel.Warning,
             Arg.Any<EventId>(),
             Arg.Is<object>(o => o.ToString()!.Contains("a365 setup all")),
             Arg.Any<Exception>(),
@@ -1804,14 +1806,16 @@ public class BlueprintSubcommandTests
         _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
             .Returns(Task.CompletedTask);
 
-        // Act
+        // Act — AcquireMsalGraphTokenAsync returns null immediately for empty credentials
+        // (guard added to avoid MSAL/WAM blocking for ~30s before failing).
         await BlueprintSubcommand.CreateBlueprintClientSecretAsync(
             blueprintObjectId: "00000000-0000-0000-0000-000000000001",
             blueprintAppId: "00000000-0000-0000-0000-000000000002",
             graphService: _mockGraphApiService,
             setupConfig: setupConfig,
             configService: _mockConfigService,
-            logger: _mockLogger);
+            logger: _mockLogger,
+            loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Assert — Azure CLI token path must NOT be taken
         await _mockGraphApiService.DidNotReceiveWithAnyArgs().GetGraphAccessTokenAsync(default!, default);
@@ -1900,7 +1904,7 @@ public class BlueprintSubcommandTests
                 ["agentBlueprintClientSecretProtected"] = true,
                 ["botId"] = "bot-id-456",
                 ["botMsaAppId"] = "bot-msa-app-id-789",
-                ["botMessagingEndpoint"] = "https://myapp.azurewebsites.net/api/messages",
+                ["messagingEndpoint"] = "https://myapp.azurewebsites.net/api/messages",
                 ["completed"] = true,
                 ["completedAt"] = "2026-01-01T00:00:00Z",
                 ["resourceConsents"] = new JsonArray
@@ -1945,7 +1949,7 @@ public class BlueprintSubcommandTests
             savedConfig["agentBlueprintClientSecretProtected"]!.GetValue<bool>().Should().BeTrue();
             savedConfig["botId"]!.GetValue<string>().Should().Be("bot-id-456");
             savedConfig["botMsaAppId"]!.GetValue<string>().Should().Be("bot-msa-app-id-789");
-            savedConfig["botMessagingEndpoint"]!.GetValue<string>().Should().Be("https://myapp.azurewebsites.net/api/messages");
+            savedConfig["messagingEndpoint"]!.GetValue<string>().Should().Be("https://myapp.azurewebsites.net/api/messages");
             savedConfig["managedIdentityPrincipalId"]!.GetValue<string>().Should().Be("msi-principal-id-123");
             savedConfig["completed"]!.GetValue<bool>().Should().BeTrue();
             savedConfig["completedAt"]!.GetValue<string>().Should().Be("2026-01-01T00:00:00Z");

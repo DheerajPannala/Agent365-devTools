@@ -64,7 +64,8 @@ internal static class RequirementsSubcommand
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Requirements check failed: {Message}", ex.Message);
+                logger.LogError("Requirements check failed: {Message}", ex.Message);
+                logger.LogDebug(ex, "Requirements check failed exception details");
             }
         }, configOption, verboseOption, categoryOption);
 
@@ -195,7 +196,7 @@ internal static class RequirementsSubcommand
             // Location configuration — required for endpoint registration
             new LocationRequirementCheck(),
 
-            // Client app configuration validation
+            // Client app configuration validation (checks all required Graph permissions incl. UpdateAuthProperties.All)
             new ClientAppRequirementCheck(clientAppValidator),
         };
     }

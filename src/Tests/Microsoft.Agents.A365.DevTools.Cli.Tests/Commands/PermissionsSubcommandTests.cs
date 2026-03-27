@@ -460,8 +460,8 @@ public class PermissionsSubcommandTests
             config,
             false);
 
-        // Assert - Should handle missing manifest gracefully
-        result.Should().BeFalse();
+        result.Should().BeTrue(
+            because: "McpServersMetadata.Read.All is always included even when the ToolingManifest is missing, so the method proceeds to configure permissions and returns true (pending admin consent)");
     }
 
     #endregion

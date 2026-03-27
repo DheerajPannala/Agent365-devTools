@@ -8,6 +8,7 @@ using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Xunit;
 
@@ -25,7 +26,9 @@ public class AgentBlueprintServiceTests
         _mockLogger = Substitute.For<ILogger<AgentBlueprintService>>();
         _mockGraphLogger = Substitute.For<ILogger<GraphApiService>>();
         var mockExecutorLogger = Substitute.For<ILogger<CommandExecutor>>();
-        _mockExecutor = Substitute.ForPartsOf<CommandExecutor>(mockExecutorLogger);
+        // Use Substitute.For<> (full mock) so unmatched ExecuteAsync calls return a safe default
+        // instead of falling through to the real implementation and spawning actual az processes.
+        _mockExecutor = Substitute.For<CommandExecutor>(mockExecutorLogger);
         _mockTokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
     }
 
@@ -59,7 +62,7 @@ public class AgentBlueprintServiceTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var graphService = new GraphApiService(_mockGraphLogger, executor, handler);
+        var graphService = new GraphApiService(_mockGraphLogger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
         var service = new AgentBlueprintService(_mockLogger, graphService);
 
         // ResolveBlueprintObjectIdAsync: First GET to check if blueprintAppId is objectId (returns 404 NotFound)
@@ -119,7 +122,7 @@ public class AgentBlueprintServiceTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var graphService = new GraphApiService(_mockGraphLogger, executor, handler);
+        var graphService = new GraphApiService(_mockGraphLogger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
         var service = new AgentBlueprintService(_mockLogger, graphService);
 
         // Existing entry with one scope
@@ -175,10 +178,11 @@ public class AgentBlueprintServiceTests
             // Override with specific scope assertion
             _mockTokenProvider.GetMgGraphAccessTokenAsync(
                 tenantId,
-                Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentityBlueprint.ReadWrite.All")),
+                Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentityBlueprint.DeleteRestore.All")),
                 false,
                 Arg.Any<string?>(),
-                Arg.Any<CancellationToken>())
+                Arg.Any<CancellationToken>(),
+                Arg.Any<string?>())
                 .Returns("fake-delegated-token");
 
             handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NoContent));
@@ -191,10 +195,11 @@ public class AgentBlueprintServiceTests
 
             await _mockTokenProvider.Received(1).GetMgGraphAccessTokenAsync(
                 tenantId,
-                Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentityBlueprint.ReadWrite.All")),
+                Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentityBlueprint.DeleteRestore.All")),
                 false,
                 Arg.Any<string?>(),
-                Arg.Any<CancellationToken>());
+                Arg.Any<CancellationToken>(),
+                Arg.Any<string?>());
         }
     }
 
@@ -226,7 +231,7 @@ public class AgentBlueprintServiceTests
     {
         // Arrange
         using var handler = new FakeHttpMessageHandler();
-        var graphService = new GraphApiService(_mockGraphLogger, _mockExecutor, handler, tokenProvider: null);
+        var graphService = new GraphApiService(_mockGraphLogger, _mockExecutor, Substitute.For<IAuthenticationService>(), handler, tokenProvider: null);
         var service = new AgentBlueprintService(_mockLogger, graphService);
 
         const string tenantId = "12345678-1234-1234-1234-123456789012";
@@ -292,7 +297,8 @@ public class AgentBlueprintServiceTests
                 Arg.Any<IEnumerable<string>>(),
                 Arg.Any<bool>(),
                 Arg.Any<string?>(),
-                Arg.Any<CancellationToken>())
+                Arg.Any<CancellationToken>(),
+                Arg.Any<string?>())
                 .Returns(Task.FromException<string?>(new HttpRequestException("Connection timeout")));
 
             // Act
@@ -388,7 +394,7 @@ public class AgentBlueprintServiceTests
 
         // Override token provider to throw so the Graph call fails
         _mockTokenProvider.GetMgGraphAccessTokenAsync(
-            Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
             .Returns(Task.FromException<string?>(new HttpRequestException("Connection timeout")));
 
         // Act & Assert - exception must propagate so callers can abort rather than proceeding with 0 instances
@@ -423,7 +429,7 @@ public class AgentBlueprintServiceTests
         {
             // Override token provider to throw
             _mockTokenProvider.GetMgGraphAccessTokenAsync(
-                Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+                Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
                 .Returns(Task.FromException<string?>(new HttpRequestException("Connection timeout")));
 
             // Act
@@ -432,6 +438,15 @@ public class AgentBlueprintServiceTests
             // Assert
             result.Should().BeFalse();
         }
+    }
+
+    private static IAuthenticationService FakeAuth()
+    {
+        var mock = Substitute.For<IAuthenticationService>();
+        mock.GetAccessTokenAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>())
+            .Returns(Task.FromResult("fake-token"));
+        return mock;
     }
 
     private (AgentBlueprintService service, FakeHttpMessageHandler handler) CreateServiceWithFakeHandler()
@@ -444,9 +459,13 @@ public class AgentBlueprintServiceTests
                 { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty }));
         _mockTokenProvider.GetMgGraphAccessTokenAsync(
             Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(),
-            Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
             .Returns("test-token");
-        var graphService = new GraphApiService(_mockGraphLogger, executor, handler, _mockTokenProvider);
+        // Pass a no-op login hint resolver to skip the real 'az account show' process spawned by
+        // AzCliHelper.ResolveLoginHintAsync — that static call bypasses the mocked CommandExecutor
+        // and causes each test to wait several seconds for the real az CLI.
+        var graphService = new GraphApiService(_mockGraphLogger, executor, Substitute.For<IAuthenticationService>(), handler, _mockTokenProvider,
+            loginHintResolver: () => Task.FromResult<string?>(null));
         return (new AgentBlueprintService(_mockLogger, graphService), handler);
     }
 }

@@ -159,6 +159,75 @@ For security and flexibility, the CLI supports environment variable overrides:
 
 **Design Decision:** All test/preprod App IDs and URLs have been removed from the codebase. The production App ID is the only hardcoded value. Internal Microsoft developers use environment variables for non-production testing.
 
+### Sovereign / Government Cloud Configuration
+
+By default the CLI targets the commercial Microsoft Graph endpoint. For sovereign or government cloud tenants, set `graphBaseUrl` in `a365.config.json`:
+
+| Cloud | `graphBaseUrl` value |
+|-------|----------------------|
+| Commercial (default) | *(omit the field)* |
+| GCC High / DoD | `https://graph.microsoft.us` |
+| China (21Vianet) | `https://microsoftgraph.chinacloudapi.cn` |
+
+This field is optional. When omitted, `https://graph.microsoft.com` is used.
+
+The value is read from `Agent365Config.GraphBaseUrl` and forwarded to `GraphApiService` via its `GraphBaseUrl` property after config is loaded. This controls both the HTTP endpoint used for all Graph API calls and the token resource identifier passed to `AuthenticationService.GetAccessTokenAsync`.
+
+---
+
+## Authentication Architecture
+
+All token acquisition goes through **MSAL.NET via `AuthenticationService`**. No az CLI subprocess is used for tokens.
+
+### Token Acquisition Flow
+
+```
+All callers (GraphApiService, ArmApiService, BotConfigurator, ...)
+        |
+        v
+AuthenticationService.GetAccessTokenAsync(resource, tenantId)
+        |
+        +-- Check persistent disk cache (%LocalAppData%\Agent365\token-cache.json)
+        |       Cache key: {resource}[:tenant:{tenantId}][:user:{userId}]
+        |
+        +-- Cache hit + not expiring: return token immediately (0 prompts)
+        |
+        +-- Cache miss / expired: MsalBrowserCredential.GetTokenAsync(scopes)
+                |
+                +-- Windows:  WAM broker (no browser, SSO, CAP-compliant)
+                +-- macOS:    System browser → device code fallback if restricted
+                +-- Linux:    Device code flow
+```
+
+### Two Auth Paths
+
+| Path | When used | Scopes | Client app |
+|---|---|---|---|
+| **Default (MSAL)** | ARM, Graph `.default` calls | `{resource}/.default` | PowerShell client ID |
+| **Delegated scopes (MSAL)** | Graph calls needing specific permissions (e.g. `AgentInstance.ReadWrite.All`) | Explicit scope list | `clientAppId` from config |
+
+### Login Hint Resolution
+
+To prevent WAM from selecting a stale or wrong account, a login hint (UPN) is resolved before interactive auth:
+1. `AzCliHelper.ResolveLoginHintAsync()` — reads `az account show` if az CLI is present
+2. `AuthenticationService.ResolveLoginHintFromCacheAsync()` — decodes `upn`/`preferred_username` from a cached JWT if az CLI is unavailable
+
+### IAuthenticationService Interface
+
+`IAuthenticationService` is defined in the same file as `AuthenticationService` (`AuthenticationService.cs`). This is intentional — the interface is narrow (two methods), tightly coupled to its single implementation, and co-location follows the **related-interfaces convention** in the copilot instructions. It exists solely to enable test substitution in `ArmApiService` and `GraphApiService` without triggering real MSAL/WAM prompts.
+
+Only `GetAccessTokenAsync` and `ResolveLoginHintFromCacheAsync` are on the interface. Other methods (`GetAccessTokenWithScopesAsync`, `GetAccessTokenForMcpAsync`, `ClearCache`) stay on the concrete class and are used by commands that take `AuthenticationService` directly.
+
+### Token Caching
+
+- **Persistent cache** (`AuthenticationService`): survives across CLI invocations, keyed by resource + tenant + user
+- **Process-level login hint cache** (`AzCliHelper`): caches the result of `az account show` for the process lifetime — invalidated after `az login` operations
+
+### Platform Notes
+
+- **Windows**: WAM handles token acquisition at the OS level — no browser popup, no Python subprocess, corporate proxy not involved
+- **macOS/Linux**: Browser redirect or device code — falls back to device code automatically if browser auth is blocked by tenant policy (e.g., corp-managed macOS)
+
 ---
 
 ## Command Pattern Implementation
@@ -342,27 +411,43 @@ a365 deploy --restart # Quick mode: steps 6-7 only (packaging + deploy)
 
 ## Permissions Architecture
 
-The CLI configures three layers of permissions for agent blueprints:
+The CLI configures two independent layers of permissions for agent blueprints:
 
-1. **OAuth2 Grants** - Admin consent via Graph API `/oauth2PermissionGrants`
-2. **Required Resource Access** - Portal-visible permissions (Entra ID "API permissions")
-3. **Inheritable Permissions** - Blueprint-level permissions that instances inherit automatically
+1. **Inheritable Permissions** — Blueprint-level permissions that agent instances inherit automatically. Set via the Agent Blueprint API (`/beta/applications/microsoft.graph.agentIdentityBlueprint/{id}/inheritablePermissions`). Requires Agent ID Administrator or Global Administrator role. Read back after writing to verify presence.
+2. **OAuth2 Grants** — Tenant-wide delegated consent via Graph API `/oauth2PermissionGrants` with `consentType=AllPrincipals`. Requires Global Administrator only.
+
+> **Technical limitation:** `oauth2PermissionGrant` creation via the API requires `DelegatedPermissionGrant.ReadWrite.All`, which is an admin-only scope. Additionally, Global Administrator bypasses entitlement validation and can grant any scope; non-admin users receive HTTP 403 (insufficient privileges) or HTTP 400 (entitlement not found) for all resource SPs. There is no self-service path for non-admin users.
+
+> **Note:** `requiredResourceAccess` (portal "API permissions") is **not** configured for Agent Blueprints — it is not supported by the Agent ID API.
 
 ```mermaid
 flowchart TD
     Blueprint["Agent Blueprint<br/>(Application Registration)"]
-    OAuth2["OAuth2 Permission Grants<br/>(Admin Consent)"]
-    Required["Required Resource Access<br/>(Portal Permissions)"]
-    Inheritable["Inheritable Permissions<br/>(Blueprint Config)"]
+    OAuth2["OAuth2 Permission Grants<br/>(AllPrincipals — Global Admin only)"]
+    Inheritable["Inheritable Permissions<br/>(Agent ID Admin or Global Admin)"]
     Instance["Agent Instance<br/>(Inherits from Blueprint)"]
 
     Blueprint --> OAuth2
-    Blueprint --> Required
     Blueprint --> Inheritable
     Inheritable --> Instance
 ```
 
-**Unified Configuration:** `SetupHelpers.EnsureResourcePermissionsAsync` handles all three layers plus verification with retry logic (exponential backoff: 2s, 4s, 8s, 16s, 32s, max 5 retries).
+### Role-based setup workflow
+
+Because the two permission layers require different roles, the CLI supports a two-person handoff:
+
+| Step | Command | Who runs it | What it does |
+|------|---------|-------------|--------------|
+| 1 | `a365 setup all` | Agent ID Admin or Developer | All infra + blueprint + inheritable permissions. OAuth2 grants skipped (requires GA). Ends with instructions to hand off config folder to GA. |
+| 2 | `a365 setup admin --config-dir "<path>"` | Global Administrator | Reads both config files, resolves SPs, creates AllPrincipals OAuth2 grants for all resources. |
+
+**Batch flow (`BatchPermissionsOrchestrator`):**
+- **Phase 1:** Token prewarm + SP resolution (blueprint + all resource SPs).
+- **Phase 2a:** Inheritable permissions — set via Blueprint API, read back to verify. Agent ID Admin and GA.
+- **Phase 2b:** OAuth2 grants — `AllPrincipals` via Graph API. GA only; skipped for non-admin with instruction to run `setup admin`.
+- **Phase 3:** For GA: skipped (Phase 2b satisfies consent). For non-admin: shows `setup admin` command and a Graph Explorer query to verify inheritable permissions.
+
+**Standalone callers:** `SetupHelpers.EnsureResourcePermissionsAsync` handles a single resource with retry logic and is used by `CopilotStudioSubcommand` and direct callers.
 
 **Per-Resource Tracking:** `ResourceConsent` model tracks inheritance state per resource (Agent 365 Tools, Messaging Bot API, Observability API).
 
