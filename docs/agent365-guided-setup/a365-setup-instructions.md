@@ -101,7 +101,7 @@ Required **delegated** Microsoft Graph permissions (all must have **admin consen
 | `DelegatedPermissionGrant.ReadWrite.All` | Grant delegated permissions |
 | `Directory.Read.All` | Read directory data |
 
-> ⚠️ **WARNING — Do NOT use "Grant admin consent" in the Entra portal for this app registration.** The `AgentIdentityBlueprint.*` permissions above are beta-only and are not visible in the Entra admin center UI. If a Global Admin clicks "Grant admin consent" in the portal after these permissions have been granted via Graph API, the portal's consent mechanism will **silently delete** the `AgentIdentityBlueprint.*` grants. All permission grants for this app must be managed exclusively via the Graph API `appRoleAssignments` endpoint. If the permissions are accidentally removed, re-run the Graph API grants to restore them.
+> **WARNING — Do NOT use "Grant admin consent" in the Entra portal for this app registration.** The `AgentIdentityBlueprint.*` permissions above are beta-only and are not visible in the Entra admin center UI. If a Global Admin clicks "Grant admin consent" in the portal after these permissions have been granted via Graph API, the portal's consent mechanism will **silently delete** the `AgentIdentityBlueprint.*` grants. All permission grants for this app must be managed exclusively via the Graph API `appRoleAssignments` endpoint. If the permissions are accidentally removed, re-run the Graph API grants to restore them.
 
 If the app does not exist, permissions are missing, or admin consent has not been granted, see "What to do if validation fails" below.
 

@@ -12,8 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `AppServiceAuthRequirementCheck` — validates App Service deployment token before `a365 deploy` begins, catching revoked grants (AADSTS50173) early
 ### Changed
 - `a365 publish` updates manifest IDs, creates `manifest.zip`, and prints concise upload instructions for Microsoft 365 Admin Center (Agents > All agents > Upload custom agent). Interactive prompts only occur in interactive terminals; redirect stdin to suppress them in scripts.
+- App Service Plan SKU recommendation updated to B1 (Basic) for Node.js/TypeScript agents; F1 (Free) is now flagged as unsuitable due to the 230s cold-start limit being routinely exceeded during Oryx remote builds (#318)
 
 ### Fixed
+- Node.js/TypeScript deployments: skip Oryx remote build when `dist/` already exists in the publish output, preventing `tsc: not found` failures caused by Oryx running `npm install --production` which excludes devDependencies (#318)
 - macOS/Linux: device code fallback when browser authentication is unavailable (#309)
 - Linux: MSAL fallback when PowerShell `Connect-MgGraph` fails in non-TTY environments (#309)
 - Admin consent polling no longer times out after 180s — blueprint service principal now resolved with correct MSAL token (#309)

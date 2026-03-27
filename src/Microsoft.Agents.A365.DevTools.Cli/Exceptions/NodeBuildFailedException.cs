@@ -22,10 +22,10 @@ public sealed class NodeBuildFailedException : Agent365Exception
             {
                 "Run 'npm run build' locally in the project directory and fix any TypeScript/webpack/build errors.",
                 "Verify that the 'build' script is defined correctly in package.json.",
-                    "If the error is 'tsc: not found' or similar, move 'typescript' from 'devDependencies' to " +
-                        "'dependencies' in package.json. Azure App Service Oryx runs 'npm install --production' " +
-                        "which skips devDependencies, so build tools like tsc must be in dependencies.",
-                    "If the build depends on environment variables or private packages, ensure those are configured on the machine running 'a365 deploy'.",
+                "If the error is 'tsc: not found' or similar, move 'typescript' from 'devDependencies' to " +
+                    "'dependencies' in package.json. Azure App Service Oryx runs 'npm install --production' " +
+                    "which skips devDependencies, so build tools like tsc must be in dependencies.",
+                "If the build depends on environment variables or private packages, ensure those are configured on the machine running 'a365 deploy'.",
                 "After resolving the build issues, rerun 'a365 deploy'."
             },
             context: new Dictionary<string, string>
