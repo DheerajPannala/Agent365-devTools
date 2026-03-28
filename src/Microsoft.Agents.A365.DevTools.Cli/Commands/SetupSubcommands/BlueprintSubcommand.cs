@@ -1311,8 +1311,7 @@ internal static class BlueprintSubcommand
         {
             logger.LogInformation("Configuring Federated Identity Credential for Managed Identity...");
             // Federated credential names are scoped to the application and only need to be unique per app.
-            // Use a readable name based on the display name, with whitespace removed and "-MSI" suffix.
-            var credentialName = $"{displayName.Replace(" ", "")}-MSI";
+            var credentialName = BuildFicCredentialName(displayName);
 
             // Create FIC with retry logic - handles both new and existing blueprints
             // The create API returns 409 Conflict if the FIC already exists, which we treat as success
@@ -2204,6 +2203,17 @@ internal static class BlueprintSubcommand
     }
 
     #region Private Helper Methods
+
+    /// <summary>
+    /// Builds a valid FIC credential name from the agent display name.
+    /// The Graph API requires the name to be a valid URI last segment,
+    /// so non-ASCII characters (e.g. French ç, German ü) are stripped.
+    /// </summary>
+    internal static string BuildFicCredentialName(string displayName)
+    {
+        var sanitized = System.Text.RegularExpressions.Regex.Replace(displayName, @"[^a-zA-Z0-9\-]", "");
+        return $"{sanitized}-MSI";
+    }
 
     private static async Task<bool> CreateFederatedIdentityCredentialAsync(
         string tenantId,

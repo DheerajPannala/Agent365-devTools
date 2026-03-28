@@ -2023,4 +2023,21 @@ public class BlueprintSubcommandTests
     }
 
     #endregion
+
+    #region FIC Credential Name Sanitization Tests
+
+    [Theory]
+    [InlineData("MyAgent", "MyAgent-MSI", "because ASCII-only names should pass through unchanged")]
+    [InlineData("Agent Français", "AgentFranais-MSI", "because non-ASCII 'ç' must be stripped for a valid URI segment")]
+    [InlineData("Ügent Ñame", "gentame-MSI", "because non-ASCII characters (Ü, Ñ) must be stripped")]
+    [InlineData("代理名称", "-MSI", "because CJK characters are all non-ASCII and must be stripped")]
+    [InlineData("My Agent Name", "MyAgentName-MSI", "because spaces must be stripped")]
+    [InlineData("Agent-Test", "Agent-Test-MSI", "because hyphens are valid in URI segments and should be kept")]
+    [InlineData("Agent_Test!", "AgentTest-MSI", "because underscores and punctuation must be stripped")]
+    public void BuildFicCredentialName_SanitizesNonAsciiCharacters(string displayName, string expected, string because)
+    {
+        BlueprintSubcommand.BuildFicCredentialName(displayName).Should().Be(expected, because);
+    }
+
+    #endregion
 }
