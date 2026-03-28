@@ -531,7 +531,9 @@ public sealed class A365CreateInstanceRunner
             {
                 var errorContent = await identityResponse.Content.ReadAsStringAsync(ct);
                 
-                // Check if error is due to calling identity type
+                // Check for authorization errors using Graph API error codes and known message fragments.
+                // "Authorization_RequestDenied" is a Graph API error code (never translated).
+                // "calling identity type" is a Graph API message fragment for unsupported identity scenarios.
                 if (errorContent.Contains("Authorization_RequestDenied", StringComparison.OrdinalIgnoreCase) ||
                     errorContent.Contains("calling identity type", StringComparison.OrdinalIgnoreCase))
                 {

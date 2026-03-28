@@ -3,6 +3,7 @@
 
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Extensions.Logging;
 using System.IO.Compression;
@@ -192,7 +193,12 @@ public class DeploymentService
 
         if (!deployResult.Success)
         {
+            // Detect site startup timeouts using both ARM error codes (locale-independent)
+            // and known English text patterns as a fallback.
+            // Note: Azure App Service deployment errors may not always include ARM error codes,
+            // so the English text fallback provides broader coverage at the cost of locale support.
             bool isSiteStartTimeout =
+                AzCliErrorHelper.ContainsAnyErrorCode(deployResult.StandardError, "SiteStartupTimeoutFailure", "WorkerProcessFailedToStart") ||
                 deployResult.StandardError.Contains("site failed to start within 10 mins", StringComparison.OrdinalIgnoreCase) ||
                 deployResult.StandardError.Contains("worker proccess failed to start", StringComparison.OrdinalIgnoreCase) ||
                 deployResult.StandardError.Contains("worker process failed to start", StringComparison.OrdinalIgnoreCase);

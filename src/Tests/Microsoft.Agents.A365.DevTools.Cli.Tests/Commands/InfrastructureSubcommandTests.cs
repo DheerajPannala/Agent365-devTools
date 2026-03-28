@@ -39,7 +39,7 @@ public class InfrastructureSubcommandTests
             suppressErrorLogging: true)
             .Returns(new CommandResult { ExitCode = 1, StandardError = "Plan not found" });
 
-        // Mock app service plan creation fails with quota error
+        // Mock app service plan creation fails with quota error (using ARM error code, locale-independent)
         _commandExecutor.ExecuteAsync("az",
             Arg.Is<string>(s => s.Contains("appservice plan create") && s.Contains(planName)),
             captureOutput: true,
@@ -47,7 +47,7 @@ public class InfrastructureSubcommandTests
             .Returns(new CommandResult
             {
                 ExitCode = 1,
-                StandardError = "ERROR: Operation cannot be completed without additional quota.\n\nAdditional details - Location:\n\nCurrent Limit (Basic VMs): 0\n\nCurrent Usage: 0\n\nAmount required for this deployment (Basic VMs): 1"
+                StandardError = "ERROR: (QuotaExceeded) Operation cannot be completed without additional quota.\n\nAdditional details - Location:\n\nCurrent Limit (Basic VMs): 0\n\nCurrent Usage: 0\n\nAmount required for this deployment (Basic VMs): 1"
             });
 
         // Act & Assert - The method should throw immediately because creation fails
@@ -190,7 +190,7 @@ public class InfrastructureSubcommandTests
             suppressErrorLogging: true)
             .Returns(new CommandResult { ExitCode = 1, StandardError = "Plan not found" });
 
-        // Mock app service plan creation fails with permission error
+        // Mock app service plan creation fails with permission error (using ARM error code, locale-independent)
         _commandExecutor.ExecuteAsync("az",
             Arg.Is<string>(s => s.Contains("appservice plan create") && s.Contains(planName)),
             captureOutput: true,
@@ -198,7 +198,7 @@ public class InfrastructureSubcommandTests
             .Returns(new CommandResult
             {
                 ExitCode = 1,
-                StandardError = "ERROR: The client does not have authorization to perform action"
+                StandardError = "ERROR: (AuthorizationFailed) The client does not have authorization to perform action"
             });
 
         // Act & Assert - The method should throw immediately because creation fails
@@ -693,6 +693,147 @@ public class InfrastructureSubcommandTests
                 Directory.Delete(deploymentProjectPath, true);
         }
     }
+
+    #region Locale-Independent Error Code Tests (GitHub Issue #100)
+
+    [Theory]
+    [InlineData("ERROR: (AuthorizationFailed) Der Client hat keine Berechtigung", "because ARM error code AuthorizationFailed is present regardless of German locale")]
+    [InlineData("ERROR: (AuthorizationFailed) Le client n'a pas l'autorisation", "because ARM error code AuthorizationFailed is present regardless of French locale")]
+    [InlineData("ERROR: (LinkedAuthorizationFailed) Authorization failed", "because LinkedAuthorizationFailed is a recognized ARM error code")]
+    public async Task EnsureAppServicePlanExists_WithNonEnglishLocale_AuthorizationFailed_DetectsErrorCode(string stderr, string because)
+    {
+        // Arrange - Simulates Azure CLI error output in non-English locales.
+        // ARM error codes like AuthorizationFailed are never localized.
+        var subscriptionId = "test-sub-id";
+        var resourceGroup = "test-rg";
+        var planName = "test-plan";
+        var planSku = "B1";
+
+        _commandExecutor.ExecuteAsync("az",
+            Arg.Is<string>(s => s.Contains("appservice plan show") && s.Contains(planName)),
+            captureOutput: true,
+            suppressErrorLogging: true)
+            .Returns(new CommandResult { ExitCode = 1, StandardError = "Plan not found" });
+
+        _commandExecutor.ExecuteAsync("az",
+            Arg.Is<string>(s => s.Contains("appservice plan create") && s.Contains(planName)),
+            captureOutput: true,
+            suppressErrorLogging: true)
+            .Returns(new CommandResult { ExitCode = 1, StandardError = stderr });
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<AzureAppServicePlanException>(
+            async () => await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
+                _commandExecutor, _logger, resourceGroup, planName, planSku, "eastus", subscriptionId,
+                maxRetries: 2, baseDelaySeconds: 0));
+
+        exception.ErrorType.Should().Be(AppServicePlanErrorType.AuthorizationFailed, because);
+    }
+
+    [Theory]
+    [InlineData("ERROR: (QuotaExceeded) Kontingent ueberschritten", "because ARM error code QuotaExceeded is present regardless of German locale")]
+    [InlineData("ERROR: (ResourceQuotaExceeded) Quota exceeded", "because ResourceQuotaExceeded is a recognized ARM error code")]
+    public async Task EnsureAppServicePlanExists_WithNonEnglishLocale_QuotaExceeded_DetectsErrorCode(string stderr, string because)
+    {
+        // Arrange - Simulates Azure CLI error output where only the error code
+        // (not the localized message) should be matched.
+        var subscriptionId = "test-sub-id";
+        var resourceGroup = "test-rg";
+        var planName = "test-plan";
+        var planSku = "B1";
+
+        _commandExecutor.ExecuteAsync("az",
+            Arg.Is<string>(s => s.Contains("appservice plan show") && s.Contains(planName)),
+            captureOutput: true,
+            suppressErrorLogging: true)
+            .Returns(new CommandResult { ExitCode = 1, StandardError = "Plan not found" });
+
+        _commandExecutor.ExecuteAsync("az",
+            Arg.Is<string>(s => s.Contains("appservice plan create") && s.Contains(planName)),
+            captureOutput: true,
+            suppressErrorLogging: true)
+            .Returns(new CommandResult { ExitCode = 1, StandardError = stderr });
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<AzureAppServicePlanException>(
+            async () => await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
+                _commandExecutor, _logger, resourceGroup, planName, planSku, "eastus", subscriptionId,
+                maxRetries: 2, baseDelaySeconds: 0));
+
+        exception.ErrorType.Should().Be(AppServicePlanErrorType.QuotaExceeded, because);
+    }
+
+    [Theory]
+    [InlineData("ERROR: (InvalidSku) Die SKU ist ungueltig", "because ARM error code InvalidSku is present regardless of locale")]
+    [InlineData("ERROR: (SkuNotAvailable) SKU no disponible", "because ARM error code SkuNotAvailable is present regardless of Spanish locale")]
+    public async Task EnsureAppServicePlanExists_WithNonEnglishLocale_SkuErrors_DetectsErrorCode(string stderr, string because)
+    {
+        // Arrange
+        var subscriptionId = "test-sub-id";
+        var resourceGroup = "test-rg";
+        var planName = "test-plan";
+        var planSku = "B1";
+
+        _commandExecutor.ExecuteAsync("az",
+            Arg.Is<string>(s => s.Contains("appservice plan show") && s.Contains(planName)),
+            captureOutput: true,
+            suppressErrorLogging: true)
+            .Returns(new CommandResult { ExitCode = 1, StandardError = "Plan not found" });
+
+        _commandExecutor.ExecuteAsync("az",
+            Arg.Is<string>(s => s.Contains("appservice plan create") && s.Contains(planName)),
+            captureOutput: true,
+            suppressErrorLogging: true)
+            .Returns(new CommandResult { ExitCode = 1, StandardError = stderr });
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<AzureAppServicePlanException>(
+            async () => await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
+                _commandExecutor, _logger, resourceGroup, planName, planSku, "eastus", subscriptionId,
+                maxRetries: 2, baseDelaySeconds: 0));
+
+        exception.ErrorType.Should().Be(AppServicePlanErrorType.SkuNotAvailable, because);
+    }
+
+    [Fact]
+    public async Task EnsureAppServicePlanExists_WithOnlyLocalizedErrorMessage_FallsThrough()
+    {
+        // Arrange - When stderr contains ONLY localized text without an ARM error code,
+        // the error should fall through to the generic 'Other' error type rather than
+        // being incorrectly classified. This verifies we no longer match on localized text.
+        var subscriptionId = "test-sub-id";
+        var resourceGroup = "test-rg";
+        var planName = "test-plan";
+        var planSku = "B1";
+
+        _commandExecutor.ExecuteAsync("az",
+            Arg.Is<string>(s => s.Contains("appservice plan show") && s.Contains(planName)),
+            captureOutput: true,
+            suppressErrorLogging: true)
+            .Returns(new CommandResult { ExitCode = 1, StandardError = "Plan not found" });
+
+        // Error message in a non-English locale with NO ARM error code — just localized text
+        _commandExecutor.ExecuteAsync("az",
+            Arg.Is<string>(s => s.Contains("appservice plan create") && s.Contains(planName)),
+            captureOutput: true,
+            suppressErrorLogging: true)
+            .Returns(new CommandResult
+            {
+                ExitCode = 1,
+                StandardError = "Der Client hat keine Berechtigung diese Aktion auszufuehren"
+            });
+
+        // Act & Assert - Should fall through to 'Other' since there's no ARM error code
+        var exception = await Assert.ThrowsAsync<AzureAppServicePlanException>(
+            async () => await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
+                _commandExecutor, _logger, resourceGroup, planName, planSku, "eastus", subscriptionId,
+                maxRetries: 2, baseDelaySeconds: 0));
+
+        exception.ErrorType.Should().Be(AppServicePlanErrorType.Other,
+            because: "without an ARM error code in the output, the error should not be classified as authorization/quota/sku");
+    }
+
+    #endregion
 
     private sealed class TestLogger : ILogger
     {
