@@ -445,13 +445,16 @@ public static class InfrastructureSubcommand
                 var createResult = await executor.ExecuteAsync("az", $"webapp create -g {resourceGroup} -p {planName} -n {webAppName} --runtime \"{runtime}\" --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
                 if (!createResult.Success)
                 {
-                    // Check for specific error conditions using ARM error codes (locale-independent).
-                    // Error codes like AuthorizationFailed, Conflict are never localized.
+                    // Check for specific error conditions.
+                    // ARM error codes (AuthorizationFailed, Conflict) are locale-independent.
+                    // az webapp create outputs "already exists" as plain text without an ARM error code,
+                    // so we keep the English text fallback for that case.
                     if (AzCliErrorHelper.ContainsAnyErrorCode(createResult.StandardError, "AuthorizationFailed", "LinkedAuthorizationFailed"))
                     {
                         throw new AzureResourceException("WebApp", webAppName, createResult.StandardError, true);
                     }
-                    else if (AzCliErrorHelper.ContainsAnyErrorCode(createResult.StandardError, "Conflict", "WebsiteHostNameConflict"))
+                    else if (AzCliErrorHelper.ContainsAnyErrorCode(createResult.StandardError, "Conflict", "WebsiteHostNameConflict") ||
+                             createResult.StandardError.Contains("already exists", StringComparison.OrdinalIgnoreCase))
                     {
                         throw new AzureResourceException(
                             ErrorCodes.AzureWebAppNameTaken,
@@ -548,7 +551,8 @@ public static class InfrastructureSubcommand
                     // ignore parse error
                 }
             }
-            else if (AzCliErrorHelper.ContainsAnyErrorCode(identity.StandardError, "Conflict"))
+            else if (AzCliErrorHelper.ContainsAnyErrorCode(identity.StandardError, "Conflict") ||
+                     identity.StandardError.Contains("already has a managed identity", StringComparison.OrdinalIgnoreCase))
             {
                 logger.LogInformation("Managed identity already assigned (ignoring conflict).");
             }
@@ -712,7 +716,8 @@ public static class InfrastructureSubcommand
         var result = await executor.ExecuteAsync("az", args, suppressErrorLogging: true);
         if (!result.Success)
         {
-            if (AzCliErrorHelper.ContainsAnyErrorCode(result.StandardError, "Conflict"))
+            if (AzCliErrorHelper.ContainsAnyErrorCode(result.StandardError, "Conflict") ||
+                result.StandardError.Contains("already exists", StringComparison.OrdinalIgnoreCase))
             {
                 logger.LogInformation("{Description} already exists (skipping creation)", description);
             }
@@ -803,9 +808,16 @@ public static class InfrastructureSubcommand
                     logger.LogError("Standard output: {Output}", createResult.StandardOutput);
                 }
 
-                // Check for specific error conditions using ARM error codes (locale-independent).
-                // ARM error codes (e.g. AuthorizationFailed, QuotaExceeded) are never translated,
-                // unlike human-readable error messages which vary by Azure CLI language setting.
+                // Check for specific error conditions.
+                // ARM error codes (e.g. AuthorizationFailed) are locale-independent.
+                // However, az appservice plan create does NOT output ARM error codes for
+                // quota and SKU errors — it outputs English text directly, so we keep
+                // text fallbacks for those cases.
+                //
+                // Real error examples (captured from az CLI 2.51.0):
+                //   AuthorizationFailed: "ERROR: (AuthorizationFailed) The client '...' does not have authorization..."
+                //   Quota: "ERROR: Operation cannot be completed without additional quota."
+                //   InvalidSku: "ERROR: az appservice plan create: 'X' is not a valid value for '--sku'."
                 if (AzCliErrorHelper.ContainsAnyErrorCode(createResult.StandardError, "AuthorizationFailed", "LinkedAuthorizationFailed"))
                 {
                     throw new AzureAppServicePlanException(
@@ -815,7 +827,8 @@ public static class InfrastructureSubcommand
                         AppServicePlanErrorType.AuthorizationFailed,
                         createResult.StandardError);
                 }
-                else if (AzCliErrorHelper.ContainsAnyErrorCode(createResult.StandardError, "QuotaExceeded", "ResourceQuotaExceeded"))
+                else if (AzCliErrorHelper.ContainsAnyErrorCode(createResult.StandardError, "QuotaExceeded", "ResourceQuotaExceeded") ||
+                         createResult.StandardError.Contains("quota", StringComparison.OrdinalIgnoreCase))
                 {
                     throw new AzureAppServicePlanException(
                         planName,
@@ -824,7 +837,8 @@ public static class InfrastructureSubcommand
                         AppServicePlanErrorType.QuotaExceeded,
                         createResult.StandardError);
                 }
-                else if (AzCliErrorHelper.ContainsAnyErrorCode(createResult.StandardError, "InvalidSku", "SkuNotAvailable"))
+                else if (AzCliErrorHelper.ContainsAnyErrorCode(createResult.StandardError, "InvalidSku", "SkuNotAvailable") ||
+                         createResult.StandardError.Contains("is not a valid value for '--sku'", StringComparison.OrdinalIgnoreCase))
                 {
                     throw new AzureAppServicePlanException(
                         planName,
