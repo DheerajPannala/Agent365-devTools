@@ -3,6 +3,7 @@
 
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
@@ -444,13 +445,14 @@ public static class InfrastructureSubcommand
                 var createResult = await executor.ExecuteAsync("az", $"webapp create -g {resourceGroup} -p {planName} -n {webAppName} --runtime \"{runtime}\" --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
                 if (!createResult.Success)
                 {
-                    // Check for specific error conditions
-                    if (createResult.StandardError.Contains("AuthorizationFailed", StringComparison.OrdinalIgnoreCase))
+                    // Check for specific error conditions using ARM error codes (locale-independent).
+                    // "already exists" kept as English fallback because az CLI omits the ARM code.
+                    if (AzCliErrorHelper.ContainsAnyErrorCode(createResult.StandardError, "AuthorizationFailed", "LinkedAuthorizationFailed"))
                     {
                         throw new AzureResourceException("WebApp", webAppName, createResult.StandardError, true);
                     }
-                    else if (createResult.StandardError.Contains("already exists", StringComparison.OrdinalIgnoreCase) ||
-                             createResult.StandardError.Contains("app names must be globally unique", StringComparison.OrdinalIgnoreCase))
+                    else if (AzCliErrorHelper.ContainsAnyErrorCode(createResult.StandardError, "Conflict", "WebsiteHostNameConflict") ||
+                             createResult.StandardError.Contains("already exists", StringComparison.OrdinalIgnoreCase))
                     {
                         throw new AzureResourceException(
                             ErrorCodes.AzureWebAppNameTaken,
@@ -547,8 +549,8 @@ public static class InfrastructureSubcommand
                     // ignore parse error
                 }
             }
-            else if (identity.StandardError.Contains("already has a managed identity", StringComparison.OrdinalIgnoreCase) ||
-                     identity.StandardError.Contains("Conflict", StringComparison.OrdinalIgnoreCase))
+            else if (AzCliErrorHelper.ContainsAnyErrorCode(identity.StandardError, "Conflict") ||
+                     identity.StandardError.Contains("already has a managed identity", StringComparison.OrdinalIgnoreCase))
             {
                 logger.LogInformation("Managed identity already assigned (ignoring conflict).");
             }
@@ -712,11 +714,12 @@ public static class InfrastructureSubcommand
         var result = await executor.ExecuteAsync("az", args, suppressErrorLogging: true);
         if (!result.Success)
         {
-            if (result.StandardError.Contains("already exists", StringComparison.OrdinalIgnoreCase))
+            if (AzCliErrorHelper.ContainsAnyErrorCode(result.StandardError, "Conflict") ||
+                result.StandardError.Contains("already exists", StringComparison.OrdinalIgnoreCase))
             {
                 logger.LogInformation("{Description} already exists (skipping creation)", description);
             }
-            else if (result.StandardError.Contains("AuthorizationFailed", StringComparison.OrdinalIgnoreCase))
+            else if (AzCliErrorHelper.ContainsAnyErrorCode(result.StandardError, "AuthorizationFailed", "LinkedAuthorizationFailed"))
             {
                 var exception = new AzureResourceException(description, string.Empty, result.StandardError, true);
                 var logFilePath = ConfigService.GetCommandLogPath(CommandNames.Setup);
@@ -803,9 +806,10 @@ public static class InfrastructureSubcommand
                     logger.LogError("Standard output: {Output}", createResult.StandardOutput);
                 }
 
-                // Check for specific error conditions and throw appropriate exception
-                if ((createResult.StandardError?.Contains("AuthorizationFailed", StringComparison.OrdinalIgnoreCase) ?? false) ||
-                    (createResult.StandardError?.Contains("authorization", StringComparison.OrdinalIgnoreCase) ?? false))
+                // Check for specific error conditions using ARM error codes (locale-independent).
+                // Quota and SKU errors keep English text fallbacks because az CLI does not
+                // emit ARM error codes for those.
+                if (AzCliErrorHelper.ContainsAnyErrorCode(createResult.StandardError, "AuthorizationFailed", "LinkedAuthorizationFailed"))
                 {
                     throw new AzureAppServicePlanException(
                         planName,
@@ -814,8 +818,8 @@ public static class InfrastructureSubcommand
                         AppServicePlanErrorType.AuthorizationFailed,
                         createResult.StandardError);
                 }
-                else if ((createResult.StandardError?.Contains("QuotaExceeded", StringComparison.OrdinalIgnoreCase) ?? false) ||
-                         (createResult.StandardError?.Contains("quota", StringComparison.OrdinalIgnoreCase) ?? false))
+                else if (AzCliErrorHelper.ContainsAnyErrorCode(createResult.StandardError, "QuotaExceeded", "ResourceQuotaExceeded") ||
+                         createResult.StandardError.Contains("quota", StringComparison.OrdinalIgnoreCase))
                 {
                     throw new AzureAppServicePlanException(
                         planName,
@@ -824,8 +828,8 @@ public static class InfrastructureSubcommand
                         AppServicePlanErrorType.QuotaExceeded,
                         createResult.StandardError);
                 }
-                else if ((createResult.StandardError?.Contains("InvalidSku", StringComparison.OrdinalIgnoreCase) ?? false) ||
-                         (createResult.StandardError?.Contains("SkuNotAvailable", StringComparison.OrdinalIgnoreCase) ?? false))
+                else if (AzCliErrorHelper.ContainsAnyErrorCode(createResult.StandardError, "InvalidSku", "SkuNotAvailable") ||
+                         createResult.StandardError.Contains("is not a valid value for '--sku'", StringComparison.OrdinalIgnoreCase))
                 {
                     throw new AzureAppServicePlanException(
                         planName,

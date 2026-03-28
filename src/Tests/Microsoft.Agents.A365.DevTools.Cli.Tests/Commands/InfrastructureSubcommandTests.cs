@@ -39,7 +39,9 @@ public class InfrastructureSubcommandTests
             suppressErrorLogging: true)
             .Returns(new CommandResult { ExitCode = 1, StandardError = "Plan not found" });
 
-        // Mock app service plan creation fails with quota error
+        // Real az CLI output from `az appservice plan create --sku B1` when quota is exceeded.
+        // Note: az CLI does NOT include an ARM error code for this error — it outputs plain English text.
+        // This test exercises the English text fallback path (matching "quota").
         _commandExecutor.ExecuteAsync("az",
             Arg.Is<string>(s => s.Contains("appservice plan create") && s.Contains(planName)),
             captureOutput: true,
@@ -190,7 +192,7 @@ public class InfrastructureSubcommandTests
             suppressErrorLogging: true)
             .Returns(new CommandResult { ExitCode = 1, StandardError = "Plan not found" });
 
-        // Mock app service plan creation fails with permission error
+        // Mock app service plan creation fails with permission error (using ARM error code, locale-independent)
         _commandExecutor.ExecuteAsync("az",
             Arg.Is<string>(s => s.Contains("appservice plan create") && s.Contains(planName)),
             captureOutput: true,
@@ -198,7 +200,7 @@ public class InfrastructureSubcommandTests
             .Returns(new CommandResult
             {
                 ExitCode = 1,
-                StandardError = "ERROR: The client does not have authorization to perform action"
+                StandardError = "ERROR: (AuthorizationFailed) The client does not have authorization to perform action"
             });
 
         // Act & Assert - The method should throw immediately because creation fails
@@ -693,6 +695,386 @@ public class InfrastructureSubcommandTests
                 Directory.Delete(deploymentProjectPath, true);
         }
     }
+
+    #region Locale-Independent Error Code Tests (GitHub Issue #100)
+
+    [Theory]
+    [InlineData("ERROR: (AuthorizationFailed) Der Client hat keine Berechtigung", "because ARM error code AuthorizationFailed is present regardless of German locale")]
+    [InlineData("ERROR: (AuthorizationFailed) Le client n'a pas l'autorisation", "because ARM error code AuthorizationFailed is present regardless of French locale")]
+    [InlineData("ERROR: (LinkedAuthorizationFailed) Authorization failed", "because LinkedAuthorizationFailed is a recognized ARM error code")]
+    [InlineData("ERROR: (AuthorizationFailed) The client 'user@contoso.onmicrosoft.com' with object id 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' does not have authorization to perform action 'Microsoft.Web/serverfarms/write' over scope '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-test/providers/Microsoft.Web/serverfarms/plan-test' or the scope is invalid.", "because real az CLI AuthorizationFailed output includes the ARM error code in parentheses")]
+    public async Task EnsureAppServicePlanExists_WithNonEnglishLocale_AuthorizationFailed_DetectsErrorCode(string stderr, string because)
+    {
+        // Arrange - Simulates Azure CLI error output in non-English locales.
+        // ARM error codes like AuthorizationFailed are never localized.
+        var subscriptionId = "test-sub-id";
+        var resourceGroup = "test-rg";
+        var planName = "test-plan";
+        var planSku = "B1";
+
+        _commandExecutor.ExecuteAsync("az",
+            Arg.Is<string>(s => s.Contains("appservice plan show") && s.Contains(planName)),
+            captureOutput: true,
+            suppressErrorLogging: true)
+            .Returns(new CommandResult { ExitCode = 1, StandardError = "Plan not found" });
+
+        _commandExecutor.ExecuteAsync("az",
+            Arg.Is<string>(s => s.Contains("appservice plan create") && s.Contains(planName)),
+            captureOutput: true,
+            suppressErrorLogging: true)
+            .Returns(new CommandResult { ExitCode = 1, StandardError = stderr });
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<AzureAppServicePlanException>(
+            async () => await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
+                _commandExecutor, _logger, resourceGroup, planName, planSku, "eastus", subscriptionId,
+                maxRetries: 2, baseDelaySeconds: 0));
+
+        exception.ErrorType.Should().Be(AppServicePlanErrorType.AuthorizationFailed, because);
+    }
+
+    [Theory]
+    [InlineData("ERROR: (QuotaExceeded) Kontingent ueberschritten", "because ARM error code QuotaExceeded is present regardless of German locale")]
+    [InlineData("ERROR: (ResourceQuotaExceeded) Quota exceeded", "because ResourceQuotaExceeded is a recognized ARM error code")]
+    [InlineData("ERROR: Operation cannot be completed without additional quota.\n\nAdditional details - Location:\n\nCurrent Limit (Basic VMs): 0\n\nCurrent Usage: 0\n\nAmount required for this deployment (Basic VMs): 1", "because real az CLI quota errors have no ARM error code but contain the word 'quota' as English text fallback")]
+    public async Task EnsureAppServicePlanExists_WithNonEnglishLocale_QuotaExceeded_DetectsErrorCode(string stderr, string because)
+    {
+        // Arrange - Simulates Azure CLI error output where only the error code
+        // (not the localized message) should be matched.
+        var subscriptionId = "test-sub-id";
+        var resourceGroup = "test-rg";
+        var planName = "test-plan";
+        var planSku = "B1";
+
+        _commandExecutor.ExecuteAsync("az",
+            Arg.Is<string>(s => s.Contains("appservice plan show") && s.Contains(planName)),
+            captureOutput: true,
+            suppressErrorLogging: true)
+            .Returns(new CommandResult { ExitCode = 1, StandardError = "Plan not found" });
+
+        _commandExecutor.ExecuteAsync("az",
+            Arg.Is<string>(s => s.Contains("appservice plan create") && s.Contains(planName)),
+            captureOutput: true,
+            suppressErrorLogging: true)
+            .Returns(new CommandResult { ExitCode = 1, StandardError = stderr });
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<AzureAppServicePlanException>(
+            async () => await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
+                _commandExecutor, _logger, resourceGroup, planName, planSku, "eastus", subscriptionId,
+                maxRetries: 2, baseDelaySeconds: 0));
+
+        exception.ErrorType.Should().Be(AppServicePlanErrorType.QuotaExceeded, because);
+    }
+
+    [Theory]
+    [InlineData("ERROR: (InvalidSku) Die SKU ist ungueltig", "because ARM error code InvalidSku is present regardless of locale")]
+    [InlineData("ERROR: (SkuNotAvailable) SKU no disponible", "because ARM error code SkuNotAvailable is present regardless of Spanish locale")]
+    [InlineData("ERROR: az appservice plan create: 'FAKEINVALIDSKU' is not a valid value for '--sku'. Allowed values: F1, FREE, D1, SHARED, B1, B2, B3, S1, S2, S3, P1V2, P2V2, P3V2, P0V3, P1V3, P2V3, P3V3, P1MV3, P2MV3, P3MV3, P4MV3, P5MV3, I1, I2, I3, I1V2, I2V2, I3V2, I4V2, I5V2, I6V2, I1MV2, I2MV2, I3MV2, I4MV2, I5MV2, WS1, WS2, WS3.", "because real az CLI invalid SKU uses client-side validation text with no ARM error code — matches English text fallback")]
+    public async Task EnsureAppServicePlanExists_WithNonEnglishLocale_SkuErrors_DetectsErrorCode(string stderr, string because)
+    {
+        // Arrange
+        var subscriptionId = "test-sub-id";
+        var resourceGroup = "test-rg";
+        var planName = "test-plan";
+        var planSku = "B1";
+
+        _commandExecutor.ExecuteAsync("az",
+            Arg.Is<string>(s => s.Contains("appservice plan show") && s.Contains(planName)),
+            captureOutput: true,
+            suppressErrorLogging: true)
+            .Returns(new CommandResult { ExitCode = 1, StandardError = "Plan not found" });
+
+        _commandExecutor.ExecuteAsync("az",
+            Arg.Is<string>(s => s.Contains("appservice plan create") && s.Contains(planName)),
+            captureOutput: true,
+            suppressErrorLogging: true)
+            .Returns(new CommandResult { ExitCode = 1, StandardError = stderr });
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<AzureAppServicePlanException>(
+            async () => await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
+                _commandExecutor, _logger, resourceGroup, planName, planSku, "eastus", subscriptionId,
+                maxRetries: 2, baseDelaySeconds: 0));
+
+        exception.ErrorType.Should().Be(AppServicePlanErrorType.SkuNotAvailable, because);
+    }
+
+    [Fact]
+    public async Task EnsureAppServicePlanExists_WithOnlyLocalizedErrorMessage_FallsThrough()
+    {
+        // Arrange - When stderr contains ONLY localized text without an ARM error code,
+        // the error should fall through to the generic 'Other' error type rather than
+        // being incorrectly classified. This verifies we no longer match on localized text.
+        var subscriptionId = "test-sub-id";
+        var resourceGroup = "test-rg";
+        var planName = "test-plan";
+        var planSku = "B1";
+
+        _commandExecutor.ExecuteAsync("az",
+            Arg.Is<string>(s => s.Contains("appservice plan show") && s.Contains(planName)),
+            captureOutput: true,
+            suppressErrorLogging: true)
+            .Returns(new CommandResult { ExitCode = 1, StandardError = "Plan not found" });
+
+        // Error message in a non-English locale with NO ARM error code — just localized text
+        _commandExecutor.ExecuteAsync("az",
+            Arg.Is<string>(s => s.Contains("appservice plan create") && s.Contains(planName)),
+            captureOutput: true,
+            suppressErrorLogging: true)
+            .Returns(new CommandResult
+            {
+                ExitCode = 1,
+                StandardError = "Der Client hat keine Berechtigung diese Aktion auszufuehren"
+            });
+
+        // Act & Assert - Should fall through to 'Other' since there's no ARM error code
+        var exception = await Assert.ThrowsAsync<AzureAppServicePlanException>(
+            async () => await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
+                _commandExecutor, _logger, resourceGroup, planName, planSku, "eastus", subscriptionId,
+                maxRetries: 2, baseDelaySeconds: 0));
+
+        exception.ErrorType.Should().Be(AppServicePlanErrorType.Other,
+            because: "without an ARM error code in the output, the error should not be classified as authorization/quota/sku");
+    }
+
+    #endregion
+
+    #region CreateInfrastructureAsync Error Path Tests (GitHub Issue #100 - Coverage)
+
+    [Fact]
+    public async Task CreateInfrastructureAsync_WhenWebAppCreateFailsWithAuthorizationFailed_ThrowsAzureResourceException()
+    {
+        // Arrange - Exercises the ARM error code path for webapp create AuthorizationFailed.
+        // Real az CLI output: "ERROR: (AuthorizationFailed) The client '...' does not have authorization..."
+        var generatedConfigPath = Path.Combine(Path.GetTempPath(), $"test-{Guid.NewGuid()}.json");
+        var deploymentProjectPath = Path.Combine(Path.GetTempPath(), $"test-project-{Guid.NewGuid()}");
+        var logger = new TestLogger();
+
+        try
+        {
+            Directory.CreateDirectory(deploymentProjectPath);
+
+            _commandExecutor.ExecuteAsync("az", Arg.Any<string>(), captureOutput: true, suppressErrorLogging: Arg.Any<bool>())
+                .Returns(callInfo =>
+                {
+                    var args = callInfo.ArgAt<string>(1);
+                    if (args.Contains("group exists")) return new CommandResult { ExitCode = 0, StandardOutput = "true" };
+                    if (args.Contains("appservice plan show")) return new CommandResult { ExitCode = 0, StandardOutput = "{\"name\": \"test-plan\"}" };
+                    if (args.Contains("webapp show")) return new CommandResult { ExitCode = 1, StandardError = "Not found" };
+                    if (args.Contains("webapp create"))
+                        return new CommandResult { ExitCode = 1, StandardError = "ERROR: (AuthorizationFailed) The client 'user@example.com' does not have authorization to perform action 'Microsoft.Web/sites/write'" };
+                    return new CommandResult { ExitCode = 0 };
+                });
+
+            // Act & Assert
+            var exception = await Assert.ThrowsAsync<AzureResourceException>(
+                async () => await InfrastructureSubcommand.CreateInfrastructureAsync(
+                    _commandExecutor, "test-sub", "test-tenant", "test-rg", "eastus", "test-plan", "B1",
+                    "test-webapp", generatedConfigPath, deploymentProjectPath, ProjectPlatform.DotNet, logger,
+                    needDeployment: true, skipInfra: false, externalHosting: false, CancellationToken.None));
+
+            exception.ErrorCode.Should().Be("AZURE_PERMISSION_DENIED",
+                because: "AuthorizationFailed ARM error code indicates a permissions issue");
+        }
+        finally
+        {
+            if (File.Exists(generatedConfigPath)) File.Delete(generatedConfigPath);
+            if (Directory.Exists(deploymentProjectPath)) Directory.Delete(deploymentProjectPath, true);
+        }
+    }
+
+    [Theory]
+    [InlineData("ERROR: (Conflict) Website with given name test already exists.", "because ARM Conflict error code is locale-independent")]
+    [InlineData("WARNING: Webapp 'test-webapp' already exists. Returning the webapp's existing details.\nERROR: Unable to retrieve details of the existing app 'test-webapp'.", "because real az CLI uses 'already exists' English text without an ARM error code")]
+    public async Task CreateInfrastructureAsync_WhenWebAppNameTaken_ThrowsAzureResourceExceptionWithNameTaken(string stderr, string because)
+    {
+        // Arrange - Tests both ARM error code and English text fallback paths for webapp name conflict.
+        var generatedConfigPath = Path.Combine(Path.GetTempPath(), $"test-{Guid.NewGuid()}.json");
+        var deploymentProjectPath = Path.Combine(Path.GetTempPath(), $"test-project-{Guid.NewGuid()}");
+        var logger = new TestLogger();
+
+        try
+        {
+            Directory.CreateDirectory(deploymentProjectPath);
+
+            _commandExecutor.ExecuteAsync("az", Arg.Any<string>(), captureOutput: true, suppressErrorLogging: Arg.Any<bool>())
+                .Returns(callInfo =>
+                {
+                    var args = callInfo.ArgAt<string>(1);
+                    if (args.Contains("group exists")) return new CommandResult { ExitCode = 0, StandardOutput = "true" };
+                    if (args.Contains("appservice plan show")) return new CommandResult { ExitCode = 0, StandardOutput = "{\"name\": \"test-plan\"}" };
+                    if (args.Contains("webapp show")) return new CommandResult { ExitCode = 1, StandardError = "Not found" };
+                    if (args.Contains("webapp create"))
+                        return new CommandResult { ExitCode = 1, StandardError = stderr };
+                    return new CommandResult { ExitCode = 0 };
+                });
+
+            // Act & Assert
+            var exception = await Assert.ThrowsAsync<AzureResourceException>(
+                async () => await InfrastructureSubcommand.CreateInfrastructureAsync(
+                    _commandExecutor, "test-sub", "test-tenant", "test-rg", "eastus", "test-plan", "B1",
+                    "test-webapp", generatedConfigPath, deploymentProjectPath, ProjectPlatform.DotNet, logger,
+                    needDeployment: true, skipInfra: false, externalHosting: false, CancellationToken.None));
+
+            exception.ErrorCode.Should().Be("AZURE_WEBAPP_NAME_TAKEN", because);
+        }
+        finally
+        {
+            if (File.Exists(generatedConfigPath)) File.Delete(generatedConfigPath);
+            if (Directory.Exists(deploymentProjectPath)) Directory.Delete(deploymentProjectPath, true);
+        }
+    }
+
+    [Fact]
+    public async Task CreateInfrastructureAsync_WhenIdentityConflict_LogsAndContinues()
+    {
+        // Arrange - Tests the identity conflict path when az webapp identity assign returns
+        // a Conflict error (or English fallback text).
+        var generatedConfigPath = Path.Combine(Path.GetTempPath(), $"test-{Guid.NewGuid()}.json");
+        var deploymentProjectPath = Path.Combine(Path.GetTempPath(), $"test-project-{Guid.NewGuid()}");
+        var logger = new TestLogger();
+
+        try
+        {
+            Directory.CreateDirectory(deploymentProjectPath);
+
+            _commandExecutor.ExecuteAsync("az", Arg.Any<string>(), captureOutput: true, suppressErrorLogging: Arg.Any<bool>())
+                .Returns(callInfo =>
+                {
+                    var args = callInfo.ArgAt<string>(1);
+                    if (args.Contains("group exists")) return new CommandResult { ExitCode = 0, StandardOutput = "true" };
+                    if (args.Contains("appservice plan show")) return new CommandResult { ExitCode = 0, StandardOutput = "{\"name\": \"test-plan\"}" };
+                    if (args.Contains("webapp show")) return new CommandResult { ExitCode = 0, StandardOutput = "{\"name\": \"test-webapp\", \"state\": \"Running\"}" };
+                    if (args.Contains("webapp identity assign"))
+                        return new CommandResult { ExitCode = 1, StandardError = "ERROR: (Conflict) The resource already has a managed identity" };
+                    if (args.Contains("ad signed-in-user show")) return new CommandResult { ExitCode = 1, StandardError = "Not available" };
+                    return new CommandResult { ExitCode = 0 };
+                });
+
+            // Act - Should not throw; logs the conflict and continues
+            (string? principalId, bool anyAlreadyExisted) = await InfrastructureSubcommand.CreateInfrastructureAsync(
+                _commandExecutor, "test-sub", "test-tenant", "test-rg", "eastus", "test-plan", "B1",
+                "test-webapp", generatedConfigPath, deploymentProjectPath, ProjectPlatform.DotNet, logger,
+                needDeployment: true, skipInfra: false, externalHosting: false, CancellationToken.None);
+
+            // Assert
+            logger.HasInformation("Managed identity already assigned").Should().BeTrue(
+                because: "Conflict errors for identity assign should be treated as already-assigned");
+        }
+        finally
+        {
+            if (File.Exists(generatedConfigPath)) File.Delete(generatedConfigPath);
+            if (Directory.Exists(deploymentProjectPath)) Directory.Delete(deploymentProjectPath, true);
+        }
+    }
+
+    [Fact]
+    public async Task CreateInfrastructureAsync_WhenResourceGroupCreateConflict_LogsAlreadyExists()
+    {
+        // Arrange - Tests AzWarnAsync Conflict path: when resource group creation returns
+        // a Conflict error (already exists), it should log and continue.
+        var generatedConfigPath = Path.Combine(Path.GetTempPath(), $"test-{Guid.NewGuid()}.json");
+        var deploymentProjectPath = Path.Combine(Path.GetTempPath(), $"test-project-{Guid.NewGuid()}");
+        var logger = new TestLogger();
+
+        try
+        {
+            Directory.CreateDirectory(deploymentProjectPath);
+
+            _commandExecutor.ExecuteAsync("az", Arg.Any<string>(), captureOutput: true, suppressErrorLogging: Arg.Any<bool>())
+                .Returns(callInfo =>
+                {
+                    var args = callInfo.ArgAt<string>(1);
+                    if (args.Contains("group exists")) return new CommandResult { ExitCode = 0, StandardOutput = "false" };
+                    if (args.Contains("appservice plan show")) return new CommandResult { ExitCode = 0, StandardOutput = "{\"name\": \"test-plan\"}" };
+                    if (args.Contains("webapp show")) return new CommandResult { ExitCode = 0, StandardOutput = "{\"name\": \"test-webapp\", \"state\": \"Running\"}" };
+                    if (args.Contains("webapp identity assign")) return new CommandResult { ExitCode = 0, StandardOutput = "{\"principalId\": \"test-principal-id\"}" };
+                    if (args.Contains("ad sp show")) return new CommandResult { ExitCode = 0, StandardOutput = "{\"id\": \"test-principal-id\"}" };
+                    if (args.Contains("ad signed-in-user show")) return new CommandResult { ExitCode = 1, StandardError = "Not available" };
+                    return new CommandResult { ExitCode = 0 };
+                });
+
+            // Override the AzWarnAsync call for group create to simulate Conflict.
+            // AzWarnAsync calls ExecuteAsync("az", args, suppressErrorLogging: true) which uses
+            // default captureOutput: true, so we match on all parameters.
+            _commandExecutor.ExecuteAsync("az",
+                Arg.Is<string>(s => s.Contains("group create")),
+                Arg.Any<string?>(),
+                Arg.Any<bool>(),
+                true,
+                Arg.Any<CancellationToken>())
+                .Returns(new CommandResult { ExitCode = 1, StandardError = "ERROR: (Conflict) Resource group already exists" });
+
+            // Act
+            await InfrastructureSubcommand.CreateInfrastructureAsync(
+                _commandExecutor, "test-sub", "test-tenant", "test-rg", "eastus", "test-plan", "B1",
+                "test-webapp", generatedConfigPath, deploymentProjectPath, ProjectPlatform.DotNet, logger,
+                needDeployment: true, skipInfra: false, externalHosting: false, CancellationToken.None);
+
+            // Assert
+            logger.HasInformation("already exists").Should().BeTrue(
+                because: "AzWarnAsync should log 'already exists' when a Conflict error is returned");
+        }
+        finally
+        {
+            if (File.Exists(generatedConfigPath)) File.Delete(generatedConfigPath);
+            if (Directory.Exists(deploymentProjectPath)) Directory.Delete(deploymentProjectPath, true);
+        }
+    }
+
+    [Fact]
+    public async Task CreateInfrastructureAsync_WhenResourceGroupCreateAuthorizationFailed_HandlesPermissionError()
+    {
+        // Arrange - Tests AzWarnAsync AuthorizationFailed path: when resource group creation
+        // fails with AuthorizationFailed, it should handle it as a permission error.
+        var generatedConfigPath = Path.Combine(Path.GetTempPath(), $"test-{Guid.NewGuid()}.json");
+        var deploymentProjectPath = Path.Combine(Path.GetTempPath(), $"test-project-{Guid.NewGuid()}");
+        var logger = new TestLogger();
+
+        try
+        {
+            Directory.CreateDirectory(deploymentProjectPath);
+
+            _commandExecutor.ExecuteAsync("az", Arg.Any<string>(), captureOutput: true, suppressErrorLogging: Arg.Any<bool>())
+                .Returns(callInfo =>
+                {
+                    var args = callInfo.ArgAt<string>(1);
+                    if (args.Contains("group exists")) return new CommandResult { ExitCode = 0, StandardOutput = "false" };
+                    if (args.Contains("appservice plan show")) return new CommandResult { ExitCode = 0, StandardOutput = "{\"name\": \"test-plan\"}" };
+                    if (args.Contains("webapp show")) return new CommandResult { ExitCode = 0, StandardOutput = "{\"name\": \"test-webapp\", \"state\": \"Running\"}" };
+                    if (args.Contains("webapp identity assign")) return new CommandResult { ExitCode = 0, StandardOutput = "{\"principalId\": \"test-principal-id\"}" };
+                    if (args.Contains("ad sp show")) return new CommandResult { ExitCode = 0, StandardOutput = "{\"id\": \"test-principal-id\"}" };
+                    if (args.Contains("ad signed-in-user show")) return new CommandResult { ExitCode = 1, StandardError = "Not available" };
+                    return new CommandResult { ExitCode = 0 };
+                });
+
+            // Override the AzWarnAsync call for group create to simulate AuthorizationFailed.
+            _commandExecutor.ExecuteAsync("az",
+                Arg.Is<string>(s => s.Contains("group create")),
+                Arg.Any<string?>(),
+                Arg.Any<bool>(),
+                true,
+                Arg.Any<CancellationToken>())
+                .Returns(new CommandResult { ExitCode = 1, StandardError = "ERROR: (AuthorizationFailed) The client does not have authorization to perform action" });
+
+            // Act - AzWarnAsync handles AuthorizationFailed via ExceptionHandler, should not throw from CreateInfrastructureAsync
+            await InfrastructureSubcommand.CreateInfrastructureAsync(
+                _commandExecutor, "test-sub", "test-tenant", "test-rg", "eastus", "test-plan", "B1",
+                "test-webapp", generatedConfigPath, deploymentProjectPath, ProjectPlatform.DotNet, logger,
+                needDeployment: true, skipInfra: false, externalHosting: false, CancellationToken.None);
+
+            // Assert - AzWarnAsync does not throw; it handles the error via ExceptionHandler
+            // The test verifies the code path is exercised without crashing
+        }
+        finally
+        {
+            if (File.Exists(generatedConfigPath)) File.Delete(generatedConfigPath);
+            if (Directory.Exists(deploymentProjectPath)) Directory.Delete(deploymentProjectPath, true);
+        }
+    }
+
+    #endregion
 
     private sealed class TestLogger : ILogger
     {
