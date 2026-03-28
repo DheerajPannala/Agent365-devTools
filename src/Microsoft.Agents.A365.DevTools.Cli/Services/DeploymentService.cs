@@ -193,10 +193,7 @@ public class DeploymentService
 
         if (!deployResult.Success)
         {
-            // Detect site startup timeouts using both ARM error codes (locale-independent)
-            // and known English text patterns as a fallback.
-            // Note: Azure App Service deployment errors may not always include ARM error codes,
-            // so the English text fallback provides broader coverage at the cost of locale support.
+            // Detect site startup timeouts using ARM error codes (locale-independent) plus English text fallbacks.
             bool isSiteStartTimeout =
                 AzCliErrorHelper.ContainsAnyErrorCode(deployResult.StandardError, "SiteStartupTimeoutFailure", "WorkerProcessFailedToStart") ||
                 deployResult.StandardError.Contains("site failed to start within 10 mins", StringComparison.OrdinalIgnoreCase) ||

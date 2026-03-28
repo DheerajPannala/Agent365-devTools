@@ -445,10 +445,8 @@ public static class InfrastructureSubcommand
                 var createResult = await executor.ExecuteAsync("az", $"webapp create -g {resourceGroup} -p {planName} -n {webAppName} --runtime \"{runtime}\" --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
                 if (!createResult.Success)
                 {
-                    // Check for specific error conditions.
-                    // ARM error codes (AuthorizationFailed, Conflict) are locale-independent.
-                    // az webapp create outputs "already exists" as plain text without an ARM error code,
-                    // so we keep the English text fallback for that case.
+                    // Check for specific error conditions using ARM error codes (locale-independent).
+                    // "already exists" kept as English fallback because az CLI omits the ARM code.
                     if (AzCliErrorHelper.ContainsAnyErrorCode(createResult.StandardError, "AuthorizationFailed", "LinkedAuthorizationFailed"))
                     {
                         throw new AzureResourceException("WebApp", webAppName, createResult.StandardError, true);
@@ -808,16 +806,9 @@ public static class InfrastructureSubcommand
                     logger.LogError("Standard output: {Output}", createResult.StandardOutput);
                 }
 
-                // Check for specific error conditions.
-                // ARM error codes (e.g. AuthorizationFailed) are locale-independent.
-                // However, az appservice plan create does NOT output ARM error codes for
-                // quota and SKU errors — it outputs English text directly, so we keep
-                // text fallbacks for those cases.
-                //
-                // Real error examples (captured from az CLI 2.51.0):
-                //   AuthorizationFailed: "ERROR: (AuthorizationFailed) The client '...' does not have authorization..."
-                //   Quota: "ERROR: Operation cannot be completed without additional quota."
-                //   InvalidSku: "ERROR: az appservice plan create: 'X' is not a valid value for '--sku'."
+                // Check for specific error conditions using ARM error codes (locale-independent).
+                // Quota and SKU errors keep English text fallbacks because az CLI does not
+                // emit ARM error codes for those.
                 if (AzCliErrorHelper.ContainsAnyErrorCode(createResult.StandardError, "AuthorizationFailed", "LinkedAuthorizationFailed"))
                 {
                     throw new AzureAppServicePlanException(

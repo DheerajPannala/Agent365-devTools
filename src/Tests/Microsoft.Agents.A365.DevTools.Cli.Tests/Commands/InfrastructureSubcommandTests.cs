@@ -702,7 +702,7 @@ public class InfrastructureSubcommandTests
     [InlineData("ERROR: (AuthorizationFailed) Der Client hat keine Berechtigung", "because ARM error code AuthorizationFailed is present regardless of German locale")]
     [InlineData("ERROR: (AuthorizationFailed) Le client n'a pas l'autorisation", "because ARM error code AuthorizationFailed is present regardless of French locale")]
     [InlineData("ERROR: (LinkedAuthorizationFailed) Authorization failed", "because LinkedAuthorizationFailed is a recognized ARM error code")]
-    [InlineData("ERROR: (AuthorizationFailed) The client 'azakaria@a365preview070.onmicrosoft.com' with object id 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' does not have authorization to perform action 'Microsoft.Web/serverfarms/write' over scope '/subscriptions/24e64a7c-ef9e-4889-8589-de184080e9c6/resourceGroups/rg-nonexistent/providers/Microsoft.Web/serverfarms/plan-test' or the scope is invalid.", "because real az CLI AuthorizationFailed output includes the ARM error code in parentheses")]
+    [InlineData("ERROR: (AuthorizationFailed) The client 'user@contoso.onmicrosoft.com' with object id 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' does not have authorization to perform action 'Microsoft.Web/serverfarms/write' over scope '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-test/providers/Microsoft.Web/serverfarms/plan-test' or the scope is invalid.", "because real az CLI AuthorizationFailed output includes the ARM error code in parentheses")]
     public async Task EnsureAppServicePlanExists_WithNonEnglishLocale_AuthorizationFailed_DetectsErrorCode(string stderr, string because)
     {
         // Arrange - Simulates Azure CLI error output in non-English locales.
