@@ -101,7 +101,7 @@ Required **delegated** Microsoft Graph permissions (all must have **admin consen
 | `DelegatedPermissionGrant.ReadWrite.All` | Grant delegated permissions |
 | `Directory.Read.All` | Read directory data |
 
-> **WARNING — Do NOT use "Grant admin consent" in the Entra portal for this app registration.** The `AgentIdentityBlueprint.*` permissions above are beta-only and are not visible in the Entra admin center UI. If a Global Admin clicks "Grant admin consent" in the portal after these permissions have been granted via Graph API, the portal's consent mechanism will **silently delete** the `AgentIdentityBlueprint.*` grants. All permission grants for this app must be managed exclusively via the Graph API `appRoleAssignments` endpoint. If the permissions are accidentally removed, re-run the Graph API grants to restore them.
+> **NOTE:** The `AgentIdentityBlueprint.*` delegated permission grants are visible in the Entra admin center. All delegated permission grants for this app are managed via the Graph API `oauth2PermissionGrants` endpoint.
 
 If the app does not exist, permissions are missing, or admin consent has not been granted, see "What to do if validation fails" below.
 
@@ -109,7 +109,7 @@ If the app does not exist, permissions are missing, or admin consent has not bee
 
 1. STOP — do not proceed to run any `a365` CLI commands.
 2. Inform the user the custom client app registration is missing or incomplete.
-3. Direct the user to the official setup guide: register the app, configure as a Public client with redirect URI `http://localhost:8400`, add all five permissions above, and apply all permission grants exclusively via the Graph API `appRoleAssignments` endpoint (do NOT use the "Grant admin consent" button in the Entra portal — see warning above).
+3. Direct the user to the official setup guide: register the app, configure as a Public client with redirect URI `http://localhost:8400`, add all five permissions above, and apply all delegated permission grants via the Graph API `oauth2PermissionGrants` endpoint.
 4. Wait for the user to confirm the app is properly configured, then re-run the same validation command above.
 
 Save the `clientAppId` value — it will be used automatically in Step 3 (do NOT ask the user for it again).
@@ -625,10 +625,9 @@ Provide the user with the following instructions:
 
 Provide the user with the following instructions:
 
-> **Note (Frontier preview):** During Frontier preview, the blueprint is discoverable via **Microsoft 365 Copilot > Apps**, not Teams > Apps. The "Agents for your team" category in Teams may not be visible even after publishing. Search for your agent in M365 Copilot to Request or Create an instance. After an instance is created, the agent becomes accessible in Teams chat.
+> **Note (Frontier preview):** During Frontier preview, the blueprint may be discoverable via **Microsoft 365 Copilot > Apps** or **Teams > Apps** depending on tenant rollout. If the agent does not appear in one, try the other. After an instance is created, the agent becomes accessible in Teams chat.
 
-1. Open **Microsoft 365 Copilot > Apps** and search for your agent name.
-  *(If not found there, also try Teams > Apps — availability depends on tenant rollout.)*
+1. Open **Microsoft 365 Copilot > Apps** or **Teams > Apps** and search for your agent name.
 2. Select your agent and click **Request Instance** (or **Create Instance**).
 3. Teams sends the request to your tenant admin for approval.
 
