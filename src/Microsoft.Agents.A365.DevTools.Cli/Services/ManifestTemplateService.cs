@@ -238,8 +238,8 @@ public class ManifestTemplateService
                 var filePath = Path.Combine(workingDirectory, fileName);
                 if (!File.Exists(filePath))
                 {
-                    _logger.LogWarning("Skipping missing file: {File}", fileName);
-                    continue;
+                    _logger.LogError("Required manifest file missing: {File}. Run 'a365 publish' from a clean state or add the missing file.", fileName);
+                    return false;
                 }
 
                 var entry = archive.CreateEntry(fileName, CompressionLevel.Optimal);

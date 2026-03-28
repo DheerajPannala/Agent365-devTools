@@ -163,6 +163,27 @@ public class PublishCommand
 
                 var zipPath = Path.Combine(manifestDir, "manifest.zip");
 
+                // Validate manifest before packaging
+                if (!await manifestTemplateService.ValidateManifestFormatAsync(manifestDir))
+                {
+                    logger.LogError("Manifest validation failed. Fix the errors above and retry.");
+                    return;
+                }
+
+                // Ensure icon files exist, extracting from embedded templates if missing
+                foreach (var iconFile in new[] { "color.png", "outline.png" })
+                {
+                    if (!File.Exists(Path.Combine(manifestDir, iconFile)))
+                    {
+                        logger.LogInformation("Extracting missing icon: {File}", iconFile);
+                        if (!manifestTemplateService.EnsureTemplateFile(manifestDir, iconFile))
+                        {
+                            logger.LogError("Failed to extract {File}. Add the file manually to {Dir}", iconFile, manifestDir);
+                            return;
+                        }
+                    }
+                }
+
                 if (!await manifestTemplateService.CreateManifestZipAsync(manifestDir, zipPath))
                 {
                     logger.LogError("Failed to create manifest package in {Dir}", manifestDir);
@@ -222,6 +243,10 @@ public class PublishCommand
 
         if (node["copilotAgents"] is JsonObject ca && ca["customEngineAgents"] is JsonArray cea && cea.Count > 0 && cea[0] is JsonObject ceObj)
             ceObj["id"] = blueprintId;
+
+        // Update agenticUserTemplates[0].id to match the blueprint ID
+        if (node["agenticUserTemplates"] is JsonArray aut && aut.Count > 0 && aut[0] is JsonObject autObj)
+            autObj["id"] = blueprintId;
 
         return node.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
     }
