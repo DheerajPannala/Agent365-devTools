@@ -175,7 +175,10 @@ public static class DevelopCommand
                 logger.LogError("Failed to call discoverToolServers endpoint. Status: {Status}", response.StatusCode);
                 var errorContent = await response.Content.ReadAsStringAsync();
                 logger.LogError("Error response: {Error}", errorContent);
-                return false;
+                // Temporary: fall back to hardcoded V2 catalog until live endpoint is available (Q1).
+                logger.LogWarning("Falling back to hardcoded V2 catalog for development.");
+                Services.Internal.McpServerCatalogWriter.WriteHardcodedV2Catalog();
+                return true;
             }
 
             var responseContent = await response.Content.ReadAsStringAsync();
@@ -454,6 +457,14 @@ public static class DevelopCommand
                 // Call the fetch logic (reuse from list-available, but no output)
                 logger.LogInformation("Fetching latest MCP server catalog...");
                 await CallDiscoverToolServersAsync(configService, false, logger, authService, skipLogs: true);
+            }
+
+            // Second guard: if the API call failed and the file still doesn't exist, use hardcoded V2 catalog.
+            // Temporary — remove once discoverToolServers?api-version=2 is confirmed live (Q1).
+            if (!File.Exists(catalogPath))
+            {
+                logger.LogWarning("Catalog not available from API. Using hardcoded V2 catalog for development.");
+                Services.Internal.McpServerCatalogWriter.WriteHardcodedV2Catalog();
             }
 
             var catalogJson = await File.ReadAllTextAsync(catalogPath);
