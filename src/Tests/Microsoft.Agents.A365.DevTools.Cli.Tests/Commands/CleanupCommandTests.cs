@@ -106,16 +106,7 @@ public class CleanupCommandTests
         // Assert
         Assert.Equal(0, result);
         
-        // Verify Azure resource deletion commands are executed (command and arguments separately)
-        await _mockExecutor.Received().ExecuteAsync(
-            "az",
-            Arg.Is<string>(args => args.Contains("webapp delete") && args.Contains(config.WebAppName)),
-            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
-        
-        await _mockExecutor.Received().ExecuteAsync(
-            "az",
-            Arg.Is<string>(args => args.Contains("appservice plan delete") && args.Contains(config.AppServicePlanName)),
-            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        // Azure resource deletion has been removed - no commands to verify
     }
 
     [Fact]
@@ -173,11 +164,7 @@ public class CleanupCommandTests
             Arg.Is<string>(args => args.Contains("ad app delete") && args.Contains(config.AgentBlueprintId!)),
             Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
         
-        // Verify Azure resource deletion
-        await _mockExecutor.Received().ExecuteAsync(
-            "az",
-            Arg.Is<string>(args => args.Contains("webapp delete") && args.Contains(config.WebAppName)),
-            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        // Azure resource deletion has been removed
     }
 
     [Fact(Skip = "Test requires interactive confirmation - cleanup commands now enforce user confirmation instead of --force")]
@@ -196,12 +183,7 @@ public class CleanupCommandTests
         // Assert
         Assert.Equal(0, result);
         
-        // Test current behavior: Commands execute even with empty web app name 
-        // (This exposes a potential improvement - command should validate before executing)
-        await _mockExecutor.Received().ExecuteAsync(
-            "az",
-            Arg.Is<string>(args => args.Contains("webapp delete")),
-            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        // Azure resource deletion has been removed
     }
 
     [Fact]
@@ -543,11 +525,7 @@ public class CleanupCommandTests
         return new Agent365Config
         {
             TenantId = "test-tenant-id",
-            SubscriptionId = "test-subscription-id",
-            ResourceGroup = "test-rg",
-            Location = "eastus",
-            WebAppName = "test-web-app",
-            AppServicePlanName = "test-app-service-plan",
+            MessagingEndpoint = "https://test-bot.example.com/api/messages",
             AgentBlueprintId = "test-blueprint-id",
             AgenticAppId = "test-identity-id",
             AgenticUserId = "test-user-id",
@@ -560,10 +538,6 @@ public class CleanupCommandTests
         return new Agent365Config
         {
             TenantId = "test-tenant-id",
-            SubscriptionId = "test-subscription-id",
-            ResourceGroup = "test-rg",
-            WebAppName = string.Empty, // Missing web app name
-            AppServicePlanName = "test-app-service-plan"
         };
     }
 
@@ -724,11 +698,11 @@ public class CleanupCommandTests
             
             // Verify endpoint deletion was called
             await _mockBotConfigurator.Received(1).DeleteEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(), 
-                config.Location, 
+                Arg.Any<string>(),
+                Arg.Any<string>(),
                 config.AgentBlueprintId!,
                 Arg.Any<string?>());
-            
+
             // Verify blueprint deletion was NOT called (no az ad app delete command)
             await _mockExecutor.DidNotReceive().ExecuteAsync(
                 "az",
@@ -753,11 +727,6 @@ public class CleanupCommandTests
         var config = new Agent365Config
         {
             TenantId = "test-tenant-id",
-            SubscriptionId = "test-subscription-id",
-            ResourceGroup = "test-rg",
-            Location = "eastus",
-            WebAppName = "test-web-app",
-            AppServicePlanName = "test-app-service-plan",
             AgenticAppId = "test-identity-id",
             AgenticUserId = "test-user-id",
             AgentDescription = "test-agent-description"
@@ -791,11 +760,6 @@ public class CleanupCommandTests
         var config = new Agent365Config
         {
             TenantId = "test-tenant-id",
-            SubscriptionId = "test-subscription-id",
-            ResourceGroup = "test-rg",
-            Location = "eastus",
-            WebAppName = string.Empty, // No WebAppName means no BotName
-            AppServicePlanName = "test-app-service-plan",
             AgentBlueprintId = "test-blueprint-id",
             AgenticAppId = "test-identity-id",
             AgenticUserId = "test-user-id",
@@ -831,11 +795,6 @@ public class CleanupCommandTests
         var config = new Agent365Config
         {
             TenantId = "test-tenant-id",
-            SubscriptionId = "test-subscription-id",
-            ResourceGroup = "test-rg",
-            Location = string.Empty, // Missing location - not required for needDeployment:false configs
-            WebAppName = "test-web-app",
-            AppServicePlanName = "test-app-service-plan",
             AgentBlueprintId = "test-blueprint-id",
             AgenticAppId = "test-identity-id",
             AgenticUserId = "test-user-id",
@@ -902,8 +861,8 @@ public class CleanupCommandTests
             
             // Verify deletion was attempted
             await _mockBotConfigurator.Received(1).DeleteEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(), 
-                config.Location, 
+                Arg.Any<string>(),
+                Arg.Any<string>(),
                 config.AgentBlueprintId!,
                 Arg.Any<string?>());
         }
@@ -926,11 +885,6 @@ public class CleanupCommandTests
         var config = new Agent365Config
         {
             TenantId = "test-tenant-id",
-            SubscriptionId = "test-subscription-id",
-            ResourceGroup = "test-rg",
-            Location = "eastus",
-            WebAppName = "test-web-app",
-            AppServicePlanName = "test-app-service-plan",
             AgentBlueprintId = "   ", // Whitespace-only blueprint ID
             AgenticAppId = "test-identity-id",
             AgenticUserId = "test-user-id",

@@ -328,9 +328,7 @@ public class PublishCommand
             ? config.ClientAppId
             : "<clientAppId — run setup first>";
 
-        var webAppDomain = !string.IsNullOrWhiteSpace(config.WebAppName)
-            ? $"{config.WebAppName}.azurewebsites.net"
-            : "<webAppName>.azurewebsites.net";
+        var webAppDomain = "<host>.azurewebsites.net";
 
         logger.LogInformation("Non-DW Publish Plan (dry run — no files will be written)");
         logger.LogInformation("");

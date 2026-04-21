@@ -29,9 +29,7 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
             TenantId = tenantId,
             AiTeammate = false,
             UseBlueprint = true,
-            SubscriptionId = "sub-id",
             ClientAppId = "client-app-id",
-            Location = "eastus",
             DeploymentProjectPath = "./app",
             AgentBlueprintId = blueprintId
         };

@@ -200,13 +200,12 @@ internal static class NonDwBlueprintSetupOrchestrator
             else
             {
                 ctx.Results.PrerequisitesSkipped = ctx.SkipRequirements;
-                ctx.Results.InfrastructureSkipped = !ctx.Config.NeedDeployment || ctx.SkipInfrastructure;
+                ctx.Results.InfrastructureSkipped = true;
 
                 // Step 1: Requirements validation
                 if (!ctx.SkipRequirements)
                 {
-                    var includeInfra = !ctx.SkipInfrastructure && ctx.Config.NeedDeployment;
-                    var checks = AllSubcommand.GetNonDwChecks(ctx.AuthValidator, ctx.ClientAppValidator, includeInfra, isBootstrap: ctx.IsBootstrap);
+                    var checks = AllSubcommand.GetNonDwChecks(ctx.AuthValidator, ctx.ClientAppValidator, includeInfrastructure: false, isBootstrap: ctx.IsBootstrap);
                     try
                     {
                         await RequirementsSubcommand.RunChecksOrExitAsync(checks, ctx.Config, ctx.Logger, ctx.CancellationToken);
@@ -227,7 +226,7 @@ internal static class NonDwBlueprintSetupOrchestrator
                 // Step 1.5: Consent check — detect missing consent for required permissions and prompt.
                 await EnsureConsentWithPromptAsync(ctx);
 
-                // Step 2: Infrastructure (shared with DW, skipped when NeedDeployment=false or --skip-infrastructure)
+                // Step 2: Infrastructure — always a no-op (deploy command removed; hosting is externally managed)
                 await AllSubcommand.ExecuteInfrastructureStepAsync(ctx);
 
                 // Step 3: Blueprint creation (shared with DW)
@@ -303,7 +302,6 @@ internal static class NonDwBlueprintSetupOrchestrator
         else
         {
             var agentIdentityDisplayName = ctx.Config.AgentIdentityDisplayName
-                ?? ctx.Config.WebAppName
                 ?? "Agent";
 
             // Agent identity creation via delegated flow (AgentIdentity.Create.All).
@@ -346,7 +344,6 @@ internal static class NonDwBlueprintSetupOrchestrator
         // The agent registration represents the agent itself, not the Entra identity.
         // Strip " Identity" suffix so the registry entry reads "<name> Agent", not "<name> Identity".
         var agentDisplayName = ctx.Config.AgentIdentityDisplayName
-            ?? ctx.Config.WebAppName
             ?? "Agent";
         if (agentDisplayName.EndsWith(" Identity", StringComparison.OrdinalIgnoreCase))
             agentDisplayName = agentDisplayName[..^" Identity".Length].TrimEnd() + " Agent";

@@ -120,7 +120,6 @@ class Program
             // Get loggers and services
             var setupLogger = serviceProvider.GetRequiredService<ILogger<SetupCommand>>();
             var createInstanceLogger = serviceProvider.GetRequiredService<ILogger<CreateInstanceCommand>>();
-            var deployLogger = serviceProvider.GetRequiredService<ILogger<DeployCommand>>();
             var queryEntraLogger = serviceProvider.GetRequiredService<ILogger<QueryEntraCommand>>();
             var cleanupLogger = serviceProvider.GetRequiredService<ILogger<CleanupCommand>>();
             var publishLogger = serviceProvider.GetRequiredService<ILogger<PublishCommand>>();
@@ -133,7 +132,6 @@ class Program
 
             // Get services needed by commands
             services.AddSingleton<IMicrosoftGraphTokenProvider, MicrosoftGraphTokenProvider>();
-            var deploymentService = serviceProvider.GetRequiredService<DeploymentService>();
             var botConfigurator = serviceProvider.GetRequiredService<IBotConfigurator>();
             var graphApiService = serviceProvider.GetRequiredService<GraphApiService>();
             var armApiService = serviceProvider.GetRequiredService<ArmApiService>();
@@ -149,11 +147,9 @@ class Program
             rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService));
             var confirmationProvider = serviceProvider.GetRequiredService<IConfirmationProvider>();
             rootCommand.AddCommand(SetupCommand.CreateCommand(setupLogger, configService, executor,
-                deploymentService, botConfigurator, azureAuthValidator, platformDetector, graphApiService, agentBlueprintService, blueprintLookupService, federatedCredentialService, clientAppValidator, confirmationProvider, armApiService));
+                botConfigurator, azureAuthValidator, platformDetector, graphApiService, agentBlueprintService, blueprintLookupService, federatedCredentialService, clientAppValidator, confirmationProvider, armApiService));
             rootCommand.AddCommand(CreateInstanceCommand.CreateCommand(createInstanceLogger, configService, executor,
                 graphApiService));
-            rootCommand.AddCommand(DeployCommand.CreateCommand(deployLogger, configService, executor,
-                deploymentService, azureAuthValidator, graphApiService, agentBlueprintService));
 
             // Register ConfigCommand
             var configLoggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
@@ -314,7 +310,6 @@ class Program
 
         // Add multi-platform deployment services
         services.AddSingleton<PlatformDetector>();
-        services.AddSingleton<DeploymentService>();
 
         // Add other services
         services.AddSingleton<IBotConfigurator, BotConfigurator>();

@@ -473,11 +473,8 @@ public class CleanupCommand
                 logger.LogInformation("");
                 logger.LogInformation("Azure Cleanup Preview:");
                 logger.LogInformation("=========================");
-                logger.LogInformation("    Web App: {WebAppName}", config.WebAppName);
-                logger.LogInformation("    App Service Plan: {PlanName}", config.AppServicePlanName);
                 if (!string.IsNullOrWhiteSpace(config.BotId))
                     logger.LogInformation("    Azure Bot: {BotId}", config.BotId);
-                logger.LogInformation("    Resource Group: {ResourceGroup}", config.ResourceGroup);
                 logger.LogInformation("");
 
                 if (dryRun)
@@ -494,48 +491,8 @@ public class CleanupCommand
                     return;
                 }
 
-                // Azure CLI cleanup commands
-                var commandsList = new List<(string, string)>();
-
-                // If WebAppName is configured
-                if (config.NeedDeployment)
-                {
-                    commandsList.Add(($"az webapp delete --name {config.WebAppName} --resource-group {config.ResourceGroup} --subscription {config.SubscriptionId}", "Web App"));
-                    // Only add App Service Plan deletion if AppServicePlanName is configured
-                    if (!string.IsNullOrWhiteSpace(config.AppServicePlanName))
-                    {
-                        commandsList.Add(($"az appservice plan delete --name {config.AppServicePlanName} --resource-group {config.ResourceGroup} --subscription {config.SubscriptionId} --yes", "App Service Plan"));
-                    }
-                }
-
-                // Check if there are any Azure resources to delete
-                if (commandsList.Count == 0)
-                {
-                    logger.LogInformation("No Azure Web App resources found to clean up.");
-                    logger.LogInformation("This agent is configured with an external messaging endpoint: {MessagingEndpoint}",
-                        config.MessagingEndpoint ?? "(not configured)");
-                }
-                else
-                {
-                    var commands = commandsList.ToArray();
-
-                    foreach (var (cmd, name) in commands)
-                    {
-                        logger.LogInformation("Deleting {Name}...", name);
-                        var parts = cmd.Split(' ', 2);
-                        var result = await executor.ExecuteAsync(parts[0], parts[1], captureOutput: true);
-
-                        if (result.ExitCode == 0)
-                        {
-                            logger.LogInformation("{Name} deleted successfully", name);
-                        }
-                        else
-                        {
-                            logger.LogWarning("Failed to delete {Name}: {Error}", name, result.StandardError);
-                        }
-                    }
-                }
-
+                logger.LogInformation("No Azure Web App resources to clean up.");
+                logger.LogInformation("Azure infrastructure is managed externally.");
                 logger.LogInformation("Azure cleanup completed!");
             }
             catch (Exception ex)
@@ -711,14 +668,8 @@ public class CleanupCommand
                 logger.LogInformation("    Agent Registry Instance: {InstanceId}", config.AgentInstanceId);
             if (!string.IsNullOrWhiteSpace(config.AgenticUserId))
                 logger.LogInformation("    Agent User: {UserId}", config.AgenticUserId);
-            if (!string.IsNullOrWhiteSpace(config.WebAppName))
-                logger.LogInformation("    Web App: {WebAppName}", config.WebAppName);
-            if (!string.IsNullOrWhiteSpace(config.AppServicePlanName))
-                logger.LogInformation("    App Service Plan: {PlanName}", config.AppServicePlanName);
             if (!string.IsNullOrWhiteSpace(config.BotName))
                 logger.LogInformation("    Azure Messaging Endpoint: {BotName}", config.BotName);
-            if (!string.IsNullOrWhiteSpace(config.Location))
-                logger.LogInformation("    Location: {Location}", config.Location);
             var previewLocalGen = Path.Combine(Environment.CurrentDirectory, "a365.generated.config.json");
             var previewGlobalGen = Path.Combine(ConfigService.GetGlobalConfigDirectory(), "a365.generated.config.json");
             if (File.Exists(previewLocalGen) || File.Exists(previewGlobalGen))
@@ -920,71 +871,7 @@ public class CleanupCommand
 
             // 5. Messaging endpoint deletion is temporarily disabled.
 
-            // 6. Delete Azure resources (Web App and App Service Plan)
-            if (!string.IsNullOrWhiteSpace(config.WebAppName) && !string.IsNullOrWhiteSpace(config.ResourceGroup))
-            {
-                logger.LogInformation("Deleting Azure resources...");
-                
-                // Delete Web App
-                logger.LogInformation("Deleting Web App: {WebAppName}...", config.WebAppName);
-                await executor.ExecuteAsync("az", $"webapp delete --name {config.WebAppName} --resource-group {config.ResourceGroup} --subscription {config.SubscriptionId}", null, true, false, CancellationToken.None);
-                logger.LogInformation("Web App deleted");
-                
-                // Wait for web app deletion to complete before deleting app service plan
-                logger.LogInformation("Waiting for web app deletion to complete...");
-                var maxRetries = 30; // 30 seconds max wait
-                var retryCount = 0;
-                var webAppDeleted = false;
-                
-                while (retryCount < maxRetries && !webAppDeleted)
-                {
-                    await Task.Delay(1000); // Wait 1 second
-                    var checkResult = await executor.ExecuteAsync("az", 
-                        $"webapp show --name {config.WebAppName} --resource-group {config.ResourceGroup} --subscription {config.SubscriptionId}", 
-                        null, false, true, CancellationToken.None); // suppressErrorOutput = true to avoid logging expected errors
-                    
-                    if (checkResult.ExitCode != 0) // Resource not found = successfully deleted
-                    {
-                        webAppDeleted = true;
-                        logger.LogInformation("Web app deletion confirmed");
-                    }
-                    retryCount++;
-                }
-                
-                // Delete App Service Plan after web app is gone (with retry for conflicts)
-                if (!string.IsNullOrWhiteSpace(config.AppServicePlanName))
-                {
-                    logger.LogInformation("Deleting App Service Plan: {PlanName}...", config.AppServicePlanName);
-                    
-                    var planDeleted = false;
-                    var planRetries = 5;
-                    for (var i = 0; i < planRetries && !planDeleted; i++)
-                    {
-                        if (i > 0)
-                        {
-                            logger.LogInformation("Retrying app service plan deletion (attempt {Attempt}/{Max})...", i + 1, planRetries);
-                            await Task.Delay(3000); // Wait 3 seconds between retries
-                        }
-                        
-                        var planResult = await executor.ExecuteAsync("az", 
-                            $"appservice plan delete --name {config.AppServicePlanName} --resource-group {config.ResourceGroup} --subscription {config.SubscriptionId} --yes", 
-                            null, false, true, CancellationToken.None); // suppressErrorOutput to avoid logging conflict errors
-                        
-                        if (planResult.ExitCode == 0)
-                        {
-                            planDeleted = true;
-                            logger.LogInformation("App Service Plan deleted");
-                        }
-                    }
-                    
-                    if (!planDeleted)
-                    {
-                        logger.LogWarning("App Service Plan deletion may not have completed successfully (conflict errors). It may need manual cleanup.");
-                    }
-                }
-                
-                logger.LogInformation("Azure resources deleted");
-            }
+            // Azure infrastructure cleanup removed — deploy command no longer manages Azure resources.
 
             // Mark cleanup as successful only if no failures occurred
             if (!hasFailures)
@@ -1082,22 +969,12 @@ public class CleanupCommand
             return false;
         }
 
-        // Defense-in-depth: BotConfigurator also validates location, but catching it here gives
-        // the user a clearer error before any authentication or HTTP work is attempted.
-        if (string.IsNullOrWhiteSpace(config.Location))
-        {
-            logger.LogError(ErrorMessages.EndpointLocationRequiredForDelete);
-            logger.LogInformation(ErrorMessages.EndpointLocationAddToConfig);
-            logger.LogInformation(ErrorMessages.EndpointLocationExample);
-            return false;
-        }
-
         logger.LogInformation("Deleting messaging endpoint registration...");
         var endpointName = ResolveEndpointName(config);
 
         var endpointDeleted = await botConfigurator.DeleteEndpointWithAgentBlueprintAsync(
             endpointName,
-            config.Location,
+            string.Empty,
             config.AgentBlueprintId,
             correlationId: correlationId);
 
@@ -1147,7 +1024,6 @@ public class CleanupCommand
         logger.LogInformation("============================");
         logger.LogInformation("Will delete messaging endpoint:");
         logger.LogInformation("  Endpoint Name: {EndpointName}", endpointName);
-        logger.LogInformation("  Location: {Location}", config.Location);
         logger.LogInformation("");
 
         Console.Write("Continue with endpoint cleanup? (y/N): ");
@@ -1309,7 +1185,6 @@ public class CleanupCommand
             AgentIdentityDisplayName = $"{agentName} Identity",
             AgentBlueprintDisplayName = blueprintDisplayName,
             AgentDescription = agentName,
-            NeedDeployment = false,
             AiTeammate = false,
             UseBlueprint = true,
         };
@@ -1364,15 +1239,12 @@ public class CleanupCommand
     /// </summary>
     private static string ResolveEndpointName(Agent365Config config)
     {
-        if (!config.NeedDeployment)
-        {
-            // Use BotMessagingEndpoint (updated by registration) over MessagingEndpoint (static).
-            var urlForName = !string.IsNullOrWhiteSpace(config.BotMessagingEndpoint)
-                ? config.BotMessagingEndpoint
-                : config.MessagingEndpoint;
-            if (!string.IsNullOrWhiteSpace(urlForName))
-                return EndpointHelper.GetEndpointNameFromUrl(urlForName, config.AgentBlueprintId);
-        }
+        // Use BotMessagingEndpoint (updated by registration) over MessagingEndpoint (static).
+        var urlForName = !string.IsNullOrWhiteSpace(config.BotMessagingEndpoint)
+            ? config.BotMessagingEndpoint
+            : config.MessagingEndpoint;
+        if (!string.IsNullOrWhiteSpace(urlForName))
+            return EndpointHelper.GetEndpointNameFromUrl(urlForName, config.AgentBlueprintId);
         return EndpointHelper.GetEndpointName(config.BotName);
     }
 }

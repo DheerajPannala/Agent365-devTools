@@ -324,7 +324,6 @@ public class ConfigService : IConfigService
 
         // Log warnings if any
         if (validationResult.Warnings.Count > 0)
-        if (validationResult.Warnings.Count > 0)
         {
             foreach (var warning in validationResult.Warnings)
             {
@@ -392,23 +391,9 @@ public class ConfigService : IConfigService
         if (!string.IsNullOrWhiteSpace(config.TenantId))
             ValidateGuid(config.TenantId, nameof(config.TenantId), errors);
 
-        if (config.NeedDeployment)
-        {
-            if (!string.IsNullOrWhiteSpace(config.SubscriptionId))
-                ValidateGuid(config.SubscriptionId, nameof(config.SubscriptionId), errors);
-            if (!string.IsNullOrWhiteSpace(config.ResourceGroup))
-                ValidateResourceGroupName(config.ResourceGroup, errors);
-            if (!string.IsNullOrWhiteSpace(config.AppServicePlanName))
-                ValidateAppServicePlanName(config.AppServicePlanName, errors);
-            if (!string.IsNullOrWhiteSpace(config.WebAppName))
-                ValidateWebAppName(config.WebAppName, errors);
-        }
-        else
-        {
-            // MessagingEndpoint is optional; if provided it must be a valid URL.
-            if (!string.IsNullOrWhiteSpace(config.MessagingEndpoint))
-                ValidateUrl(config.MessagingEndpoint, nameof(config.MessagingEndpoint), errors);
-        }
+        // MessagingEndpoint is optional; if provided it must be a valid URL.
+        if (!string.IsNullOrWhiteSpace(config.MessagingEndpoint))
+            ValidateUrl(config.MessagingEndpoint, nameof(config.MessagingEndpoint), errors);
 
         // Validate dynamic properties if they exist
         if (config.ManagedIdentityPrincipalId != null)
@@ -480,12 +465,6 @@ public class ConfigService : IConfigService
         var config = templateConfig ?? new Agent365Config
         {
             TenantId = string.Empty,
-            SubscriptionId = string.Empty,
-            ResourceGroup = string.Empty,
-            Location = string.Empty,
-            AppServicePlanName = string.Empty,
-            AppServicePlanSku = "B1", // Default SKU that works for development
-            WebAppName = string.Empty,
             AgentIdentityDisplayName = string.Empty,
             // AgentIdentityScopes and AgentApplicationScopes are now hardcoded defaults
             DeploymentProjectPath = string.Empty,
@@ -867,62 +846,6 @@ public class ConfigService : IConfigService
         }
     }
 
-    private void ValidateResourceGroupName(string? value, List<string> errors)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return;
-
-        if (value.Length > 90)
-        {
-            errors.Add("ResourceGroup name must not exceed 90 characters.");
-        }
-
-        if (!Regex.IsMatch(value, @"^[a-zA-Z0-9_\-\.()]+$"))
-        {
-            errors.Add("ResourceGroup name can only contain alphanumeric characters, underscores, hyphens, periods, and parentheses.");
-        }
-    }
-
-    public static void ValidateAppServicePlanName(string? value, List<string> errors)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return;
-
-        if (value.Length > 40)
-        {
-            errors.Add("AppServicePlanName must not exceed 40 characters.");
-        }
-
-        if (!System.Text.RegularExpressions.Regex.IsMatch(value, @"^[a-zA-Z0-9\-]+$"))
-        {
-            errors.Add("AppServicePlanName can only contain alphanumeric characters and hyphens.");
-        }
-    }
-
-    private void ValidateWebAppName(string? value, List<string> errors)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return;
-
-        // Azure App Service names: 2-60 characters (not 64 as sometimes documented)
-        // Must contain only alphanumeric characters and hyphens
-        // Cannot start or end with a hyphen
-        // Must be globally unique
-        
-        if (value.Length < 2 || value.Length > 60)
-        {
-            errors.Add($"WebAppName must be between 2 and 60 characters (currently {value.Length} characters).");
-        }
-
-        // Check for invalid characters (only alphanumeric and hyphens allowed)
-        if (!Regex.IsMatch(value, @"^[a-zA-Z0-9\-]+$"))
-        {
-            errors.Add("WebAppName can only contain alphanumeric characters and hyphens (no underscores or other special characters).");
-        }
-
-        // Check if starts or ends with hyphen
-        if (value.StartsWith('-') || value.EndsWith('-'))
-        {
-            errors.Add("WebAppName cannot start or end with a hyphen.");
-        }
-    }
 
     /// <summary>
     /// Parses a validation error message into a ValidationError object.

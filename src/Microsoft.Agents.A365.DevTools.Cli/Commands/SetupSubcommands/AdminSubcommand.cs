@@ -253,7 +253,6 @@ internal static class AdminSubcommand
                         logger.LogInformation("NOTE: This step requires 'Agent Registry Administrator' role - separate from Global Administrator.");
 
                         var agentDisplayName = setupConfig.AgentIdentityDisplayName
-                            ?? setupConfig.WebAppName
                             ?? "Agent";
 
                         var instanceId = await graphApiService.RegisterAgentInstanceAsync(

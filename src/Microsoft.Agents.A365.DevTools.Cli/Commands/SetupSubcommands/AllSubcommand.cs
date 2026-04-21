@@ -39,14 +39,8 @@ internal static class AllSubcommand
     {
         var checks = new List<Services.Requirements.IRequirementCheck>(SetupCommand.GetBaseChecks(auth))
         {
-            new LocationRequirementCheck(),
             new ClientAppRequirementCheck(clientAppValidator),
         };
-
-        if (includeInfrastructure)
-        {
-            checks.Add(new InfrastructureRequirementCheck());
-        }
 
         return checks;
     }
@@ -63,17 +57,11 @@ internal static class AllSubcommand
     {
         var checks = new List<Services.Requirements.IRequirementCheck>(SetupCommand.GetBaseChecks(auth));
 
-        // Location and client app checks require a static config file — not applicable in bootstrap
+        // Client app check requires a static config file — not applicable in bootstrap
         // mode where the client app is resolved dynamically via --agent-name.
         if (!isBootstrap)
         {
-            checks.Add(new LocationRequirementCheck());
             checks.Add(new ClientAppRequirementCheck(clientAppValidator));
-        }
-
-        if (includeInfrastructure)
-        {
-            checks.Add(new InfrastructureRequirementCheck());
         }
 
         return checks;
@@ -117,8 +105,8 @@ internal static class AllSubcommand
 
         var skipInfrastructureOption = new Option<bool>(
             "--skip-infrastructure",
-            description: "Skip Azure infrastructure creation (use if infrastructure already exists)\n" +
-                        "This will still create: Blueprint + Permissions + Endpoint");
+            description: "[Deprecated] Azure infrastructure provisioning has been removed. This option is accepted for backward compatibility but has no effect.");
+        skipInfrastructureOption.IsHidden = true;
 
         var skipRequirementsOption = new Option<bool>(
             "--skip-requirements",
@@ -193,7 +181,6 @@ internal static class AllSubcommand
                             AgentIdentityDisplayName = $"{agentName} Identity",
                             AgentBlueprintDisplayName = $"{agentName} Blueprint",
                             AgentDescription = agentName,
-                            NeedDeployment = false,
                             AiTeammate = false,
                             UseBlueprint = true,
                         };
@@ -222,7 +209,6 @@ internal static class AllSubcommand
                             logger.LogInformation("ClientAppId:          {ClientAppId}", nonDwConfig.ClientAppId);
                             logger.LogInformation("BlueprintDisplayName: {Name}", nonDwConfig.AgentBlueprintDisplayName);
                             logger.LogInformation("IdentityDisplayName:  {Name}", nonDwConfig.AgentIdentityDisplayName);
-                            logger.LogInformation("NeedDeployment:       {NeedDeployment}", nonDwConfig.NeedDeployment);
                         }
                         logger.LogInformation("");
 
@@ -328,13 +314,12 @@ internal static class AllSubcommand
                 }
 
                 setupResults.PrerequisitesSkipped = skipRequirements;
-                setupResults.InfrastructureSkipped = skipInfrastructure || !setupConfig.NeedDeployment;
+                setupResults.InfrastructureSkipped = true;
 
                 // Validate all prerequisites in one pass
                 if (!skipRequirements)
                 {
-                    var includeInfra = !skipInfrastructure && setupConfig.NeedDeployment;
-                    var checks = AllSubcommand.GetChecks(authValidator, clientAppValidator, includeInfra);
+                    var checks = AllSubcommand.GetChecks(authValidator, clientAppValidator, includeInfrastructure: false);
 
                     try
                     {
@@ -355,8 +340,6 @@ internal static class AllSubcommand
                 logger.LogInformation("Running all setup steps... (TraceId: {TraceId})", correlationId);
                 if (skipRequirements)
                     logger.LogInformation("NOTE: Requirements validation skipped (--skip-requirements flag used)");
-                if (skipInfrastructure)
-                    logger.LogInformation("NOTE: Infrastructure creation skipped (--skip-infrastructure flag used)");
                 logger.LogInformation("");
 
                 var generatedConfigPath = Path.Combine(
@@ -688,7 +671,6 @@ internal static class AllSubcommand
     /// <list type="bullet">
     ///   <item>TenantId: from <paramref name="tenantIdFlag"/> or auto-detected via <c>az account show</c></item>
     ///   <item>ClientAppId: resolved by searching Entra for <see cref="AuthenticationConstants.WellKnownClientAppDisplayName"/></item>
-    ///   <item>NeedDeployment: false (external hosting, no Azure infra)</item>
     /// </list>
     /// Returns <c>null</c> and logs errors if validation fails.
     /// </summary>
@@ -721,7 +703,6 @@ internal static class AllSubcommand
             AgentIdentityDisplayName = $"{agentName} Identity",
             AgentBlueprintDisplayName = $"{agentName} Blueprint",
             AgentDescription = agentName,
-            NeedDeployment = false,
             AiTeammate = false,
             UseBlueprint = true,
         };
@@ -756,7 +737,6 @@ internal static class AllSubcommand
             ["agentIdentityDisplayName"] = config.AgentIdentityDisplayName,
             ["agentBlueprintDisplayName"] = config.AgentBlueprintDisplayName,
             ["agentDescription"] = config.AgentDescription,
-            ["needDeployment"] = config.NeedDeployment,
             ["aiTeammate"] = config.AiTeammate,
             ["useBlueprint"] = config.UseBlueprint,
         };
@@ -826,36 +806,11 @@ internal static class AllSubcommand
         }
     }
 
-    /// <summary>Step 1 — Creates Azure infrastructure (optional, skippable via --skip-infrastructure).</summary>
-    internal static async Task ExecuteInfrastructureStepAsync(SetupContext ctx)
+    /// <summary>Step 1 — Infrastructure step (no-op, deploy command removed).</summary>
+    internal static Task ExecuteInfrastructureStepAsync(SetupContext ctx)
     {
-        try
-        {
-            var (setupInfra, infraAlreadyExisted) = await InfrastructureSubcommand.CreateInfrastructureImplementationAsync(
-                ctx.Logger,
-                ctx.ConfigFile.FullName,
-                ctx.GeneratedConfigPath,
-                ctx.Executor,
-                ctx.PlatformDetector,
-                ctx.Config.NeedDeployment,
-                ctx.SkipInfrastructure,
-                ctx.CancellationToken);
-
-            ctx.Results.InfrastructureCreated = (ctx.SkipInfrastructure || !ctx.Config.NeedDeployment) ? false : setupInfra;
-            ctx.Results.InfrastructureAlreadyExisted = infraAlreadyExisted;
-        }
-        catch (Agent365Exception infraEx)
-        {
-            ctx.Results.InfrastructureCreated = false;
-            ctx.Results.Errors.Add($"Infrastructure: {infraEx.Message}");
-            throw;
-        }
-        catch (Exception infraEx)
-        {
-            ctx.Results.InfrastructureCreated = false;
-            ctx.Results.Errors.Add($"Infrastructure: {infraEx.Message}");
-            ctx.Logger.LogError("Failed to create infrastructure: {Message}", infraEx.Message);
-            throw;
-        }
+        ctx.Results.InfrastructureSkipped = true;
+        ctx.Results.InfrastructureCreated = false;
+        return Task.CompletedTask;
     }
 }

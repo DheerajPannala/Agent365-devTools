@@ -42,13 +42,10 @@ internal static class NonDwSetupOrchestrator
     public static void PrintDryRunPlan(Agent365Config config, ILogger logger)
     {
         var displayName = config.AgentIdentityDisplayName;
-        var rg = config.ResourceGroup;
 
         var messagingEndpoint = !string.IsNullOrWhiteSpace(config.MessagingEndpoint)
             ? config.MessagingEndpoint
-            : config.NeedDeployment && !string.IsNullOrWhiteSpace(config.WebAppName)
-                ? $"https://{config.WebAppName}.azurewebsites.net/api/messages"
-                : "<messaging-endpoint>";
+            : "<messaging-endpoint>";
 
         logger.LogWarning(
             "Non-AI Teammate setup (classic App Registration path) is not yet fully implemented. " +
@@ -74,25 +71,12 @@ internal static class NonDwSetupOrchestrator
         // Azure Resources
         logger.LogInformation("  Azure Resources");
 
-        if (config.NeedDeployment && !string.IsNullOrWhiteSpace(config.WebAppName))
-        {
-            var acrName = DeriveAcrName(config.WebAppName);
-            logger.LogInformation("    Create Container Registry:  {AcrName}  sku: Basic", acrName);
-            logger.LogInformation("    Create App Service Plan:    {PlanName}  sku: {Sku}  Linux",
-                config.AppServicePlanName, string.IsNullOrWhiteSpace(config.AppServicePlanSku)
-                    ? ConfigConstants.DefaultAppServicePlanSku
-                    : config.AppServicePlanSku);
-            logger.LogInformation("    Create Web App:             {WebAppName}  Docker Linux", config.WebAppName);
-        }
-        else
-        {
-            logger.LogInformation("    Skip Deployment infrastructure: needDeployment is false");
-        }
+        logger.LogInformation("    Skip Deployment infrastructure: not provisioned by this tool");
 
         if (config.NeedAzureOpenAI)
         {
             var aoaiName = config.AzureOpenAIName ?? $"{displayName}-aoai";
-            var aoaiLocation = config.AzureOpenAILocation ?? config.Location;
+            var aoaiLocation = config.AzureOpenAILocation ?? "<location>";
             logger.LogInformation("    Create Azure OpenAI:        {AoaiName}  location: {Location}",
                 aoaiName, aoaiLocation);
             if (!string.IsNullOrWhiteSpace(config.AzureOpenAIModelDeploymentName))
@@ -103,8 +87,8 @@ internal static class NonDwSetupOrchestrator
 
         // Register Messaging Endpoint
         logger.LogInformation("  Register Messaging Endpoint");
-        logger.LogInformation("    Create Azure Bot:           \"{DisplayName}\"  rg: {ResourceGroup}  sku: F0",
-            displayName, rg);
+        logger.LogInformation("    Create Azure Bot:           \"{DisplayName}\"  sku: F0",
+            displayName);
         logger.LogInformation("    Configure Messaging Endpoint: {Endpoint}", messagingEndpoint);
         logger.LogInformation("    Create Teams Channel");
         logger.LogInformation("    Create OAuth Connection:    {ConnectionName}", OboConnectionName);

@@ -306,19 +306,6 @@ internal static class SetupHelpers
 
             var urls = new List<(string Label, string Url)>();
 
-            // Azure Web App URL
-            if (root.TryGetProperty("appServiceName", out var appServiceProp) && !string.IsNullOrWhiteSpace(appServiceProp.GetString()))
-            {
-                urls.Add(("Agent Web App", $"https://{appServiceProp.GetString()}.azurewebsites.net"));
-            }
-
-            // Azure Resource Group
-            if (root.TryGetProperty("resourceGroup", out var rgProp) && !string.IsNullOrWhiteSpace(rgProp.GetString()))
-            {
-                var subscriptionId = root.TryGetProperty("subscriptionId", out var subProp) ? subProp.GetString() : "{subscription}";
-                urls.Add(("Azure Resource Group", $"https://portal.azure.com/#@/resource/subscriptions/{subscriptionId}/resourceGroups/{rgProp.GetString()}"));
-            }
-
             // Entra ID Application
             if (root.TryGetProperty("agentBlueprintId", out var blueprintProp) && !string.IsNullOrWhiteSpace(blueprintProp.GetString()))
             {
@@ -787,11 +774,8 @@ internal static class SetupHelpers
         else
             logger.LogInformation(DryRunRow(1, "Prerequisites") + "validate (PowerShell modules, Azure CLI)");
 
-        // 2. Azure hosting
-        if (skipInfrastructure)
-            logger.LogInformation(DryRunRow(2, "Azure hosting") + "skip — no Azure deployment configured");
-        else
-            logger.LogInformation(DryRunRow(2, "Azure hosting") + "provision (Resource Group, App Service Plan, Web App)");
+        // 2. Azure hosting — always externally managed; infrastructure provisioning has been removed
+        logger.LogInformation(DryRunRow(2, "Azure hosting") + "skip — hosting is externally managed (provide messagingEndpoint in config)");
 
         // 3. Blueprint — context-aware when config is available
         if (!string.IsNullOrWhiteSpace(config?.AgentBlueprintId))
@@ -1124,54 +1108,11 @@ internal static class SetupHelpers
             }
 
             messagingEndpoint = overrideEndpointUrl;
-
-            // Derive endpoint name based on deployment mode
-            if (setupConfig.NeedDeployment && !string.IsNullOrWhiteSpace(setupConfig.WebAppName))
-            {
-                // Azure deployment: use WebAppName for endpoint name
-                var baseEndpointName = $"{setupConfig.WebAppName}-endpoint";
-                endpointName = EndpointHelper.GetEndpointName(baseEndpointName);
-            }
-            else
-            {
-                // Non-Azure hosting: derive from override endpoint host + blueprint ID suffix for uniqueness
-                endpointName = EndpointHelper.GetEndpointNameFromHost(overrideUri.Host, setupConfig.AgentBlueprintId);
-            }
+            endpointName = EndpointHelper.GetEndpointNameFromHost(overrideUri.Host, setupConfig.AgentBlueprintId);
 
             logger.LogInformation("   - Using override endpoint URL");
         }
-        else if (setupConfig.NeedDeployment)
-        {
-            if (string.IsNullOrEmpty(setupConfig.WebAppName))
-            {
-                logger.LogError("Web App Name not configured in a365.config.json");
-                throw new SetupValidationException(
-                    issueDescription: "Web App name is required to register a messaging endpoint when needDeployment is 'yes'.",
-                    errorDetails: new List<string>
-                    {
-                        "NeedDeployment is true, but 'webAppName' was not provided in a365.config.json."
-                    },
-                    mitigationSteps: new List<string>
-                    {
-                        "Open a365.config.json and ensure 'webAppName' is set to the Azure Web App name.",
-                        "If you do not want the CLI to deploy an Azure Web App, set \"needDeployment\": \"no\" and provide \"MessagingEndpoint\" instead.",
-                        "Re-run 'a365 setup'."
-                    },
-                    context: new Dictionary<string, string>
-                    {
-                        ["needDeployment"] = setupConfig.NeedDeployment.ToString(),
-                        ["webAppName"] = setupConfig.WebAppName ?? "<null>"
-                    });
-            }
-
-            // Generate endpoint name with Azure Bot Service constraints (4-42 chars)
-            var baseEndpointName = $"{setupConfig.WebAppName}-endpoint";
-            endpointName = EndpointHelper.GetEndpointName(baseEndpointName);
-
-            // Construct messaging endpoint URL from web app name
-            messagingEndpoint = $"https://{setupConfig.WebAppName}.azurewebsites.net/api/messages";
-        }
-        else // Non-Azure hosting
+        else
         {
             // No deployment - use the provided MessagingEndpoint
             if (string.IsNullOrWhiteSpace(setupConfig.MessagingEndpoint))
@@ -1203,18 +1144,14 @@ internal static class SetupHelpers
             throw new SetupValidationException($"Bot endpoint name '{endpointName}' is too short (must be at least 4 characters)");
         }
 
-        // Normalize location before logging and sending to API
-        var normalizedLocation = setupConfig.Location.Replace(" ", "").ToLowerInvariant();
-        
         logger.LogInformation("   - Registering blueprint messaging endpoint");
         logger.LogInformation("     * Endpoint Name: {EndpointName}", endpointName);
         logger.LogInformation("     * Messaging Endpoint: {Endpoint}", messagingEndpoint);
-        logger.LogInformation("     * Region: {Location}", normalizedLocation);
         logger.LogInformation("     * Using Agent Blueprint ID: {AgentBlueprintId}", setupConfig.AgentBlueprintId);
 
         var endpointResult = await botConfigurator.CreateEndpointWithAgentBlueprintAsync(
             endpointName: endpointName,
-            location: normalizedLocation,
+            location: string.Empty,
             messagingEndpoint: messagingEndpoint,
             agentDescription: "Agent 365 messaging endpoint for automated interactions",
             agentBlueprintId: setupConfig.AgentBlueprintId,

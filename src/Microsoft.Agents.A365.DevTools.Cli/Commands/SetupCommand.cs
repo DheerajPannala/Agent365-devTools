@@ -12,7 +12,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
 {
     /// <summary>
     /// Setup command - Agent 365 environment setup with granular subcommands
-    /// Supports permission-based workflow: infrastructure -> blueprint -> permissions -> endpoint
+    /// Supports permission-based workflow: blueprint -> permissions -> endpoint
     /// </summary>
     public class SetupCommand
     {
@@ -31,7 +31,6 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
             ILogger<SetupCommand> logger,
             IConfigService configService,
             CommandExecutor executor,
-            DeploymentService deploymentService,
             IBotConfigurator botConfigurator,
             AzureAuthValidator authValidator,
             PlatformDetector platformDetector,
@@ -48,22 +47,17 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
                 "Set up your Agent 365 environment with granular control over each step\n\n" +
                 "Recommended execution order:\n" +
                 "  0. a365 setup requirements           # Check prerequisites (optional)\n" +
-                "  1. a365 setup infrastructure        (or skip if infrastructure exists)\n" +
-                "  2. a365 setup blueprint\n" +
-                "  3. a365 setup permissions mcp\n" +
-                "  4. a365 setup permissions bot\n" +
+                "  1. a365 setup blueprint\n" +
+                "  2. a365 setup permissions mcp\n" +
+                "  3. a365 setup permissions bot\n" +
                 "Or run all steps at once:\n" +
-                "  a365 setup all                      # Full setup (includes infrastructure)\n" +
-                "  a365 setup all --skip-infrastructure # Skip infrastructure if it already exists\n\n" +
+                "  a365 setup all                      # Full setup\n\n" +
                 "For non-admin users — complete GA-only grants after setup all:\n" +
                 "  a365 setup admin --config-dir \"<path>\"  # Run as Global Administrator");
 
             // Add subcommands
             command.AddCommand(RequirementsSubcommand.CreateCommand(
                 logger, configService, authValidator, clientAppValidator, requirementChecksOverride));
-
-            command.AddCommand(InfrastructureSubcommand.CreateCommand(
-                logger, configService, authValidator, platformDetector, executor));
 
             command.AddCommand(BlueprintSubcommand.CreateCommand(
                 logger, configService, executor, authValidator, platformDetector, botConfigurator, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService));

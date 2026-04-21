@@ -53,11 +53,6 @@ public class ConfigCommandTests
         var validConfig = new Agent365Config
         {
             TenantId = "12345678-1234-1234-1234-123456789012",
-            SubscriptionId = "87654321-4321-4321-4321-210987654321",
-            ResourceGroup = "rg-test",
-            Location = "eastus",
-            AppServicePlanName = "asp-test",
-            WebAppName = "webapp-test",
             AgentIdentityDisplayName = "Test Agent"
             // AgentIdentityScopes and AgentApplicationScopes are now hardcoded
         };
