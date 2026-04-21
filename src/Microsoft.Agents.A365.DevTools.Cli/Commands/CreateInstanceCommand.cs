@@ -189,10 +189,6 @@ public class CreateInstanceCommand
                 var agentUserConfigPath = Path.Combine(Environment.CurrentDirectory, "a365.generated.config.json");
                 string? agenticAppId = instanceConfig.AgenticAppId;
                 string? agenticUserId = instanceConfig.AgenticUserId;
-                var endpointName = !string.IsNullOrWhiteSpace(instanceConfig.MessagingEndpoint)
-                    ? EndpointHelper.GetEndpointNameFromUrl(instanceConfig.MessagingEndpoint, instanceConfig.AgentBlueprintId)
-                    : "agent-endpoint";
-
                 if (File.Exists(agentUserConfigPath))
                 {
                     logger.LogInformation("     - Reading agent identity from a365.generated.config.json");

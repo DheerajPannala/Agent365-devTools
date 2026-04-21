@@ -89,10 +89,11 @@ public class BotConfigurator : IBotConfigurator
                     ["TenantId"] = tenantId,
                     ["MessagingEndpoint"] = messagingEndpoint,
                     ["Description"] = agentDescription,
-                    ["Location"] = normalizedLocation,
                     ["Environment"] = EndpointHelper.GetDeploymentEnvironment(config.Environment),
                     ["ClusterCategory"] = EndpointHelper.GetClusterCategory(config.Environment)
                 };
+                if (!string.IsNullOrEmpty(normalizedLocation))
+                    createEndpointBody["Location"] = normalizedLocation;
 
                 // Attempt the request up to twice: first with a cached token, then with a
                 // force-refreshed token if the backend rejects with "Invalid roles".
@@ -261,10 +262,11 @@ public class BotConfigurator : IBotConfigurator
                     ["AzureBotServiceInstanceName"] = endpointName,
                     ["AppId"] = agentBlueprintId,
                     ["TenantId"] = tenantId,
-                    ["Location"] = normalizedLocation,
                     ["Environment"] = EndpointHelper.GetDeploymentEnvironment(config.Environment),
                     ["ClusterCategory"] = EndpointHelper.GetClusterCategory(config.Environment)
                 };
+                if (!string.IsNullOrEmpty(normalizedLocation))
+                    deleteEndpointBody["Location"] = normalizedLocation;
 
                 _logger.LogInformation("Delete request payload:");
                 _logger.LogInformation("   AzureBotServiceInstanceName: {Name}", endpointName);

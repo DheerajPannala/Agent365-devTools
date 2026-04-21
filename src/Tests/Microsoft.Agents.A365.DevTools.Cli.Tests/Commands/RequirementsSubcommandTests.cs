@@ -168,7 +168,7 @@ public class RequirementsSubcommandTests
 
         var checks = RequirementsSubcommand.GetRequirementChecks(mockAuthValidator, mockValidator);
 
-        checks.Should().HaveCount(4, "system (2) + config (2) checks; LocationRequirementCheck removed when bot endpoint registration was disabled");
+        checks.Should().HaveCount(4, "system (2) + config (2) checks; LocationRequirementCheck removed because the Location config property was deleted when Azure App Service deploy/infra provisioning was removed");
         checks.Should().ContainSingle(c => c is FrontierPreviewRequirementCheck);
         checks.Should().ContainSingle(c => c is PowerShellModulesRequirementCheck);
         checks.Should().ContainSingle(c => c is AzureAuthRequirementCheck);
