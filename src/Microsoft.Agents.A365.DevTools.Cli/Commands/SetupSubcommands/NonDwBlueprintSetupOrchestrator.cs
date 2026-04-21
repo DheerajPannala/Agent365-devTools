@@ -363,7 +363,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         {
             ctx.Logger.LogInformation("Registering agent...");
 
-            var registrationId = await ctx.GraphApiService.RegisterAgentInstanceAsyncV2(
+            var registrationId = await ctx.GraphApiService.RegisterAgentInstanceAsyncV2_AgentX(
                 ctx.Config.TenantId!,
                 agentDisplayName,
                 ctx.Config.AgentDescription,
@@ -386,8 +386,8 @@ internal static class NonDwBlueprintSetupOrchestrator
             else
             {
                 ctx.Results.AgentRegistrationFailed = true;
-                ctx.Results.Warnings.Add("Agent registration failed via Graph copilot/agentRegistrations API.");
-                ctx.Logger.LogWarning("Agent registration failed via Graph copilot/agentRegistrations API.");
+                ctx.Results.Warnings.Add("Agent registration failed via AgentX V2 API.");
+                ctx.Logger.LogWarning("Agent registration failed via AgentX V2 API.");
             }
         }
 
