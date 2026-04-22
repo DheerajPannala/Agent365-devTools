@@ -318,13 +318,14 @@ var tools = await _toolService.GetMcpToolsAsync(
 
 | Variable | Purpose |
 |----------|---------|
-| `BEARER_TOKEN` | Local dev / test auth — bearer token to use when agentic auth is not available |
+| `BEARER_TOKEN` | Local dev — shared fallback bearer token used when agentic auth is not available |
+| `BEARER_TOKEN_<SERVER_NAME_UPPER>` | Local dev — per-server bearer token for V2 per-audience model. The SDK resolves this by uppercasing the `mcpServerName` from `ToolingManifest.json` (e.g. `mcp_MailTools` → `BEARER_TOKEN_MCP_MAILTOOLS`, `mcp_CalendarTools` → `BEARER_TOKEN_MCP_CALENDARTOOLS`). Only set this for servers that are present in your manifest — unused entries have no effect. |
 | `USE_AGENTIC_AUTH` | Python: set `true` to force the agentic auth path (ignores `BEARER_TOKEN`) |
 | `SKIP_TOOLING_ON_ERRORS` | Dev only — set `true` to fall back to bare LLM if MCP tools fail to load (only honoured when `ASPNETCORE_ENVIRONMENT` / `ENVIRONMENT` = `Development`) |
 
 > **Production:** Use the agentic auth handler (configured in `appsettings.json` /
-> `a365.config.json`). `BEARER_TOKEN` is for local development only — never set it in a
-> production deployment.
+> `a365.config.json`). `BEARER_TOKEN` and `BEARER_TOKEN_<SERVER_NAME_UPPER>` are for local
+> development only — never set them in a production deployment.
 
 ### Task E completion
 
