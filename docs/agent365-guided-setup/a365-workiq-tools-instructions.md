@@ -9,8 +9,9 @@
 > `a365-setup-instructions.md` when the selected capabilities include Work IQ; (2) directly, when
 > the user explicitly asks to add Work IQ tools or MCP integrations to an already-provisioned agent.
 
-**Prerequisite:** `a365 setup all` must have completed successfully. The agent must have a valid
-`agentBlueprintId` in `a365.generated.config.json` before MCP permissions can be configured.
+**Prerequisite:** `a365 setup blueprint` or `a365 setup all` must have completed successfully.
+The agent must have a valid `agentBlueprintId` in `a365.generated.config.json` before MCP
+permissions can be configured.
 
 ---
 
