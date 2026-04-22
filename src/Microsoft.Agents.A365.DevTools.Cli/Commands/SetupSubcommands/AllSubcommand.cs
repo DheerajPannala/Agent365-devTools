@@ -30,12 +30,11 @@ internal static class AllSubcommand
 {
     /// <summary>
     /// Returns the requirement checks for <c>setup all</c>.
-    /// Composes SetupCommand base checks + Location + ClientApp + optional Infrastructure.
+    /// Composes SetupCommand base checks + ClientApp.
     /// </summary>
     public static List<Services.Requirements.IRequirementCheck> GetChecks(
         AzureAuthValidator auth,
-        IClientAppValidator clientAppValidator,
-        bool includeInfrastructure)
+        IClientAppValidator clientAppValidator)
     {
         var checks = new List<Services.Requirements.IRequirementCheck>(SetupCommand.GetBaseChecks(auth))
         {
@@ -47,12 +46,11 @@ internal static class AllSubcommand
 
     /// <summary>
     /// Returns the requirement checks for <c>setup all --aiteammate false</c> (non-DW blueprint).
-    /// Mirrors DW checks: includes Location and optionally Infrastructure when the agent needs deployment.
+    /// Composes SetupCommand base checks + ClientApp (skipped in bootstrap mode).
     /// </summary>
     public static List<Services.Requirements.IRequirementCheck> GetNonDwChecks(
         AzureAuthValidator auth,
         IClientAppValidator clientAppValidator,
-        bool includeInfrastructure,
         bool isBootstrap = false)
     {
         var checks = new List<Services.Requirements.IRequirementCheck>(SetupCommand.GetBaseChecks(auth));
@@ -319,7 +317,7 @@ internal static class AllSubcommand
                 // Validate all prerequisites in one pass
                 if (!skipRequirements)
                 {
-                    var checks = AllSubcommand.GetChecks(authValidator, clientAppValidator, includeInfrastructure: false);
+                    var checks = AllSubcommand.GetChecks(authValidator, clientAppValidator);
 
                     try
                     {
@@ -623,8 +621,8 @@ internal static class AllSubcommand
         var mcpManifestPath = Path.Combine(
             ctx.Config.DeploymentProjectPath ?? string.Empty,
             McpConstants.ToolingManifestFileName);
-        var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(mcpManifestPath, excludeLegacyAtg: false);
         var mcpResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(ctx.Config.Environment);
+        var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(mcpManifestPath, excludeLegacyAtg: false, resolvedAtgAppId: mcpResourceAppId);
         // V1-compatible: extract ATG scopes for consent URL helpers (empty for V2-only manifests)
         var mcpScopes = scopesByAudience.TryGetValue(mcpResourceAppId, out var atgScopes) ? atgScopes : Array.Empty<string>();
 
