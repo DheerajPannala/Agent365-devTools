@@ -206,6 +206,134 @@ cd "<project_dir>" && a365 setup permissions mcp --remove-legacy-scopes
 
 ---
 
+## Task E — Wire MCP tool consumption in agent code
+
+> **agentType = 1 (M365 custom engine agents):** The Agent 365 platform handles MCP tool dispatch
+> natively. No code changes are required — skip this task.
+>
+> **agentType = 2 (all other agents):** The CLI work in Tasks A–C configures Entra permissions.
+> For the agent to actually call Work IQ tools at runtime, the Microsoft Agent 365 tooling SDK
+> must be installed and wired into the agent's turn handler. Follow the steps below for your
+> platform.
+
+### E.1 — Install the tooling SDK
+
+**Python** (run in your project's virtual environment):
+```bash
+uv add microsoft_agents_a365_tooling microsoft_agents_a365_tooling_extensions_openai
+# or with pip:
+pip install microsoft-agents-a365-tooling microsoft-agents-a365-tooling-extensions-openai
+```
+
+**Node.js:**
+```bash
+npm install @microsoft/agents-a365-tooling @microsoft/agents-a365-tooling-extensions-openai
+```
+
+**.NET (Agent Framework):**
+```bash
+dotnet add package Microsoft.Agents.A365.Tooling.Extensions.AgentFramework --prerelease
+```
+
+### E.2 — Register services at startup
+
+**.NET — add to `Program.cs`:**
+```csharp
+using Microsoft.Agents.A365.Tooling.Extensions.AgentFramework.Services;
+using Microsoft.Agents.A365.Tooling.Services;
+
+builder.Services.AddSingleton<IMcpToolRegistrationService, McpToolRegistrationService>();
+builder.Services.AddSingleton<IMcpToolServerConfigurationService, McpToolServerConfigurationService>();
+```
+
+**Python / Node.js:** no startup registration needed — instantiate the services directly in the
+agent class.
+
+### E.3 — Wire MCP tools per turn
+
+**Python:**
+```python
+from microsoft_agents_a365.tooling.services.mcp_tool_server_configuration_service import (
+    McpToolServerConfigurationService,
+)
+from microsoft_agents_a365.tooling.extensions.openai import mcp_tool_registration_service
+
+class MyAgent:
+    def __init__(self):
+        self.tool_service = mcp_tool_registration_service.McpToolRegistrationService()
+
+    async def on_message(self, auth, auth_handler_name, context):
+        # Production (agentic auth):
+        await self.tool_service.add_tool_servers_to_agent(
+            agent=self.agent,
+            auth=auth,
+            auth_handler_name=auth_handler_name,
+            context=context,
+        )
+        # Local dev fallback (bearer token):
+        # await self.tool_service.add_tool_servers_to_agent(
+        #     agent=self.agent, auth=auth,
+        #     auth_handler_name=auth_handler_name, context=context,
+        #     auth_token=os.getenv("BEARER_TOKEN"),
+        # )
+```
+
+**Node.js:**
+```typescript
+import { McpToolRegistrationService } from '@microsoft/agents-a365-tooling-extensions-openai';
+
+const toolService = new McpToolRegistrationService();
+
+// In your message handler — per turn:
+await toolService.addToolServersToAgent(
+    agent,
+    authorization,
+    authHandlerName,
+    turnContext,
+    process.env.BEARER_TOKEN ?? "",  // empty string = use agentic auth
+);
+```
+
+**.NET:**
+```csharp
+// Inject into your agent class constructor:
+public MyAgent(IMcpToolRegistrationService toolService, ...)
+{
+    _toolService = toolService;
+}
+
+// Per turn — GetMcpToolsAsync returns List<AITool> to add to ChatOptions:
+var tools = await _toolService.GetMcpToolsAsync(
+    agentId,
+    UserAuthorization,
+    authHandlerName,      // null → falls back to BEARER_TOKEN env var
+    turnContext,
+    tokenOverride: null   // pass BEARER_TOKEN string value here for local dev
+);
+// Add tools to your ChatOptions.Tools list before calling the LLM
+```
+
+### E.4 — Environment variables
+
+| Variable | Purpose |
+|----------|---------|
+| `BEARER_TOKEN` | Local dev / test auth — bearer token to use when agentic auth is not available |
+| `USE_AGENTIC_AUTH` | Python: set `true` to force the agentic auth path (ignores `BEARER_TOKEN`) |
+| `SKIP_TOOLING_ON_ERRORS` | Dev only — set `true` to fall back to bare LLM if MCP tools fail to load (only honoured when `ASPNETCORE_ENVIRONMENT` / `ENVIRONMENT` = `Development`) |
+
+> **Production:** Use the agentic auth handler (configured in `appsettings.json` /
+> `a365.config.json`). `BEARER_TOKEN` is for local development only — never set it in a
+> production deployment.
+
+### Task E completion
+
+> **REQUIRED.** After completing Task E, update the final summary from Task C to include:
+>
+> **SDK wiring** _(list each file modified and the call added):_
+> - `<File>` — `<method added>` (e.g. `add_tool_servers_to_agent`, `GetMcpToolsAsync`)
+
+---
+
 ## Advanced — Dataverse MCP server management
 
 Use `a365 develop-mcp` when your agent **publishes its own MCP server** to the Microsoft admin
