@@ -77,6 +77,11 @@ a365 setup admin --config-dir "<path-to-config-dir>"
 - `a365 develop get-token` no longer requests a token with scope `"null"` when a manifest entry has a null scope from the V2 catalog
 - `a365 setup permissions mcp` no longer passes a literal `"default"` string as an AAD resourceAppId — Dataverse custom servers (`McpServers.DataverseCustom.All`, `McpServers.Dataverse.All`) with `"audience": "default"` are now bucketed under the shared ATG AppId, the same as missing or `api://` legacy audiences
 
+### Removed
+- `a365 deploy` command (`deploy app`, `deploy mcp`) — Azure App Service hosting is no longer managed by the CLI. Provide a `messagingEndpoint` in `a365.config.json` pointing to your externally hosted agent.
+- `a365 setup infrastructure` subcommand — Azure App Service and App Service Plan provisioning has been removed. Hosting infrastructure must be provisioned externally before running `a365 setup all`.
+- Config properties `subscriptionId`, `resourceGroup`, `appServicePlanName`, `appServicePlanSku`, `webAppName`, `needDeployment`, `location` — removed from `a365.config.json`. Generated config properties `deploymentLastTimestamp`, `deploymentLastStatus`, `deploymentLastCommitHash`, `deploymentLastBuildId` have also been removed.
+
 ## [1.1.0] - 2026-02
 
 ### Added

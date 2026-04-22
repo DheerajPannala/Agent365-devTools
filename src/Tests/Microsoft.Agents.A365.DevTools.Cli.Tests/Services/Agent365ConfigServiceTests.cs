@@ -74,8 +74,6 @@ public class Agent365ConfigServiceTests : IDisposable
         // Assert
         Assert.NotNull(config);
         Assert.Equal("12345678-1234-1234-1234-123456789012", config.TenantId);
-        Assert.Equal("87654321-4321-4321-4321-210987654321", config.SubscriptionId);
-        Assert.Equal("rg-test", config.ResourceGroup);
         Assert.Equal("Test Agent", config.AgentIdentityDisplayName);
         // Dynamic properties should be null
         Assert.Null(config.AgentBlueprintId);
@@ -120,8 +118,6 @@ public class Agent365ConfigServiceTests : IDisposable
 
         // Assert - static properties
         Assert.Equal("12345678-1234-1234-1234-123456789012", config.TenantId);
-        Assert.Equal("87654321-4321-4321-4321-210987654321", config.SubscriptionId);
-        Assert.Equal("rg-test", config.ResourceGroup);
         Assert.Equal("Test Agent", config.AgentIdentityDisplayName);
 
         // Assert - dynamic properties
@@ -144,11 +140,6 @@ public class Agent365ConfigServiceTests : IDisposable
         {
             // Static properties (init)
             TenantId = "12345678-1234-1234-1234-123456789012",
-            SubscriptionId = "87654321-4321-4321-4321-210987654321",
-            ResourceGroup = "rg-test",
-            Location = "eastus",
-            AppServicePlanName = "asp-test",
-            WebAppName = "webapp-test",
             AgentIdentityDisplayName = "Test Agent",
             // AgentIdentityScopes are now hardcoded
             DeploymentProjectPath = "./test"
@@ -333,11 +324,6 @@ public class Agent365ConfigServiceTests : IDisposable
         {
             TenantId = "12345678-1234-1234-1234-123456789012",
             ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
-            SubscriptionId = "87654321-4321-4321-4321-210987654321",
-            ResourceGroup = "rg-test",
-            Location = "eastus",
-            AppServicePlanName = "asp-test",
-            WebAppName = "webapp-test",
             AgentIdentityDisplayName = "Test Agent",
             // AgentIdentityScopes are now hardcoded
             DeploymentProjectPath = "./test"
@@ -366,9 +352,8 @@ public class Agent365ConfigServiceTests : IDisposable
         // Assert — error messages use camelCase field names (from Agent365Config.Validate())
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, e => e.Contains("tenantId"));
-        Assert.Contains(result.Errors, e => e.Contains("subscriptionId"));
-        Assert.Contains(result.Errors, e => e.Contains("resourceGroup"));
-        Assert.Contains(result.Errors, e => e.Contains("location"));
+        Assert.Contains(result.Errors, e => e.Contains("clientAppId"));
+        Assert.Contains(result.Errors, e => e.Contains("agentIdentityDisplayName"));
     }
 
     [Fact]
@@ -378,9 +363,6 @@ public class Agent365ConfigServiceTests : IDisposable
         var config = new Agent365Config
         {
             TenantId = "not-a-guid",
-            SubscriptionId = "also-not-a-guid",
-            ResourceGroup = "rg-test",
-            Location = "eastus"
         };
 
         // Act
@@ -389,7 +371,6 @@ public class Agent365ConfigServiceTests : IDisposable
         // Assert
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, e => e.Contains("TenantId") && e.Contains("GUID"));
-        Assert.Contains(result.Errors, e => e.Contains("SubscriptionId") && e.Contains("GUID"));
     }
 
     #endregion
@@ -426,12 +407,7 @@ public class Agent365ConfigServiceTests : IDisposable
     var json = await File.ReadAllTextAsync(configPath);
     var config = JsonSerializer.Deserialize<Agent365Config>(json);
     Assert.NotNull(config);
-    Assert.Equal(string.Empty, config.Location);
-    Assert.Equal("B1", config.AppServicePlanSku);
     Assert.Equal(string.Empty, config.TenantId);
-    Assert.Equal(string.Empty, config.SubscriptionId);
-    Assert.Equal(string.Empty, config.ResourceGroup);
-    Assert.Equal(string.Empty, config.WebAppName);
     Assert.Equal(string.Empty, config.AgentIdentityDisplayName);
     }
 

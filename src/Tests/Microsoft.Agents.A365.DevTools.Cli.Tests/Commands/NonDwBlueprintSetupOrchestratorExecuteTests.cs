@@ -53,8 +53,6 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             TenantId = "tenant-id",
             AgentIdentityDisplayName = "Test Agent",
             ClientAppId = "client-app-id",
-            Location = "eastus",
-            SubscriptionId = "sub-id",
         };
 
         var mockExecutor = BuildMockExecutor();
@@ -235,8 +233,6 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             TenantId = "tenant-id",
             AgentIdentityDisplayName = "Test Agent",
             ClientAppId = "client-app-id",
-            Location = "eastus",
-            SubscriptionId = "sub-id",
             AgenticAppId = "agentic-app-id",
         };
 

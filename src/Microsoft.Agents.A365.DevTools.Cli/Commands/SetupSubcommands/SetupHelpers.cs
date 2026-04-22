@@ -80,7 +80,8 @@ internal static class SetupHelpers
             ConfigConstants.ObservabilityApiAppId,
             "Observability API",
             new[] { ConfigConstants.ObservabilityApiOtelWriteScope },
-            setInheritable),
+            setInheritable,
+            AppRoleScopes: new[] { ConfigConstants.ObservabilityApiOtelWriteScope }),
         new ResourcePermissionSpec(
             PowerPlatformConstants.PowerPlatformApiResourceAppId,
             "Power Platform API",
@@ -225,12 +226,14 @@ internal static class SetupHelpers
 
     /// <summary>
     /// Fixed permission specs for the non-DW admin consent flow.
-    /// Observability API and Power Platform API — both delegated.
+    /// Observability API requires both Application (app role for S2S) and Delegated (oauth2 grant for OBO).
+    /// Power Platform API requires Delegated only.
     /// Extend this list or pass an override to <see cref="LogNonDwAdminConsentInstructions"/>
     /// when additional APIs are required (e.g. dynamic MCP scopes, custom permissions).
     /// </summary>
     internal static readonly IReadOnlyList<(string ResourceName, string ResourceAppId, string Scope, string PermissionType)> NonDwAdminConsentSpecs =
     [
+        ("Observability API",  ConfigConstants.ObservabilityApiAppId,                          ConfigConstants.ObservabilityApiOtelWriteScope,                     "Application"),
         ("Observability API",  ConfigConstants.ObservabilityApiAppId,                          ConfigConstants.ObservabilityApiOtelWriteScope,                     "Delegated"),
         ("Power Platform API", PowerPlatformConstants.PowerPlatformApiResourceAppId,           PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead,  "Delegated"),
     ];
@@ -246,9 +249,14 @@ internal static class SetupHelpers
     internal static void LogNonDwAdminConsentInstructions(
         ILogger logger,
         string blueprintId,
+        string? agentIdentityAppId = null,
         IReadOnlyList<(string ResourceName, string ResourceAppId, string Scope, string PermissionType)>? specs = null)
     {
         specs ??= NonDwAdminConsentSpecs;
+
+        var appSpecs = specs.Where(s => s.PermissionType == "Application").ToList();
+        var delegatedSpecs = specs.Where(s => s.PermissionType == "Delegated").ToList();
+        var hasAgentIdentity = !string.IsNullOrWhiteSpace(agentIdentityAppId);
 
         // Option A — Entra portal
         logger.LogInformation("     Option A — Entra portal:");
@@ -258,30 +266,74 @@ internal static class SetupHelpers
         logger.LogInformation("          (switch to 'All applications' tab if not shown under 'Owned applications')");
         logger.LogInformation("       4. Open the app, go to: API permissions");
         logger.LogInformation("       5. Confirm the following permissions are listed:");
-        foreach (var (resourceName, _, scope, permType) in specs)
-            logger.LogInformation("            - {ResourceName,-20}: {Scope} ({PermType})", resourceName, scope, permType);
+        foreach (var group in specs.GroupBy(s => (s.ResourceName, s.Scope)))
+        {
+            var types = string.Join(", ", group.Select(s => s.PermissionType));
+            logger.LogInformation("            - {ResourceName,-20}: {Scope} ({PermTypes})", group.Key.ResourceName, group.Key.Scope, types);
+        }
         logger.LogInformation("       6. Click 'Grant admin consent for your organization' and confirm");
+        if (hasAgentIdentity && appSpecs.Count > 0)
+        {
+            logger.LogInformation("       7. Grant Application permissions to the agent identity (required for S2S token acquisition):");
+            logger.LogInformation("          - Search for the agent identity app by ID: {AgentIdentityAppId}", agentIdentityAppId);
+            logger.LogInformation("          - Open the app, go to: API permissions");
+            logger.LogInformation("          - Confirm the following Application permissions are listed:");
+            foreach (var (resourceName, _, scope, _) in appSpecs)
+                logger.LogInformation("               - {ResourceName,-20}: {Scope} (Application)", resourceName, scope);
+            logger.LogInformation("          - Click 'Grant admin consent for your organization' and confirm");
+        }
 
         // Option B — PowerShell (Microsoft Graph SDK)
+        // Use Invoke-MgGraphRequest instead of New-MgOauth2PermissionGrant to avoid
+        // assembly conflicts when Microsoft.Graph.Identity.SignIns is already partially loaded.
+        var mgScopes = new List<string> { "\"Directory.Read.All\"" };
+        if (appSpecs.Count > 0) mgScopes.Add("\"AppRoleAssignment.ReadWrite.All\"");
+        if (delegatedSpecs.Count > 0) mgScopes.Add("\"DelegatedPermissionGrant.ReadWrite.All\"");
+
         logger.LogInformation("");
         logger.LogInformation("     Option B — PowerShell (Microsoft.Graph module required):");
         logger.LogInformation("       Install-Module Microsoft.Graph -Scope CurrentUser  # skip if already installed");
-        logger.LogInformation("       Connect-MgGraph -Scopes \"DelegatedPermissionGrant.ReadWrite.All\"");
-        logger.LogInformation("       $sp = (Get-MgServicePrincipal -Filter \"appId eq '{BlueprintId}'\").Id", blueprintId);
-        foreach (var (resourceName, resourceAppId, _, _) in specs)
+        logger.LogInformation("       Connect-MgGraph -Scopes {Scopes}", string.Join(", ", mgScopes));
+        logger.LogInformation("       $bp = Get-MgServicePrincipal -Filter \"appId eq '{BlueprintId}'\"", blueprintId);
+        if (hasAgentIdentity)
+            logger.LogInformation("       $ai = Get-MgServicePrincipal -Filter \"appId eq '{AgentIdentityAppId}'\"", agentIdentityAppId);
+
+        if (appSpecs.Count > 0)
         {
-            var varName = "$" + resourceName.Replace(" ", "").Replace("API", "").ToLowerInvariant();
-            logger.LogInformation("       {Var} = (Get-MgServicePrincipal -Filter \"appId eq '{AppId}'\").Id  # {Name}",
-                varName, resourceAppId, resourceName);
+            logger.LogInformation("       # Application permissions (app role assignments — blueprint and agent identity)");
+            foreach (var (resourceName, resourceAppId, scope, _) in appSpecs)
+            {
+                var varName = "$" + resourceName.Replace(" ", "").Replace("API", "").ToLowerInvariant();
+                logger.LogInformation("       {Var} = Get-MgServicePrincipal -Filter \"appId eq '{AppId}'\"  # {Name}",
+                    varName, resourceAppId, resourceName);
+                logger.LogInformation("       $rid = ({Var}.AppRoles | Where-Object {{ $_.Value -eq '{Scope}' }}).Id",
+                    varName, scope);
+                logger.LogInformation("       New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $bp.Id -PrincipalId $bp.Id -ResourceId {Var}.Id -AppRoleId $rid",
+                    varName);
+                if (hasAgentIdentity)
+                    logger.LogInformation("       New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $ai.Id -PrincipalId $ai.Id -ResourceId {Var}.Id -AppRoleId $rid",
+                        varName);
+            }
         }
-        foreach (var (resourceName, _, scope, _) in specs)
+
+        if (delegatedSpecs.Count > 0)
         {
-            var varName = "$" + resourceName.Replace(" ", "").Replace("API", "").ToLowerInvariant();
-            // Use Invoke-MgGraphRequest instead of New-MgOauth2PermissionGrant to avoid
-            // assembly conflicts when Microsoft.Graph.Identity.SignIns is already partially loaded.
-            logger.LogInformation("       Invoke-MgGraphRequest -Method POST -Uri 'https://graph.microsoft.com/v1.0/oauth2PermissionGrants' \\");
-            logger.LogInformation("         -Body @{{ clientId = $sp; consentType = 'AllPrincipals'; resourceId = {Var}; scope = '{Scope}' }}",
-                varName, scope);
+            logger.LogInformation("       # Delegated permissions (oauth2PermissionGrants)");
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (resourceName, resourceAppId, _, _) in delegatedSpecs)
+            {
+                var idVarName = "$" + resourceName.Replace(" ", "").Replace("API", "").ToLowerInvariant() + "Id";
+                if (seen.Add(idVarName))
+                    logger.LogInformation("       {Var} = (Get-MgServicePrincipal -Filter \"appId eq '{AppId}'\").Id  # {Name}",
+                        idVarName, resourceAppId, resourceName);
+            }
+            foreach (var (resourceName, _, scope, _) in delegatedSpecs)
+            {
+                var idVarName = "$" + resourceName.Replace(" ", "").Replace("API", "").ToLowerInvariant() + "Id";
+                logger.LogInformation("       Invoke-MgGraphRequest -Method POST -Uri 'https://graph.microsoft.com/v1.0/oauth2PermissionGrants' `");
+                logger.LogInformation("         -Body @{{ clientId = $bp.Id; consentType = 'AllPrincipals'; resourceId = {Var}; scope = '{Scope}' }}",
+                    idVarName, scope);
+            }
         }
     }
 
@@ -306,19 +358,6 @@ internal static class SetupHelpers
             var root = doc.RootElement;
 
             var urls = new List<(string Label, string Url)>();
-
-            // Azure Web App URL
-            if (root.TryGetProperty("appServiceName", out var appServiceProp) && !string.IsNullOrWhiteSpace(appServiceProp.GetString()))
-            {
-                urls.Add(("Agent Web App", $"https://{appServiceProp.GetString()}.azurewebsites.net"));
-            }
-
-            // Azure Resource Group
-            if (root.TryGetProperty("resourceGroup", out var rgProp) && !string.IsNullOrWhiteSpace(rgProp.GetString()))
-            {
-                var subscriptionId = root.TryGetProperty("subscriptionId", out var subProp) ? subProp.GetString() : "{subscription}";
-                urls.Add(("Azure Resource Group", $"https://portal.azure.com/#@/resource/subscriptions/{subscriptionId}/resourceGroups/{rgProp.GetString()}"));
-            }
 
             // Entra ID Application
             if (root.TryGetProperty("agentBlueprintId", out var blueprintProp) && !string.IsNullOrWhiteSpace(blueprintProp.GetString()))
@@ -470,7 +509,7 @@ internal static class SetupHelpers
                 else
                 {
                     logger.LogInformation("  {N}. Permission Grants — a Global Administrator must grant admin consent in the Entra portal:", actionCount);
-                    LogNonDwAdminConsentInstructions(logger, adminCmdBlueprintId);
+                    LogNonDwAdminConsentInstructions(logger, adminCmdBlueprintId, results.AgentIdentityId);
                 }
             }
             if (pendingS2SAction)
@@ -788,11 +827,8 @@ internal static class SetupHelpers
         else
             logger.LogInformation(DryRunRow(1, "Prerequisites") + "validate (PowerShell modules, Azure CLI)");
 
-        // 2. Azure hosting
-        if (skipInfrastructure)
-            logger.LogInformation(DryRunRow(2, "Azure hosting") + "skip — no Azure deployment configured");
-        else
-            logger.LogInformation(DryRunRow(2, "Azure hosting") + "provision (Resource Group, App Service Plan, Web App)");
+        // 2. Azure hosting — always externally managed; infrastructure provisioning has been removed
+        logger.LogInformation(DryRunRow(2, "Azure hosting") + "skip — hosting is externally managed (provide messagingEndpoint in config)");
 
         // 3. Blueprint — context-aware when config is available
         if (!string.IsNullOrWhiteSpace(config?.AgentBlueprintId))
@@ -1125,54 +1161,11 @@ internal static class SetupHelpers
             }
 
             messagingEndpoint = overrideEndpointUrl;
-
-            // Derive endpoint name based on deployment mode
-            if (setupConfig.NeedDeployment && !string.IsNullOrWhiteSpace(setupConfig.WebAppName))
-            {
-                // Azure deployment: use WebAppName for endpoint name
-                var baseEndpointName = $"{setupConfig.WebAppName}-endpoint";
-                endpointName = EndpointHelper.GetEndpointName(baseEndpointName);
-            }
-            else
-            {
-                // Non-Azure hosting: derive from override endpoint host + blueprint ID suffix for uniqueness
-                endpointName = EndpointHelper.GetEndpointNameFromHost(overrideUri.Host, setupConfig.AgentBlueprintId);
-            }
+            endpointName = EndpointHelper.GetEndpointNameFromHost(overrideUri.Host, setupConfig.AgentBlueprintId);
 
             logger.LogInformation("   - Using override endpoint URL");
         }
-        else if (setupConfig.NeedDeployment)
-        {
-            if (string.IsNullOrEmpty(setupConfig.WebAppName))
-            {
-                logger.LogError("Web App Name not configured in a365.config.json");
-                throw new SetupValidationException(
-                    issueDescription: "Web App name is required to register a messaging endpoint when needDeployment is 'yes'.",
-                    errorDetails: new List<string>
-                    {
-                        "NeedDeployment is true, but 'webAppName' was not provided in a365.config.json."
-                    },
-                    mitigationSteps: new List<string>
-                    {
-                        "Open a365.config.json and ensure 'webAppName' is set to the Azure Web App name.",
-                        "If you do not want the CLI to deploy an Azure Web App, set \"needDeployment\": \"no\" and provide \"MessagingEndpoint\" instead.",
-                        "Re-run 'a365 setup'."
-                    },
-                    context: new Dictionary<string, string>
-                    {
-                        ["needDeployment"] = setupConfig.NeedDeployment.ToString(),
-                        ["webAppName"] = setupConfig.WebAppName ?? "<null>"
-                    });
-            }
-
-            // Generate endpoint name with Azure Bot Service constraints (4-42 chars)
-            var baseEndpointName = $"{setupConfig.WebAppName}-endpoint";
-            endpointName = EndpointHelper.GetEndpointName(baseEndpointName);
-
-            // Construct messaging endpoint URL from web app name
-            messagingEndpoint = $"https://{setupConfig.WebAppName}.azurewebsites.net/api/messages";
-        }
-        else // Non-Azure hosting
+        else
         {
             // No deployment - use the provided MessagingEndpoint
             if (string.IsNullOrWhiteSpace(setupConfig.MessagingEndpoint))
@@ -1204,18 +1197,14 @@ internal static class SetupHelpers
             throw new SetupValidationException($"Bot endpoint name '{endpointName}' is too short (must be at least 4 characters)");
         }
 
-        // Normalize location before logging and sending to API
-        var normalizedLocation = setupConfig.Location.Replace(" ", "").ToLowerInvariant();
-        
         logger.LogInformation("   - Registering blueprint messaging endpoint");
         logger.LogInformation("     * Endpoint Name: {EndpointName}", endpointName);
         logger.LogInformation("     * Messaging Endpoint: {Endpoint}", messagingEndpoint);
-        logger.LogInformation("     * Region: {Location}", normalizedLocation);
         logger.LogInformation("     * Using Agent Blueprint ID: {AgentBlueprintId}", setupConfig.AgentBlueprintId);
 
         var endpointResult = await botConfigurator.CreateEndpointWithAgentBlueprintAsync(
             endpointName: endpointName,
-            location: normalizedLocation,
+            location: string.Empty,
             messagingEndpoint: messagingEndpoint,
             agentDescription: "Agent 365 messaging endpoint for automated interactions",
             agentBlueprintId: setupConfig.AgentBlueprintId,

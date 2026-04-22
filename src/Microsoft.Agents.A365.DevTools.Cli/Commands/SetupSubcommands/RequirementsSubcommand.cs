@@ -193,9 +193,6 @@ internal static class RequirementsSubcommand
             // Azure CLI authentication — required before any Azure operation
             new AzureAuthRequirementCheck(authValidator),
 
-            // Location configuration — required for endpoint registration
-            new LocationRequirementCheck(),
-
             // Client app configuration validation (checks all required Graph permissions incl. UpdateAuthProperties.All)
             new ClientAppRequirementCheck(clientAppValidator),
         };

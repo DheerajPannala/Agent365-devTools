@@ -27,7 +27,7 @@ Present only the options that apply to the user's `agentType`:
   1. Observability
   2. Observability and Work IQ
   3. AI Teammate
-- **If `agentType = 2`** (All other agents):
+- **If `agentType = 2`** (All other agents): 
   1. Discoverability
   2. Discoverability and Observability
   3. Discoverability, Observability, and Work IQ

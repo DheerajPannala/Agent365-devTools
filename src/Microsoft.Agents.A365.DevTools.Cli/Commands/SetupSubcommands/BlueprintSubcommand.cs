@@ -431,7 +431,7 @@ internal static class BlueprintSubcommand
             throw new InvalidOperationException("agentBlueprintDisplayName missing in configuration");
         }
 
-        var useManagedIdentity = (setupConfig.NeedDeployment && !skipInfrastructure) || skipInfrastructure;
+        var useManagedIdentity = true;
 
         var blueprintResult = await CreateAgentBlueprintAsync(
                 logger,
@@ -481,10 +481,7 @@ internal static class BlueprintSubcommand
 
         // Always write messagingEndpoint to the generated config so it's available
         // for Developer Portal configuration regardless of whether endpoint registration ran.
-        // NeedDeployment=true: derive from WebAppName; NeedDeployment=false: copy from static config.
-        var derivedMessagingEndpoint = setupConfig.NeedDeployment && !string.IsNullOrWhiteSpace(setupConfig.WebAppName)
-            ? $"https://{setupConfig.WebAppName}.azurewebsites.net/api/messages"
-            : setupConfig.MessagingEndpoint;
+        var derivedMessagingEndpoint = setupConfig.MessagingEndpoint;
         if (!string.IsNullOrWhiteSpace(derivedMessagingEndpoint))
         {
             generatedConfig["messagingEndpoint"] = derivedMessagingEndpoint;
@@ -2121,21 +2118,6 @@ internal static class BlueprintSubcommand
             Environment.Exit(1);
         }
 
-        // Validate webAppName if needDeployment is true
-        if (setupConfig.NeedDeployment && string.IsNullOrWhiteSpace(setupConfig.WebAppName))
-        {
-            logger.LogError("Web App Name not found. Run 'a365 setup infrastructure' first.");
-            Environment.Exit(1);
-        }
-
-        // Location is required by the endpoint registration API for both Azure and external hosting
-        if (string.IsNullOrWhiteSpace(setupConfig.Location))
-        {
-            logger.LogError(ErrorMessages.EndpointLocationRequiredForCreate);
-            logger.LogInformation(ErrorMessages.EndpointLocationAddToConfig);
-            logger.LogInformation(ErrorMessages.EndpointLocationExample);
-            Environment.Exit(1);
-        }
 
         logger.LogInformation("Registering blueprint messaging endpoint...");
         logger.LogInformation("");
@@ -2233,40 +2215,23 @@ internal static class BlueprintSubcommand
         logger.LogInformation("Updating messaging endpoint...");
         logger.LogInformation("");
 
-        // Normalize location once; used by both Step 1 and Step 1.5.
-        // Null-coalescing is intentional: Location is only validated inside the Step 1 block (not here),
-        // so it may still be null at this point. The empty-string fallback is never passed to any API —
-        // Step 1 throws before using it, and Step 1.5 guards on !IsNullOrWhiteSpace(Location).
-        var normalizedLocation = setupConfig.Location?.Replace(" ", "").ToLowerInvariant() ?? string.Empty;
+        var normalizedLocation = string.Empty;
 
         // Step 1: Delete existing endpoint if it exists
         if (!string.IsNullOrWhiteSpace(setupConfig.MessagingEndpoint) || !string.IsNullOrWhiteSpace(setupConfig.BotName))
         {
             logger.LogInformation("Deleting existing messaging endpoint...");
-            if (string.IsNullOrWhiteSpace(setupConfig.Location))
-            {
-                logger.LogError("Location not found. Please confirm location is in the config file.");
-                throw new Exceptions.SetupValidationException("Location is required to delete the existing messaging endpoint.");
-            }
 
-            // For needsDeployment=false, derive the endpoint name from the currently registered URL.
-            // BotMessagingEndpoint (generated config) is updated after every successful registration,
-            // so it reflects the actual registered endpoint name after any --update-endpoint calls.
-            // Fall back to MessagingEndpoint (static config) if BotMessagingEndpoint is not yet set.
+            // Derive the endpoint name from the currently registered URL.
+            var urlForName = !string.IsNullOrWhiteSpace(setupConfig.BotMessagingEndpoint)
+                ? setupConfig.BotMessagingEndpoint
+                : setupConfig.MessagingEndpoint;
+
             string endpointName;
-            if (!setupConfig.NeedDeployment && (!string.IsNullOrWhiteSpace(setupConfig.BotMessagingEndpoint) || !string.IsNullOrWhiteSpace(setupConfig.MessagingEndpoint)))
-            {
-                var urlForName = !string.IsNullOrWhiteSpace(setupConfig.BotMessagingEndpoint)
-                    ? setupConfig.BotMessagingEndpoint
-                    : setupConfig.MessagingEndpoint;
+            if (!string.IsNullOrWhiteSpace(urlForName))
                 endpointName = Services.Helpers.EndpointHelper.GetEndpointNameFromUrl(urlForName, setupConfig.AgentBlueprintId);
-            }
             else
-            {
-                // When NeedDeployment=true, BotName is always non-empty (derived from WebAppName),
-                // so GetEndpointName(BotName) is safe here.
                 endpointName = Services.Helpers.EndpointHelper.GetEndpointName(setupConfig.BotName);
-            }
 
             var deleted = await botConfigurator.DeleteEndpointWithAgentBlueprintAsync(
                 endpointName,
@@ -2288,18 +2253,12 @@ internal static class BlueprintSubcommand
         }
 
         // Step 1.5: Pre-create cleanup of the target endpoint name.
-        // If a previous --update-endpoint failed during the create step, Azure may have
-        // partially provisioned the new endpoint and left it in a bad state that blocks
-        // subsequent creates with InternalServerError. Delete it now to ensure a clean slate.
-        if (!setupConfig.NeedDeployment && !string.IsNullOrWhiteSpace(setupConfig.Location))
         {
             var targetEndpointName = Services.Helpers.EndpointHelper.GetEndpointNameFromUrl(newEndpointUrl, setupConfig.AgentBlueprintId);
             logger.LogInformation("Removing target endpoint '{EndpointName}' (derived from {Url}) to ensure a clean state before registration.", targetEndpointName, newEndpointUrl);
             var preCleanupDeleted = await botConfigurator.DeleteEndpointWithAgentBlueprintAsync(targetEndpointName, normalizedLocation, setupConfig.AgentBlueprintId, correlationId: correlationId);
             if (!preCleanupDeleted)
             {
-                // Not fatal — proceed and let Step 2 surface the error if the partially-provisioned
-                // endpoint is still blocking. The warning helps diagnose production issues.
                 logger.LogWarning("Pre-create cleanup for '{EndpointName}' did not confirm deletion. Proceeding anyway.", targetEndpointName);
             }
         }

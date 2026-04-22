@@ -51,14 +51,6 @@ public class BotConfigurator : IBotConfigurator
         _logger.LogDebug("   Messaging Endpoint: {Endpoint}", messagingEndpoint);
         _logger.LogDebug("   Agent Blueprint ID: {AgentBlueprintId}", agentBlueprintId);
 
-        if (string.IsNullOrWhiteSpace(location))
-        {
-            _logger.LogError(ErrorMessages.EndpointLocationRequiredForCreate);
-            _logger.LogInformation(ErrorMessages.EndpointLocationAddToConfig);
-            _logger.LogInformation(ErrorMessages.EndpointLocationExample);
-            return EndpointRegistrationResult.Failed;
-        }
-
         try
         {
             // Load config first to get tenant ID — avoids az CLI subprocess for account info.
@@ -97,10 +89,11 @@ public class BotConfigurator : IBotConfigurator
                     ["TenantId"] = tenantId,
                     ["MessagingEndpoint"] = messagingEndpoint,
                     ["Description"] = agentDescription,
-                    ["Location"] = normalizedLocation,
                     ["Environment"] = EndpointHelper.GetDeploymentEnvironment(config.Environment),
                     ["ClusterCategory"] = EndpointHelper.GetClusterCategory(config.Environment)
                 };
+                if (!string.IsNullOrEmpty(normalizedLocation))
+                    createEndpointBody["Location"] = normalizedLocation;
 
                 // Attempt the request up to twice: first with a cached token, then with a
                 // force-refreshed token if the backend rejects with "Invalid roles".
@@ -232,14 +225,6 @@ public class BotConfigurator : IBotConfigurator
         _logger.LogInformation("   Endpoint Name: {EndpointName}", endpointName);
         _logger.LogInformation("   Agent Blueprint ID: {AgentBlueprintId}", agentBlueprintId);
 
-        if (string.IsNullOrWhiteSpace(location))
-        {
-            _logger.LogError(ErrorMessages.EndpointLocationRequiredForDelete);
-            _logger.LogInformation(ErrorMessages.EndpointLocationAddToConfig);
-            _logger.LogInformation(ErrorMessages.EndpointLocationExample);
-            return false;
-        }
-
         try
         {
             var config = await _configService.LoadAsync();
@@ -277,10 +262,11 @@ public class BotConfigurator : IBotConfigurator
                     ["AzureBotServiceInstanceName"] = endpointName,
                     ["AppId"] = agentBlueprintId,
                     ["TenantId"] = tenantId,
-                    ["Location"] = normalizedLocation,
                     ["Environment"] = EndpointHelper.GetDeploymentEnvironment(config.Environment),
                     ["ClusterCategory"] = EndpointHelper.GetClusterCategory(config.Environment)
                 };
+                if (!string.IsNullOrEmpty(normalizedLocation))
+                    deleteEndpointBody["Location"] = normalizedLocation;
 
                 _logger.LogInformation("Delete request payload:");
                 _logger.LogInformation("   AzureBotServiceInstanceName: {Name}", endpointName);

@@ -40,16 +40,12 @@ public class NonDwPublishCommandDryRunTests : IDisposable
     public void Dispose() => Console.SetIn(_originalConsoleIn);
 
     private static Agent365Config BuildNonDwConfig(
-        string clientAppId = "11111111-1111-1111-1111-111111111111",
-        string webAppName = "webapp-myagent") =>
+        string clientAppId = "11111111-1111-1111-1111-111111111111") =>
         new()
         {
             ClientAppId = clientAppId,
-            WebAppName = webAppName,
             AiTeammate = false,
             TenantId = "tenant-id",
-            SubscriptionId = "sub-id",
-            Location = "eastus",
             AgentIdentityDisplayName = "My Agent",
             DeploymentProjectPath = "./app"
         };
@@ -61,11 +57,8 @@ public class NonDwPublishCommandDryRunTests : IDisposable
         var config = new Agent365Config
         {
             ClientAppId = "11111111-1111-1111-1111-111111111111",
-            WebAppName = "webapp-myagent",
             AiTeammate = null,
             TenantId = "tenant-id",
-            SubscriptionId = "sub-id",
-            Location = "eastus",
             AgentIdentityDisplayName = "My Agent",
             DeploymentProjectPath = "./app"
         };
@@ -112,26 +105,6 @@ public class NonDwPublishCommandDryRunTests : IDisposable
             LogLevel.Information,
             Arg.Any<EventId>(),
             Arg.Is<object>(o => o.ToString()!.Contains(clientAppId)),
-            null,
-            Arg.Any<Func<object, Exception?, string>>());
-    }
-
-    [Fact]
-    public async Task Publish_NonDwDryRun_LogsWebAppDomainInValidDomains()
-    {
-        var config = BuildNonDwConfig(webAppName: "webapp-contoso-prod");
-        _configService.LoadAsync().Returns(config);
-        _configService.LoadAsync(Arg.Any<string>()).Returns(config);
-
-        var root = new RootCommand();
-        root.AddCommand(PublishCommand.CreateCommand(_logger, _configService, _manifestTemplateService));
-
-        await root.InvokeAsync("publish --dry-run");
-
-        _logger.Received().Log(
-            LogLevel.Information,
-            Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("webapp-contoso-prod.azurewebsites.net")),
             null,
             Arg.Any<Func<object, Exception?, string>>());
     }
