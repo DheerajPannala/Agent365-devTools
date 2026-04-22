@@ -108,7 +108,8 @@ internal static class SetupHelpers
             var mcpManifestPath = Path.Combine(
                 config.DeploymentProjectPath ?? string.Empty,
                 McpConstants.ToolingManifestFileName);
-            scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(mcpManifestPath, excludeLegacyAtg: false);
+            var atgAppId = ConfigConstants.GetAgent365ToolsResourceAppId(config.Environment);
+            scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(mcpManifestPath, excludeLegacyAtg: false, resolvedAtgAppId: atgAppId);
         }
 
         var specs = new List<ResourcePermissionSpec>
