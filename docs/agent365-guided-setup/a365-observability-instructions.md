@@ -227,7 +227,7 @@ internal sealed class ObservabilityTokenService : BackgroundService
 > - ...
 > - Tracing exports to the A365 service by default. To disable locally: set `"EnableAgent365Exporter": false` in `appsettings.Development.json` (or the equivalent local env override for your platform)
 
-Do NOT add commentary, next-step suggestions, or further output after this summary.
+Do NOT add commentary or further output after this summary — **with one exception**: if `capabilities` (from the parent setup session) includes "Work IQ", immediately follow `#file:a365-workiq-tools-instructions.md` after outputting the summary above. Do NOT ask the user.
 
 ---
 

@@ -26,13 +26,23 @@ Use this file when the user asks to:
 - Integrate OpenTelemetry or the Agent 365 observability stack
 - Monitor agent activity or usage
 
+### "Add Work IQ tools" / "Enable MCP tool servers" / "Set up MCP integrations"
+
+**→ Open and follow: [a365-workiq-tools-instructions.md](a365-workiq-tools-instructions.md)**
+
+Use this file when the user asks to:
+- Add Work IQ tools or MCP (Model Context Protocol) integrations to their agent
+- Enable Microsoft 365 tool servers (Mail, Calendar, Teams, SharePoint, OneDrive, etc.)
+- Configure `ToolingManifest.json` or run `a365 setup permissions mcp`
+- Run `a365 develop list-available` or `a365 develop add-mcp-servers`
+
 ---
 
 ## If the intent is unclear
 
 If the user's request matches more than one category, or you are unsure, ask:
 
-> "Are you looking to (1) set up your agent for Agent 365 compliance, or (2) add observability/telemetry to an existing agent?"
+> "Are you looking to (1) set up your agent for Agent 365 compliance, (2) add observability/telemetry, or (3) add Work IQ MCP tool integrations to an existing agent?"
 
 Wait for the answer, then open the appropriate file above.
 
@@ -40,8 +50,8 @@ Wait for the answer, then open the appropriate file above.
 
 ## What NOT to do
 
-- Do NOT open both instruction files. Open the one file that matches the task and follow it exclusively.
-- Do NOT treat "make my agent A365 compliant" as including observability. Setup and observability are separate tasks with separate instruction files.
+- Do NOT open more than one instruction file. Open the one file that matches the task and follow it exclusively.
+- Do NOT treat "make my agent A365 compliant" as including observability or Work IQ. Setup, observability, and Work IQ are separate tasks with separate instruction files.
 - Do NOT glob, search, or read files in the broader repository before reading the instruction file.
 - Do NOT fetch external URLs or documentation before reading the instruction file.
 - Do NOT ask clarifying questions beyond the one above if the intent is clear.

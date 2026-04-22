@@ -600,7 +600,9 @@ After `a365 setup all` completes, show the user exactly this — nothing more, n
 
 Mark all todos as completed, then check `capabilities`:
 
-> **If `capabilities` includes "Observability"** (`agentType = 1` with Observability or Observability and Work IQ, or `agentType = 2` with Discoverability and Observability or Discoverability, Observability, and Work IQ): immediately start following `#file:a365-observability-instructions.md`. The user already selected observability — do NOT ask again, just proceed.
+> **If `capabilities` includes "Observability"** (`agentType = 1` with Observability or Observability and Work IQ, or `agentType = 2` with Discoverability and Observability or Discoverability, Observability, and Work IQ): immediately start following `#file:a365-observability-instructions.md`. The user already selected observability — do NOT ask again, just proceed. When observability is complete, if `capabilities` also includes "Work IQ", immediately follow `#file:a365-workiq-tools-instructions.md` — do NOT ask again.
+>
+> **If `capabilities` includes "Work IQ" but NOT "Observability"**: immediately follow `#file:a365-workiq-tools-instructions.md`. Do NOT ask the user — just proceed.
 >
 > **Otherwise**: say to the user verbatim:
 > "Your agent is provisioned. Would you like to add observability so you can trace LLM calls, tool dispatches, and agent-to-agent calls?"
@@ -788,7 +790,7 @@ If your agent instance isn't working as expected, see the Troubleshooting sectio
 ### Step 5 completion
 
 > **REQUIRED — do not skip this step.**
-> AI Teammate includes observability. Immediately start following `#file:a365-observability-instructions.md`. Do NOT ask the user — just proceed.
+> AI Teammate includes observability and Work IQ. Immediately start following `#file:a365-observability-instructions.md`. Do NOT ask the user — just proceed. When observability is complete, immediately follow `#file:a365-workiq-tools-instructions.md`. Do NOT ask the user.
 
 ---
 
