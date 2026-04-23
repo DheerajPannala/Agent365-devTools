@@ -1225,7 +1225,7 @@ public class GraphApiService
     /// token includes AgentRegistration.ReadWrite.All, or falls back to the az CLI Graph token.
     /// Returns the new agent registration ID on success (200 OK), or null on failure.
     /// </summary>
-    public virtual async Task<string?> RegisterAgentInstanceAsyncV2(
+    public virtual async Task<(string? Id, bool AlreadyExisted)> RegisterAgentInstanceAsyncV2(
         string tenantId,
         string displayName,
         string? description,
@@ -1239,7 +1239,7 @@ public class GraphApiService
         if (string.IsNullOrWhiteSpace(currentUserId))
         {
             _logger.LogError("Failed to retrieve current user ID — required for agent registration.");
-            return null;
+            return (null, false);
         }
 
         // Use the custom app token provider with .default so the token is issued to the "Agent 365 CLI"
@@ -1308,7 +1308,33 @@ public class GraphApiService
             registrationId ??= payload["id"]?.ToString();
 
             response.Json?.Dispose();
-            return registrationId;
+            return (registrationId, false);
+        }
+
+        // 409 Conflict means an agent with the same sourceAgentId already exists.
+        // The contract guarantees sourceAgentId uniqueness, so this is an idempotent re-run.
+        // Extract the existing registration ID from the response body and return it.
+        if (response.StatusCode == 409)
+        {
+            _logger.LogDebug("Agent registration returned 409 Conflict (sourceAgentId already exists). Body: {Body}", response.Body);
+
+            string? existingId = null;
+            if (response.Json != null && response.Json.RootElement.TryGetProperty("id", out var existingIdProp))
+                existingId = existingIdProp.GetString();
+
+            response.Json?.Dispose();
+
+            if (!string.IsNullOrWhiteSpace(existingId))
+            {
+                _logger.LogInformation("Agent already registered (existing ID: {RegistrationId}). Skipping.", existingId);
+                return (existingId, true);
+            }
+
+            // 409 but no ID in the body — server did not return the existing resource.
+            _logger.LogWarning(
+                "Agent registration returned 409 Conflict but the response body did not include an 'id'. " +
+                "Record the registration ID manually and add it to the generated config as 'agentRegistrationId'.");
+            return (null, false);
         }
 
         if (response.StatusCode == 403)
@@ -1319,7 +1345,7 @@ public class GraphApiService
         else
             _logger.LogError("Agent registration failed with HTTP {StatusCode}. Body: {Body}", response.StatusCode, response.Body);
         response.Json?.Dispose();
-        return null;
+        return (null, false);
     }
 
     /// <summary>
@@ -1346,6 +1372,43 @@ public class GraphApiService
             ct,
             treatNotFoundAsSuccess: true,
             scopes: scopes);
+    }
+
+    /// <summary>
+    /// Checks whether an existing agent registration is still present by fetching
+    /// GET <see cref="AgentRegistrationsPath"/>/{registrationId}.
+    /// Returns true (200 OK), false (404 Not Found), or null (auth/transient error — result unknown).
+    /// Callers must not treat null as "not found"; they should preserve any stored registration ID
+    /// rather than triggering re-registration on an inconclusive result.
+    /// </summary>
+    public virtual async Task<bool?> AgentRegistrationExistsAsync(
+        string tenantId,
+        string registrationId,
+        CancellationToken ct = default)
+    {
+        IEnumerable<string>? scopes = _tokenProvider != null
+            ? [$"{Constants.AuthenticationConstants.MicrosoftGraphResourceUri}/.default"]
+            : null;
+
+        var path = $"{AgentRegistrationsPath}/{Uri.EscapeDataString(registrationId)}";
+        _logger.LogDebug("GET https://graph.microsoft.com{Path}", path);
+
+        try
+        {
+            var response = await GraphGetWithResponseAsync(tenantId, path, scopes: scopes, ct: ct);
+            response.Json?.Dispose();
+            if (response.IsSuccess) return true;
+            if (response.StatusCode == 404) return false;
+            _logger.LogDebug("Could not verify agent registration {RegistrationId} (HTTP {StatusCode}); treating as unknown.",
+                registrationId, response.StatusCode);
+            return null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Could not verify agent registration {RegistrationId} (non-fatal): {Message}",
+                registrationId, ex.Message);
+            return null;
+        }
     }
 
     /// <summary>
