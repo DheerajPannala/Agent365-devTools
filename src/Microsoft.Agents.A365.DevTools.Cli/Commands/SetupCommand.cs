@@ -31,7 +31,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
             ILogger<SetupCommand> logger,
             IConfigService configService,
             CommandExecutor executor,
-            IBotConfigurator botConfigurator,
+            ITeamsGraphBackendConfigurator backendConfigurator,
             AzureAuthValidator authValidator,
             PlatformDetector platformDetector,
             GraphApiService graphApiService,
@@ -60,13 +60,13 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
                 logger, configService, authValidator, clientAppValidator, requirementChecksOverride));
 
             command.AddCommand(BlueprintSubcommand.CreateCommand(
-                logger, configService, executor, authValidator, platformDetector, botConfigurator, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService));
+                logger, configService, executor, authValidator, platformDetector, backendConfigurator, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService));
 
             command.AddCommand(PermissionsSubcommand.CreateCommand(
                 logger, authValidator, configService, executor, graphApiService, blueprintService, confirmationProvider));
 
             command.AddCommand(AllSubcommand.CreateCommand(
-                logger, configService, executor, botConfigurator, authValidator, platformDetector, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService, armApiService, confirmationProvider));
+                logger, configService, executor, backendConfigurator, authValidator, platformDetector, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService, armApiService, confirmationProvider));
 
             command.AddCommand(AdminSubcommand.CreateCommand(
                 logger, configService, authValidator, graphApiService, confirmationProvider, blueprintService));
