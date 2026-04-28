@@ -18,6 +18,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Helpers;
 /// BuildConfiguredPermissionSpecsAsync, ResolveBootstrapTenantIdAsync,
 /// ResolveBootstrapClientAppIdAsync, and GetJsonString.
 /// </summary>
+[Collection("ConfigTests")]
 public class SetupHelpersBootstrapTests : IDisposable
 {
     private readonly string _tempDir;
@@ -328,6 +329,93 @@ public class SetupHelpersBootstrapTests : IDisposable
         finally
         {
             Environment.CurrentDirectory = originalCwd;
+        }
+    }
+
+    [Fact]
+    public async Task ResolveBootstrapClientAppIdAsync_WhenLookupFails_AndUserEntersValidId_ReturnsId()
+    {
+        // Arrange
+        const string enteredId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+        _mockGraph.FindApplicationByDisplayNameAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<string?>(null));
+        _mockGraph.ApplicationExistsByAppIdAsync(
+            Arg.Any<string>(), enteredId, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(true));
+
+        var originalIn = Console.In;
+        Console.SetIn(new StringReader(enteredId + "\n"));
+        try
+        {
+            // Act
+            var result = await SetupHelpers.ResolveBootstrapClientAppIdAsync(
+                "tenant-id", _mockGraph, NullLogger.Instance, CancellationToken.None);
+
+            // Assert
+            result.Should().Be(enteredId,
+                because: "a valid app ID entered at the prompt must be returned after Graph confirms it exists");
+        }
+        finally
+        {
+            Console.SetIn(originalIn);
+        }
+    }
+
+    [Fact]
+    public async Task ResolveBootstrapClientAppIdAsync_WhenLookupFails_AndUserCancels_ReturnsNull()
+    {
+        // Arrange
+        _mockGraph.FindApplicationByDisplayNameAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<string?>(null));
+
+        var originalIn = Console.In;
+        Console.SetIn(new StringReader("\n"));
+        try
+        {
+            // Act
+            var result = await SetupHelpers.ResolveBootstrapClientAppIdAsync(
+                "tenant-id", _mockGraph, NullLogger.Instance, CancellationToken.None);
+
+            // Assert
+            result.Should().BeNull(because: "pressing Enter (empty input) must cancel and return null");
+            await _mockGraph.DidNotReceive().ApplicationExistsByAppIdAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        }
+        finally
+        {
+            Console.SetIn(originalIn);
+        }
+    }
+
+    [Fact]
+    public async Task ResolveBootstrapClientAppIdAsync_WhenLookupFails_AndUserEntersNonExistentId_ReturnsNull()
+    {
+        // Arrange
+        const string badId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+        _mockGraph.FindApplicationByDisplayNameAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<string?>(null));
+        _mockGraph.ApplicationExistsByAppIdAsync(
+            Arg.Any<string>(), badId, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(false));
+
+        var originalIn = Console.In;
+        Console.SetIn(new StringReader(badId + "\n"));
+        try
+        {
+            // Act
+            var result = await SetupHelpers.ResolveBootstrapClientAppIdAsync(
+                "tenant-id", _mockGraph, NullLogger.Instance, CancellationToken.None);
+
+            // Assert
+            result.Should().BeNull(
+                because: "an app ID that Graph cannot find must fail fast rather than proceeding with an invalid ID");
+        }
+        finally
+        {
+            Console.SetIn(originalIn);
         }
     }
 

@@ -43,7 +43,7 @@ internal static class SetupHelpers
 
     /// <summary>
     /// Returns the fixed-scope ResourcePermissionSpecs for the three platform APIs that every
-    /// DW (AI Teammate) agent blueprint requires: Messaging Bot API, Observability API, and Power Platform API.
+    /// AI Teammate agent blueprint requires: Messaging Bot API, Observability API, and Power Platform API.
     /// Callers control whether the specs set inheritable permissions on the blueprint.
     /// </summary>
     internal static ResourcePermissionSpec[] GetFixedApiPermissionSpecs(bool setInheritable) =>
@@ -186,6 +186,32 @@ internal static class SetupHelpers
                 tenantId,
                 AuthenticationConstants.WellKnownClientAppDisplayName,
                 ct);
+        }
+
+        if (string.IsNullOrWhiteSpace(clientAppId))
+        {
+            if (graphApiService == null)
+                return null;
+
+            logger.LogError("Entra app \"{AppName}\" was not found in tenant {TenantId}.",
+                AuthenticationConstants.WellKnownClientAppDisplayName, tenantId);
+            Console.Write("Enter your client app ID (or press Enter to cancel): ");
+            var entered = Console.ReadLine()?.Trim();
+            if (string.IsNullOrWhiteSpace(entered))
+            {
+                logger.LogInformation("Client app ID entry cancelled.");
+                return null;
+            }
+
+            logger.LogInformation("Verifying client app ID...");
+            if (!await graphApiService.ApplicationExistsByAppIdAsync(tenantId, entered, ct))
+            {
+                logger.LogError("App ID '{AppId}' was not found in tenant '{TenantId}'. Check the ID and try again.",
+                    entered, tenantId);
+                return null;
+            }
+
+            clientAppId = entered;
         }
 
         return clientAppId;
@@ -652,13 +678,14 @@ internal static class SetupHelpers
         // Next steps
         var hasNextSteps = results.HasErrors
             || !string.IsNullOrEmpty(results.GraphInheritablePermissionsError)
-            || !string.IsNullOrEmpty(results.FederatedCredentialError);
+            || !string.IsNullOrEmpty(results.FederatedCredentialError)
+            || results.AgentRegistrationFailed;
 
         if (hasNextSteps)
         {
             var nextStepLines = new List<Action>();
 
-            if ((!results.BatchPermissionsPhase2Completed || (!results.AdminConsentGranted && !pendingAdminAction)) && results.HasErrors)
+            if (results.BatchPermissionsPhase1Completed && (!results.BatchPermissionsPhase2Completed || (!results.AdminConsentGranted && !pendingAdminAction)) && results.HasErrors)
                 nextStepLines.Add(() => logger.LogInformation("  To retry permissions: a365 setup all"));
 
             if (!string.IsNullOrEmpty(results.GraphInheritablePermissionsError))
@@ -672,6 +699,9 @@ internal static class SetupHelpers
                     logger.LogInformation("    a365 setup blueprint");
                 });
             }
+
+            if (results.AgentRegistrationFailed)
+                nextStepLines.Add(() => logger.LogInformation("  To retry agent registration: a365 setup all --agent-registration-only"));
 
             if (nextStepLines.Count > 0)
             {
@@ -900,7 +930,7 @@ internal static class SetupHelpers
     }
 
     /// <summary>
-    /// Prints the dry-run plan for the Digital Worker (--aiteammate true) path of setup all.
+    /// Prints the dry-run plan for the AI Teammate agent (--aiteammate true) path of setup all.
     /// </summary>
     internal static void PrintDwSetupAllDryRunPlan(
         ILogger logger,
