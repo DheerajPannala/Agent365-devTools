@@ -146,7 +146,7 @@ class Program
 
             // Add commands
             rootCommand.AddCommand(DevelopCommand.CreateCommand(developLogger, configService, executor, authService, graphApiService, agentBlueprintService, processService));
-            rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService));
+            rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService, graphApiService));
             var confirmationProvider = serviceProvider.GetRequiredService<IConfirmationProvider>();
             rootCommand.AddCommand(SetupCommand.CreateCommand(setupLogger, configService, executor,
                 backendConfigurator, azureAuthValidator, platformDetector, graphApiService, agentBlueprintService, blueprintLookupService, federatedCredentialService, clientAppValidator, confirmationProvider, armApiService, resolver: bootstrapResolver));
@@ -298,9 +298,40 @@ class Program
             var authService = provider.GetRequiredService<AuthenticationService>();
             var logger = provider.GetRequiredService<ILogger<Agent365ToolingService>>();
 
-            // Default to "prod". Override with A365_ENVIRONMENT env var (e.g. preprod, test).
-            // Works on Windows, macOS, and Linux.
+            // Default to "prod". Override with A365_ENVIRONMENT env var or --config file.
             string environment = Environment.GetEnvironmentVariable("A365_ENVIRONMENT") ?? "prod";
+
+            var args = Environment.GetCommandLineArgs();
+            var configIndex = Array.FindIndex(args, arg => arg == "--config" || arg == "-c");
+            if (configIndex >= 0 && configIndex < args.Length - 1)
+            {
+                try
+                {
+                    var configFilePath = args[configIndex + 1];
+                    if (!Path.IsPathRooted(configFilePath))
+                        configFilePath = Path.Combine(System.Environment.CurrentDirectory, configFilePath);
+
+                    if (File.Exists(configFilePath))
+                    {
+                        var json = File.ReadAllText(configFilePath);
+                        using var doc = System.Text.Json.JsonDocument.Parse(json);
+                        if (doc.RootElement.TryGetProperty("environment", out var envProp))
+                        {
+                            var envValue = envProp.GetString();
+                            if (!string.IsNullOrWhiteSpace(envValue))
+                            {
+                                environment = envValue;
+                            }
+                        }
+                    }
+
+                    logger.LogDebug("Resolved environment from config: {Environment}", environment);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogDebug("Failed to read environment from config: {Error}", ex.Message);
+                }
+            }
 
             return new Agent365ToolingService(configService, authService, logger, environment);
         });

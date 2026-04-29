@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
@@ -18,8 +19,9 @@ public static class DevelopMcpCommand
     /// Creates the develop-mcp command with subcommands for MCP server management in Dataverse
     /// </summary>
     public static Command CreateCommand(
-        ILogger logger, 
-        IAgent365ToolingService toolingService)
+        ILogger logger,
+        IAgent365ToolingService toolingService,
+        GraphApiService? graphApiService = null)
     {
         var developMcpCommand = new Command("develop-mcp", "Manage MCP servers in Dataverse environments");
 
@@ -38,6 +40,7 @@ public static class DevelopMcpCommand
         developMcpCommand.AddCommand(CreateApproveSubcommand(logger, toolingService));
         developMcpCommand.AddCommand(CreateBlockSubcommand(logger, toolingService));
         developMcpCommand.AddCommand(CreatePackageMCPServerSubCommand(logger, toolingService));
+        developMcpCommand.AddCommand(CreateRegisterExternalMcpServerSubcommand(logger, toolingService, graphApiService));
 
         return developMcpCommand;
     }
@@ -791,9 +794,164 @@ public static class DevelopMcpCommand
     }
 
     /// <summary>
+    /// Creates the register-external-mcp-server subcommand
+    /// </summary>
+    private static Command CreateRegisterExternalMcpServerSubcommand(
+        ILogger logger,
+        IAgent365ToolingService toolingService,
+        GraphApiService? graphApiService)
+    {
+        var command = new Command("register-external-mcp-server", "Register an external MCP server with Entra, ExternalIDP, or NoAuth authentication");
+
+        var serverNameOption = new Option<string?>(["--server-name", "-s"], description: "MCP server name (max 20 chars, must start with 'ext_', e.g. ext_MyServer)");
+        command.AddOption(serverNameOption);
+
+        var serverUrlOption = new Option<string?>(["--server-url", "-u"], description: "Remote MCP server URL");
+        command.AddOption(serverUrlOption);
+
+        var authTypeOption = new Option<string?>(["--auth-type", "-a"], description: "Authentication type: EntraOAuth, ExternalOAuth, APIKey, or NoAuth");
+        command.AddOption(authTypeOption);
+
+        // ExternalOAuth-specific options
+        var idpAuthUrlOption = new Option<string?>("--idp-authorization-url", description: "External OAuth authorization URL (required for ExternalOAuth)");
+        command.AddOption(idpAuthUrlOption);
+
+        var idpTokenUrlOption = new Option<string?>("--idp-token-url", description: "External OAuth token URL (required for ExternalOAuth)");
+        command.AddOption(idpTokenUrlOption);
+
+        var idpScopesOption = new Option<string?>("--idp-scopes", description: "External OAuth scopes (required for ExternalOAuth)");
+        command.AddOption(idpScopesOption);
+
+        var idpClientIdOption = new Option<string?>("--idp-client-id", description: "External OAuth client ID (required for ExternalOAuth)");
+        command.AddOption(idpClientIdOption);
+
+        var idpClientSecretOption = new Option<string?>("--idp-client-secret", description: "External OAuth client secret (required for ExternalOAuth)");
+        command.AddOption(idpClientSecretOption);
+
+        // APIKey-specific options
+        var apiKeyLocationOption = new Option<string?>("--api-key-location", description: "API key location: Header or Query (required for APIKey)");
+        command.AddOption(apiKeyLocationOption);
+
+        var apiKeyNameOption = new Option<string?>("--api-key-name", description: "API key parameter/header name, e.g. 'X-API-Key' or 'token' (required for APIKey)");
+        command.AddOption(apiKeyNameOption);
+
+        var toolsOption = new Option<string?>("--tools", description: "Comma-separated list of tool names exposed by this server (e.g., 'tool1,tool2,tool3')");
+        command.AddOption(toolsOption);
+
+        var inputFileOption = new Option<string?>(["--input-file", "-f"], description: "Path to JSON file with register parameters (see sample: register-external-mcp-server-sample.json)");
+        command.AddOption(inputFileOption);
+
+        var remoteScopesOption = new Option<string?>("--remote-scopes", description: "Scopes for the remote MCP server (e.g., 'api://{appId-guid}/{scopeName}' such as 'api://00000000-0000-0000-0000-000000000000/access_as_user')");
+        command.AddOption(remoteScopesOption);
+
+        var tenantIdOption = new Option<string?>(["--tenant-id", "-t"], description: "Entra tenant ID for app registration (defaults to current az login tenant)");
+        command.AddOption(tenantIdOption);
+
+        var serviceTreeIdOption = new Option<string?>("--service-tree-id", description: "ServiceTree ID for Entra app registration (required in Microsoft corporate tenants)");
+        command.AddOption(serviceTreeIdOption);
+
+        var configOption = new Option<string>(["-c", "--config"], getDefaultValue: () => "a365.config.json", description: "Configuration file path");
+        command.AddOption(configOption);
+
+        var publisherOption = new Option<string?>("--publisher", description: "Publisher name (required, used in MOS package metadata)");
+        command.AddOption(publisherOption);
+
+        var descriptionOption = new Option<string?>("--description", description: "Server description (required, used in MOS package metadata)");
+        command.AddOption(descriptionOption);
+
+        var dryRunOption = new Option<bool>("--dry-run", description: "Show what would be done without executing");
+        command.AddOption(dryRunOption);
+
+        // Verbose is handled globally in Program.cs (sets LogLevel.Debug); declared here so the parser accepts -v.
+        command.AddOption(new Option<bool>(["--verbose", "-v"], description: "Enable verbose logging"));
+
+        command.SetHandler(async (context) =>
+        {
+            var args = new RawRegisterArgs(
+                ServerName: context.ParseResult.GetValueForOption(serverNameOption),
+                ServerUrl: context.ParseResult.GetValueForOption(serverUrlOption),
+                AuthType: context.ParseResult.GetValueForOption(authTypeOption),
+                IdpAuthUrl: context.ParseResult.GetValueForOption(idpAuthUrlOption),
+                IdpTokenUrl: context.ParseResult.GetValueForOption(idpTokenUrlOption),
+                IdpScopes: context.ParseResult.GetValueForOption(idpScopesOption),
+                IdpClientId: context.ParseResult.GetValueForOption(idpClientIdOption),
+                IdpClientSecret: context.ParseResult.GetValueForOption(idpClientSecretOption),
+                ApiKeyLocation: context.ParseResult.GetValueForOption(apiKeyLocationOption),
+                ApiKeyName: context.ParseResult.GetValueForOption(apiKeyNameOption),
+                ToolsInput: context.ParseResult.GetValueForOption(toolsOption),
+                InputFile: context.ParseResult.GetValueForOption(inputFileOption),
+                RemoteScopes: context.ParseResult.GetValueForOption(remoteScopesOption),
+                TenantId: context.ParseResult.GetValueForOption(tenantIdOption),
+                ServiceTreeId: context.ParseResult.GetValueForOption(serviceTreeIdOption),
+                PublisherName: context.ParseResult.GetValueForOption(publisherOption),
+                Description: context.ParseResult.GetValueForOption(descriptionOption),
+                DryRun: context.ParseResult.GetValueForOption(dryRunOption));
+
+            var executor = new RegisterCommandExecutor(logger, toolingService, graphApiService);
+            await executor.ExecuteAsync(args);
+        });
+
+        return command;
+    }
+
+    internal static void WriteLabel(string label)
+    {
+        var prevColor = Console.ForegroundColor;
+        Console.ForegroundColor = ConsoleColor.DarkCyan;
+        Console.Write(label);
+        Console.ForegroundColor = prevColor;
+    }
+
+    internal static string? RemoveTcPrefix(string uri)
+    {
+        var lastSlash = uri.LastIndexOf('/');
+        if (lastSlash >= 0)
+        {
+            var lastSegment = uri.Substring(lastSlash + 1);
+            if (lastSegment.StartsWith("tc-", StringComparison.Ordinal))
+            {
+                return uri.Substring(0, lastSlash + 1) + lastSegment.Substring(3);
+            }
+        }
+
+        return null;
+    }
+
+    internal static string? AddTcPrefix(string uri)
+    {
+        var lastSlash = uri.LastIndexOf('/');
+        if (lastSlash >= 0)
+        {
+            var lastSegment = uri.Substring(lastSlash + 1);
+            if (!lastSegment.StartsWith("tc-", StringComparison.Ordinal))
+            {
+                return uri.Substring(0, lastSlash + 1) + "tc-" + lastSegment;
+            }
+        }
+
+        return null;
+    }
+
+    internal static string[] BuildRedirectUriList(string original, string? tcVariant, string? nonTcVariant)
+    {
+        var uris = new HashSet<string>(StringComparer.Ordinal) { original };
+        if (tcVariant != null)
+        {
+            uris.Add(tcVariant);
+        }
+
+        if (nonTcVariant != null)
+        {
+            uris.Add(nonTcVariant);
+        }
+
+        return uris.ToArray();
+    }
+
+    /// <summary>
     /// Validates and sanitizes user input following Azure CLI security patterns
     /// </summary>
-    private static class InputValidator
+    internal static class InputValidator
     {
         private static readonly char[] InvalidChars = ['<', '>', '"', '|', '\0', '\u0001', '\u0002', '\u0003', '\u0004', '\u0005', '\u0006', '\u0007', '\u0008', '\u0009', '\u000a', '\u000b', '\u000c', '\u000d', '\u000e', '\u000f', '\u0010', '\u0011', '\u0012', '\u0013', '\u0014', '\u0015', '\u0016', '\u0017', '\u0018', '\u0019', '\u001a', '\u001b', '\u001c', '\u001d', '\u001e', '\u001f'];
 
@@ -908,4 +1066,5 @@ public static class DevelopMcpCommand
             return input.All(c => char.IsLetterOrDigit(c) || c == '-' || c == '_');
         }
     }
+
 }

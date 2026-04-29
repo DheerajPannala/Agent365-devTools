@@ -219,7 +219,6 @@ public class DevelopMcpCommandRegressionTests
         {
             var options = subcommand.Options.ToList();
 
-            // All commands should have dry-run option
             options.Should().Contain(o => o.Name == "dry-run",
                 $"Subcommand '{subcommand.Name}' should have --dry-run option");
         }
