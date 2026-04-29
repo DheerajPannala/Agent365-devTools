@@ -134,6 +134,14 @@ internal static class AllSubcommand
             description: "Treat this agent as an M365 agent. When set, registers the messaging endpoint via MCP Platform. " +
                         "Default is false (opt-in); omit this flag for non-M365 agents.");
 
+        var authModeOption = new Option<string?>(
+            "--authmode",
+            description: "Authentication pattern for the agent identity (blueprint agents only).\n" +
+                         "  obo  — on-behalf-of (default); principal-scoped delegated grants; no admin consent needed.\n" +
+                         "  s2s  — service-to-service; app permissions on agent identity; Global Admin needed or PowerShell fallback.\n" +
+                         "  both — delegated grants (OBO) and app permissions (S2S).\n" +
+                         "Not supported with --aiteammate true.");
+
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
         command.AddOption(skipInfrastructureOption);
@@ -143,6 +151,7 @@ internal static class AllSubcommand
         command.AddOption(m365Option);
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
+        command.AddOption(authModeOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
@@ -159,7 +168,22 @@ internal static class AllSubcommand
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             bool isM365 = context.ParseResult.GetValueForOption(m365Option);
+            var authMode = context.ParseResult.GetValueForOption(authModeOption)?.ToLowerInvariant();
             var ct = context.GetCancellationToken();
+
+            // --authmode validation
+            if (authMode is not null && authMode is not ("obo" or "s2s" or "both"))
+            {
+                logger.LogError("Invalid --authmode value '{Value}'. Allowed values: obo, s2s, both.", authMode);
+                context.ExitCode = 1;
+                return;
+            }
+            if (authMode is not null && aiTeammateFlag == true)
+            {
+                logger.LogError("--authmode is not supported with --aiteammate — AI Teammate agents automatically use OBO via agent user identity.");
+                context.ExitCode = 1;
+                return;
+            }
 
             // Generate correlation ID at workflow entry point
             var correlationId = HttpClientFactory.GenerateCorrelationId();
@@ -176,13 +200,11 @@ internal static class AllSubcommand
                 {
                     if (dryRun)
                     {
-                        // Dry-run: detect tenant only (no client app lookup needed for display)
-                        var dryRunTenantId = tenantIdFlag;
-                        if (string.IsNullOrWhiteSpace(dryRunTenantId))
-                            dryRunTenantId = await SetupHelpers.ResolveBootstrapTenantIdAsync(null, executor, logger);
+                        // Dry-run: build config from flags only — no az CLI subprocess needed.
+                        // TenantId is not shown in the plan so detection is skipped intentionally.
                         nonDwConfig = new Agent365Config
                         {
-                            TenantId = dryRunTenantId ?? "(unknown — run 'az login' or pass --tenant-id)",
+                            TenantId = tenantIdFlag ?? string.Empty,
                             ClientAppId = string.Empty,
                             AgentIdentityDisplayName = $"{agentName} Identity",
                             AgentBlueprintDisplayName = $"{agentName} Blueprint",
@@ -257,6 +279,18 @@ internal static class AllSubcommand
                 }
             }
 
+            // Validate the effective authMode (flag OR config). The CLI flag was validated above;
+            // this re-check catches an invalid authMode persisted in a365.config.json that was not
+            // caught at load time (e.g. a user manually edited the file with a bad value).
+            var effectiveAuthModeForValidation = authMode ?? nonDwConfig?.AuthMode?.Trim().ToLowerInvariant();
+            if (!string.IsNullOrWhiteSpace(effectiveAuthModeForValidation) &&
+                effectiveAuthModeForValidation is not ("obo" or "s2s" or "both"))
+            {
+                logger.LogError("Invalid authMode value '{Value}' (from --authmode flag or a365.config.json). Allowed values: obo, s2s, both.", effectiveAuthModeForValidation);
+                context.ExitCode = 1;
+                return;
+            }
+
             // AI Teammate (DW) agents are M365 agents by design — auto-enable messaging endpoint.
             // --m365 remains opt-in for blueprint agents (non-DW path).
             if (nonDwConfig is null)
@@ -267,7 +301,8 @@ internal static class AllSubcommand
                 if (dryRun)
                 {
                     var rawArgs = context.ParseResult.Tokens.Select(t => t.Value).ToArray();
-                    NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(nonDwConfig, logger, isBootstrap, rawArgs, skipRequirements, isM365, agentRegistrationOnly);
+                    var effectiveAuthMode = authMode ?? nonDwConfig.AuthMode;
+                    NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(nonDwConfig, logger, isBootstrap, rawArgs, skipRequirements, isM365, agentRegistrationOnly, effectiveAuthMode);
                     return;
                 }
 
@@ -302,6 +337,7 @@ internal static class AllSubcommand
                     agentInstanceOnly: agentRegistrationOnly,
                     isBootstrap: isBootstrap,
                     isM365: isM365,
+                    authMode: authMode ?? nonDwConfig.AuthMode,
                     confirmationProvider: confirmationProvider);
 
                 context.ExitCode = await NonDwBlueprintSetupOrchestrator.ExecuteAsync(nonDwCtx);

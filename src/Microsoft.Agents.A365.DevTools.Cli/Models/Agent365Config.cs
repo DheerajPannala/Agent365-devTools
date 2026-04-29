@@ -37,6 +37,7 @@ public class Agent365Config
         }
 
         if (string.IsNullOrWhiteSpace(AgentIdentityDisplayName)) errors.Add("agentIdentityDisplayName is required.");
+        ValidateAuthMode(AuthMode, errors);
 
         // Validate custom blueprint permissions
         if (CustomBlueprintPermissions != null && CustomBlueprintPermissions.Count > 0)
@@ -81,6 +82,7 @@ public class Agent365Config
         else
             ValidateGuid(ClientAppId, nameof(ClientAppId), errors);
         if (string.IsNullOrWhiteSpace(AgentIdentityDisplayName)) errors.Add("agentIdentityDisplayName is required.");
+        ValidateAuthMode(AuthMode, errors);
 
         return errors;
     }
@@ -93,6 +95,19 @@ public class Agent365Config
         if (!Guid.TryParse(value, out _))
         {
             errors.Add($"{fieldName} must be a valid GUID format.");
+        }
+    }
+
+    /// <summary>
+    /// Validates AuthMode is either unset (null/whitespace) or one of "obo", "s2s", "both" (case-insensitive).
+    /// </summary>
+    private static void ValidateAuthMode(string? value, List<string> errors)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+        var normalised = value.Trim().ToLowerInvariant();
+        if (normalised is not ("obo" or "s2s" or "both"))
+        {
+            errors.Add($"authMode '{value}' is invalid. Allowed values: obo, s2s, both.");
         }
     }
 
@@ -149,6 +164,17 @@ public class Agent365Config
     /// </summary>
     [JsonPropertyName("clientAppId")]
     public string ClientAppId { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Authentication pattern for the agent identity (blueprint agents only).
+    /// Accepted values: "obo" (default), "s2s", "both".
+    ///   obo  — on-behalf-of; principal-scoped delegated grants; no admin consent needed.
+    ///   s2s  — service-to-service; app role assignments on agent identity; Global Admin needed or PowerShell fallback.
+    ///   both — delegated grants (OBO) and app permissions (S2S).
+    /// Persisted to a365.config.json. Not written to a365.generated.config.json.
+    /// </summary>
+    [JsonPropertyName("authMode")]
+    public string? AuthMode { get; init; }
 
     #endregion
 
@@ -662,6 +688,7 @@ public class Agent365Config
             Environment = this.Environment,
             MessagingEndpoint = this.MessagingEndpoint,
             ClientAppId = this.ClientAppId,
+            AuthMode = this.AuthMode,
             AiTeammate = this.AiTeammate,
             UseBlueprint = this.UseBlueprint,
             AzureOpenAIName = this.AzureOpenAIName,
