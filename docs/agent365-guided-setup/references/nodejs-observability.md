@@ -96,14 +96,18 @@ No OBO user token is required.
 >   - `true` (production) — MSI → Blueprint FIC → Agent Identity → API
 >   - `false` (local dev) — Client Secret → Blueprint FIC → Agent Identity → API
 
-> **IMPORTANT — MSAL `fmiPath` limitation (as of 2026-04-30):** No published version of
-> `@azure/msal-node` (v3.x or v5.x) serializes the `fmiPath` parameter to the token endpoint.
-> Passing `fmiPath` via `acquireTokenByClientCredential()` with `as any` results in
-> `AADSTS82008: All agentic applications requesting a token exchange token must include the
+> **IMPORTANT — MSAL `fmiPath` limitation (as of 2026-04-30):** In the
+> `acquireTokenByClientCredential()` flow used by the **client-secret path**, published versions
+> of `@azure/msal-node` (v3.x or v5.x) do not serialize a caller-supplied `fmiPath` to the
+> token endpoint. Passing `fmiPath` via `acquireTokenByClientCredential()` with `as any` results
+> in `AADSTS82008: All agentic applications requesting a token exchange token must include the
 > fmipath parameter`. **Workaround:** For the client-secret path (`acquireT1ViaClientSecret`),
 > use a direct HTTP POST to the `/oauth2/v2.0/token` endpoint with `fmi_path` as a form
-> parameter. The MSI path (`acquireT1ViaMsi`) still uses MSAL since `ManagedIdentityCredential`
-> handles FMI differently. This workaround will be removed once MSAL ships native `fmiPath` support.
+> parameter. The MSI path (`acquireT1ViaMsi`) is still expected to work because it obtains the
+> Blueprint/FMI token through `ManagedIdentityCredential` (a `client_assertion` flow, not a
+> `client_credentials` + secret flow), rather than relying on MSAL to serialize `fmiPath` on a
+> standard client-credential request. This workaround will be removed once MSAL ships native
+> `fmiPath` support for the client-secret credential path.
 
 > **Note:** `a365 setup all` attempts to grant `Agent365.Observability.OtelWrite` to the Agent Identity SP, but this requires **Global Administrator** privileges. If the assignment fails (403), a Global Admin must manually grant the role via Entra portal — otherwise trace exports will return HTTP 403.
 
@@ -404,19 +408,22 @@ useMicrosoftOpenTelemetry({
 // ... import app modules AFTER observability init ...
 
 // Start background token service after server is listening
-if (A365_ENABLED) {
-  startTokenService({
-    tenantId: TENANT_ID,
-    agentId: AGENT_ID,
-    blueprintClientId: CLIENT_ID,
-    blueprintClientSecret: CLIENT_SECRET,
-    useManagedIdentity: USE_MANAGED_IDENTITY,
-  });
-}
+const tokenServiceInterval = A365_ENABLED
+  ? startTokenService({
+      tenantId: TENANT_ID,
+      agentId: AGENT_ID,
+      blueprintClientId: CLIENT_ID,
+      blueprintClientSecret: CLIENT_SECRET,
+      useManagedIdentity: USE_MANAGED_IDENTITY,
+    })
+  : undefined;
 
 // Graceful shutdown:
 function shutdown(signal: string) {
   console.log(`${signal} received — shutting down`);
+  if (tokenServiceInterval) {
+    clearInterval(tokenServiceInterval);
+  }
   shutdownMicrosoftOpenTelemetry().finally(() => process.exit(0));
 }
 process.on('SIGTERM', () => shutdown('SIGTERM'));

@@ -110,13 +110,15 @@ The `authMode` value drives Phases 3–5: OBO and S2S paths differ in entry poin
 
 ### For .NET AgentFramework
 
-1. **Bash** — Run package installation (core + hosting):
+1. **Bash** — Run package installation (path-dependent):
+
+   **OBO path** (`user-delegated` or `agentic-identity`):
    ```bash
    dotnet add package Microsoft.Agents.A365.Observability.Runtime
    dotnet add package Microsoft.Agents.A365.Observability.Hosting
    ```
 
-   **For S2S / autonomous agents using the unified distro** (preferred):
+   **S2S / autonomous agents — use the unified distro** (preferred; do NOT also add Runtime/Hosting):
    ```bash
    dotnet add package Microsoft.OpenTelemetry --version 1.0.0-beta.1
    dotnet add package Azure.Identity
@@ -128,10 +130,10 @@ The `authMode` value drives Phases 3–5: OBO and S2S paths differ in entry poin
    dotnet add package Microsoft.Extensions.Logging --version "10.0.4"
    ```
    > **⚠️ Do NOT add `Microsoft.Agents.A365.Observability.Hosting` or `.Runtime` as
-   > direct `<PackageReference>` entries.** `Microsoft.OpenTelemetry` already brings both
-   > as transitive dependencies and re-exports their types. Adding them directly causes
-   > **CS0433 type ambiguity** on `AgentDetails`, `CallerDetails`, and `IExporterTokenCache<T>`.
-   > Remove any explicit Hosting/Runtime references from the `.csproj`.
+   > direct `<PackageReference>` entries when using the unified distro.** `Microsoft.OpenTelemetry`
+   > already brings both as transitive dependencies and re-exports their types. Adding them
+   > directly causes **CS0433 type ambiguity** on `AgentDetails`, `CallerDetails`, and
+   > `IExporterTokenCache<T>`. Remove any explicit Hosting/Runtime references from the `.csproj`.
    >
    > **⚠️ TFM requirement:** If the project targets `net8.0`, upgrade to `net9.0` or later.
    > `Microsoft.OpenTelemetry` v1.0.0-beta.1 has a hard runtime dependency on
@@ -165,8 +167,9 @@ The `authMode` value drives Phases 3–5: OBO and S2S paths differ in entry poin
 
 ### For Node.js
 
-1. **Bash** — Run package installation (core + hosting):
+1. **Bash** — Run package installation (core + hosting + unified distro):
    ```bash
+   npm install @microsoft/opentelemetry
    npm install @microsoft/agents-a365-observability
    npm install @microsoft/agents-a365-runtime
    npm install @microsoft/agents-a365-observability-hosting
@@ -194,24 +197,15 @@ The `authMode` value drives Phases 3–5: OBO and S2S paths differ in entry poin
 
 ### For Python
 
-1. **Version pre-flight (critical — do this first):** The stable PyPI release of `microsoft-agents-a365-observability-core` (v0.1.0) has a **completely different and incompatible API** from what this skill instruments. The correct API is in the 0.3.x prerelease. Check the installed version before proceeding:
+1. **Bash** — Run package installation (unified distro + S2S deps):
    ```bash
-   pip3 show microsoft-agents-a365-observability-core 2>/dev/null || pip show microsoft-agents-a365-observability-core 2>/dev/null | grep Version
+   pip3 install microsoft-opentelemetry 2>/dev/null || pip install microsoft-opentelemetry
+   # S2S path also requires:
+   pip3 install msal azure-identity httpx 2>/dev/null || pip install msal azure-identity httpx
    ```
-   If missing or below `0.3.0.dev1`, install with `--pre`:
-   ```bash
-   pip3 install --pre microsoft-agents-a365-observability-core 2>/dev/null || pip install --pre microsoft-agents-a365-observability-core
-   pip3 install --pre microsoft-agents-a365-observability-hosting 2>/dev/null || pip install --pre microsoft-agents-a365-observability-hosting
-   ```
+   > **OBO path:** only `microsoft-opentelemetry` is required. The `msal`, `azure-identity`, and `httpx` packages are only needed for the S2S token service.
 
-2. **Bash** — Run package installation (core + hosting):
-   ```bash
-   pip3 install --pre microsoft-agents-a365-observability-core 2>/dev/null || pip install --pre microsoft-agents-a365-observability-core
-   pip3 install --pre microsoft-agents-a365-runtime 2>/dev/null || pip install --pre microsoft-agents-a365-runtime
-   pip3 install --pre microsoft-agents-a365-observability-hosting 2>/dev/null || pip install --pre microsoft-agents-a365-observability-hosting
-   ```
-
-4. **Optional auto-instrumentation extensions** — ask the user which AI framework they use and install accordingly:
+2. **Optional auto-instrumentation extensions** — ask the user which AI framework they use and install accordingly:
    ```bash
    # Semantic Kernel
    pip3 install microsoft-agents-a365-observability-extensions-semantic-kernel 2>/dev/null || pip install microsoft-agents-a365-observability-extensions-semantic-kernel
@@ -223,11 +217,11 @@ The `authMode` value drives Phases 3–5: OBO and S2S paths differ in entry poin
    pip3 install microsoft-agents-a365-observability-extensions-langchain 2>/dev/null || pip install microsoft-agents-a365-observability-extensions-langchain
    ```
 
-5. **Update the dependency manifest** — `pip install` does not modify `requirements.txt` or `pyproject.toml` automatically. Explicitly add the installed packages:
-   - `requirements.txt` project: append each package name with `>=0.3.0.dev1` version constraint
-   - `pyproject.toml` project: add under `[project] dependencies` or run `uv add <package> --prerelease` / `poetry add <package>`
+3. **Update the dependency manifest** — `pip install` does not modify `requirements.txt` or `pyproject.toml` automatically. Explicitly add the installed packages:
+   - `requirements.txt` project: append `microsoft-opentelemetry` (and S2S deps if applicable)
+   - `pyproject.toml` project: add under `[project] dependencies` or run `uv add microsoft-opentelemetry` / `poetry add microsoft-opentelemetry`
 
-6. **Verify** the packages appear in `requirements.txt` or `pyproject.toml`.
+4. **Verify** the packages appear in `requirements.txt` or `pyproject.toml`.
 
 7. **TaskUpdate** — Mark complete.
 
@@ -270,7 +264,7 @@ The `authMode` value drives Phases 3–5: OBO and S2S paths differ in entry poin
 1. **Read** the current entry point (`app.py`, `host_agent_server.py`, or detected file).
 
 2. **Edit** — Add observability configuration following the reference pattern in `python-observability.md`:
-   - Add `from microsoft.opentelemetry.a365.core import use_microsoft_opentelemetry` and call `use_microsoft_opentelemetry(enable_a365=True, a365_token_resolver=...)` with `service_name` and `service_namespace`
+   - Add `from microsoft.opentelemetry import use_microsoft_opentelemetry` and call `use_microsoft_opentelemetry(enable_a365=True, a365_token_resolver=...)` with `service_name` and `service_namespace`
    - **OBO path**: Wire `a365_token_resolver` to return the cached agentic token from `token_cache.py`.
    - **S2S path**: First **Write** `observability/token_cache.py` (in-memory token cache with `cache_token`/`get_cached_token`) and `observability/observability_token_service.py` using the scaffold pattern from `python-observability.md` (S2S section). This module acquires the Observability API token via MSAL FMI 3-hop chain (`msal.ConfidentialClientApplication` with `fmi_path` parameter, targeting scope `api://9b975845-388f-4429-889e-eab1ef63949c/.default`, supports MSI with client-secret fallback) and refreshes it every 50 min via an `asyncio` background task. Then call `use_microsoft_opentelemetry(enable_a365=True, a365_token_resolver=...)` from `microsoft.opentelemetry` and schedule `run_token_service()` as an asyncio task. Also install `msal` and `azure-identity` if not already present.
    - Optionally register `BaggageMiddleware` or use `ObservabilityHostingManager` on the adapter (OBO path) to auto-populate baggage on every request
@@ -353,10 +347,10 @@ The `authMode` value drives Phases 3–5: OBO and S2S paths differ in entry poin
 1. **Read** the detected message handler file.
 
 2. **Edit** — Add BaggageBuilder context following the reference pattern in `python-observability.md`:
-   - Import `BaggageBuilder` from `microsoft_agents_a365.observability.core`
-   - Import `populate` from `microsoft_agents_a365.observability.hosting.scope_helpers.populate_baggage`
-   - Import `AgenticTokenCache`, `AgenticTokenStruct` from `microsoft_agents_a365.observability.hosting.token_cache_helpers`
-   - Import `get_observability_authentication_scope` from `microsoft_agents_a365.runtime`
+   - Import `BaggageBuilder` from `microsoft.opentelemetry.a365.core`
+   - Import `populate` from `microsoft.opentelemetry.a365.hosting.scope_helpers.populate_baggage`
+   - Import `AgenticTokenCache`, `AgenticTokenStruct` from `microsoft.opentelemetry.a365.hosting.token_cache_helpers`
+   - Import `get_observability_authentication_scope` from `microsoft.opentelemetry.a365.runtime`
    - Call `token_cache.register_observability(agent_id=..., tenant_id=..., token_generator=AgenticTokenStruct(authorization=AGENT_APP.auth, turn_context=context), observability_scopes=get_observability_authentication_scope())`:
      - `user-delegated`: the OBO exchange resolves to the **signed-in user's** identity
      - `agentic-identity`: the OBO exchange resolves to the **agentic user** provisioned in Azure AD
@@ -404,7 +398,7 @@ The `ObservabilityTokenService` background service (created in Phase 3 via the s
 
 ### For Python (OBO path)
 
-`AgenticTokenCache` from `microsoft_agents_a365.observability.hosting.token_cache_helpers` handles caching automatically. It was wired as the `token_resolver` in the `configure()` call in Phase 3. No additional module is needed.
+`AgenticTokenCache` from `microsoft.opentelemetry.a365.hosting.token_cache_helpers` handles caching automatically. It was wired as the `token_resolver` in the `configure()` call in Phase 3. No additional module is needed.
 
 ### For Python (S2S path)
 
@@ -416,59 +410,82 @@ The `ObservabilityTokenService` background service (created in Phase 3 via the s
 
 ---
 
-## Phase 5.5: Wire Manual Instrumentation Scopes
+## Phase 5.5: Scan ALL Agent Source Files and Add Instrumentation Scopes
 
-**TaskCreate** — "Wire InvokeAgentScope, InferenceScope, ExecuteToolScope (required for store publishing)"
+**TaskCreate** — "Scan all source files and instrument InvokeAgentScope, InferenceScope, ExecuteToolScope"
 
 > **Store publishing requirement:** The Agent 365 store validator requires `InvokeAgentScope`,
 > `InferenceScope`, and `ExecuteToolScope` to be present and populating telemetry. Missing any one
 > of these three scopes causes store validation failure.
 
-Ask the user: "Do you want to add the InvokeAgentScope, InferenceScope, and ExecuteToolScope wrappers now? These are required for store publishing."
+> **This phase is mandatory. Do NOT skip it or proceed to Phase 6 until it is complete.**
+> **Do NOT write any scope code until Step 3 (the summary table) has been confirmed by the user.**
 
-If the user confirms (or if this is for store publishing):
+**Step 1 — Glob all source files** (excluding generated/build output):
+- .NET: `**/*.cs` excluding `obj/`
+- Node.js: `**/*.ts` or `**/*.js` excluding `node_modules/`, `dist/`
+- Python: `**/*.py`
 
-### For .NET AgentFramework
+**Step 2 — Read and scan every file** for instrumentation points:
 
-Follow the reference patterns in `dotnet-observability.md` for:
-- **`InvokeAgentScope`** — wrap the top-level message handler to capture agent invocation telemetry
-- **`InferenceScope`** — wrap each LLM call to capture model, token counts, finish reasons
-- **`ExecuteToolScope`** — wrap each tool call to capture tool name, arguments, result
-- **`OutputScope`** — use for async response scenarios where output isn't captured synchronously
-- `CallerDetails` must be passed to `InvokeAgentScope.Start()` as the 4th parameter — this is **required** for traces to appear in the MAC portal
-- For S2S autonomous agents, read sponsor details from config (`Agent365Observability:Sponsor` section) and construct `CallerDetails` with `UserDetails(userId, userName, userEmail)`
+| What to look for | Scope to apply | Role |
+|-----------------|---------------|------|
+| Message handlers, timer loops, `BackgroundService.ExecuteAsync`, autonomous cycles — any agent "turn" or operation | `InvokeAgentScope` | **Root** — required outermost scope |
+| LLM/model API calls (`CompleteChatAsync`, `chat.completions.create`, `kernel.InvokeAsync`, `RunStreamingAsync`, etc.) | `InferenceScope` | Child — nest inside `InvokeAgentScope` |
+| Tool/function dispatch calls, external API calls acting as tools | `ExecuteToolScope` | Child — nest inside `InvokeAgentScope` |
+| Final response / streaming output operations | `OutputScope` | Child — nest inside `InvokeAgentScope` |
+
+**Step 3 — Present a summary table** of ALL findings and wait for user confirmation before writing any code:
+
+```
+Files scanned: X
+Instrumentation plan:
+| File | Method / Location | Operation | Scope to add |
+|------|------------------|-----------|-------------|
+| Agent/MyAgent.cs | OnMessageAsync | User message handler | InvokeAgentScope (root) |
+| Agent/MyAgent.cs | OnMessageAsync → RunStreamingAsync | LLM streaming call | InferenceScope |
+| Agent/MyAgent.cs | BuildAgent → GetCurrentWeather | Tool dispatch | ExecuteToolScope |
+| WeatherMonitorService.cs | ExecuteAsync (timer loop body) | Autonomous cycle | InvokeAgentScope (root) |
+| WeatherMonitorService.cs | ExecuteAsync → CompleteChatAsync | LLM call | InferenceScope |
+...
+
+Confirm to apply, or describe corrections.
+```
+
+**Step 4 — Apply** the scopes per language-specific patterns after confirmation, following the scope hierarchy rule:
+- `InvokeAgentScope` is always the outermost scope — one per agent turn or autonomous operation
+- `InferenceScope`, `ExecuteToolScope`, `OutputScope` are children — always nested inside an open `InvokeAgentScope`
+- Never open child scopes as standalone top-level scopes — they produce orphaned spans the exporter silently drops
+
+### For .NET AgentFramework — scope patterns
+
+- `CallerDetails` must be passed to `InvokeAgentScope.Start()` as the 4th parameter — required for traces to appear in the MAC portal
+- For S2S autonomous agents: read sponsor details from config (`Agent365Observability:Sponsor`) and construct `CallerDetails` with `UserDetails(userId, userName, userEmail)`
+- For autonomous background operations with no `ITurnContext` (e.g. `BackgroundService`): use `new BaggageBuilder().AgentId(...).TenantId(...).Build()` — `FromTurnContext()` is not available without a turn context
 - Pass `UserDetails` directly (not wrapped in `CallerDetails`) to `InferenceScope.Start()` and `ExecuteToolScope.Start()` as the optional 4th parameter
-- The `Agent365ObservabilityContext` singleton should hold both `AgentDetails` and `CallerDetails` properties
+- `InferenceCallDetails` requires `providerName` — it is **not optional** (CS7036 if omitted)
+- `ExecuteToolScope.RecordResponse()` takes `string`, not a `Response` object (CS1503 if passed an object)
+- The `Agent365ObservabilityContext` singleton should hold both `AgentDetails` and `CallerDetails`
 
-### For Node.js
+### For Node.js — scope patterns
 
-Follow the reference patterns in `nodejs-observability.md` for:
-- **`InvokeAgentScope`** — wrap the top-level message handler. Use `ScopeUtils.populateInvokeAgentScopeFromTurnContext` from `@microsoft/agents-a365-observability-hosting` to auto-populate from TurnContext
-- **`InferenceScope`** — wrap each LLM call. Use `ScopeUtils.populateInferenceScopeFromTurnContext` if available
-- **`ExecuteToolScope`** — wrap each tool call. Use `ScopeUtils.populateExecuteToolScopeFromTurnContext` if available
-- **`OutputScope`** — for async scenarios
-- `CallerDetails` must be passed to `InvokeAgentScope.start()` as the 4th parameter — this is **required** for traces to appear in the MAC portal
-- For S2S autonomous agents, read sponsor details from env vars (`agent365Observability__sponsorUserId`, `agent365Observability__sponsorUserName`, `agent365Observability__sponsorUserEmail`) and construct the `CallerDetails` object
+- Use `ScopeUtils.populateInvokeAgentScopeFromTurnContext` from `@microsoft/agents-a365-observability-hosting` to auto-populate from TurnContext
+- `CallerDetails` must be passed to `InvokeAgentScope.start()` as the 4th parameter
 - Pass `UserDetails` directly to `InferenceScope.start()` and `ExecuteToolScope.start()` as the optional 4th parameter
 - Export `callerDetails` (for `InvokeAgentScope`) and `userDetails` (for `InferenceScope`/`ExecuteToolScope`) from the entry point module alongside `agentDetails`
 
-### For Python
+### For Python — scope patterns
 
-Follow the reference patterns in `python-observability.md` for:
-- **`InvokeAgentScope`** — wrap the top-level message handler as a context manager
-- **`InferenceScope`** — wrap each LLM call
-- **`ExecuteToolScope`** — wrap each tool call
-- **`OutputScope`** — for async response scenarios
-- `CallerDetails` / `UserDetails` must be supplied when creating the top-level `InvokeAgentScope` — this is **required** for traces to appear in the MAC portal
-- For S2S autonomous agents, read sponsor details from config or environment and construct `CallerDetails(UserDetails(userId, userName, userEmail))`
-- Pass `UserDetails` directly to `InferenceScope`, `ExecuteToolScope`, and `OutputScope` when their optional user parameter is available
+- `CallerDetails` / `UserDetails` must be supplied when creating the top-level `InvokeAgentScope` — required for MAC portal visibility
+- For S2S autonomous agents, construct `CallerDetails(UserDetails(userId, userName, userEmail))` from config or environment
+- Pass `UserDetails` directly to `InferenceScope`, `ExecuteToolScope`, and `OutputScope`
 - Keep shared observability state with both `agent_details` and `caller_details` / `user_details` so nested scopes can reuse them consistently
 
 All new lines marked with the language-appropriate comment:
 - C# / JavaScript / TypeScript: `// A365 Observability — best-effort instrumentation (verify against official sample)`
 - Python: `# A365 Observability — best-effort instrumentation (verify against official sample)`
 
-**TaskUpdate** — Mark complete.
+**TaskUpdate** — Mark complete only after all planned scopes have been applied and confirmed by the user.
 
 ---
 
@@ -622,7 +639,7 @@ All new lines marked with the language-appropriate comment:
 
 1. **Bash** — Run an import check to verify the packages load without errors:
    ```bash
-   python3 -c "from microsoft.opentelemetry.a365.core import use_microsoft_opentelemetry; print('A365 observability imports OK')" 2>/dev/null || python -c "from microsoft.opentelemetry.a365.core import use_microsoft_opentelemetry; print('A365 observability imports OK')"
+   python3 -c "from microsoft.opentelemetry import use_microsoft_opentelemetry; print('A365 observability imports OK')" 2>/dev/null || python -c "from microsoft.opentelemetry import use_microsoft_opentelemetry; print('A365 observability imports OK')"
    ```
 
 2. **If import fails**, collect error output and present to user with suggested fixes (usually a missing `pip install`).
@@ -630,26 +647,6 @@ All new lines marked with the language-appropriate comment:
 3. **If import succeeds**, confirm to user.
 
 4. **TaskUpdate** — Mark complete.
-
----
-
-> **REQUIRED — do not skip this step.**
-> After completing steps 1–4 above, you **must** say to the user, verbatim:
->
-> "---
-> **Observability SDK is wired up.** Would you like me to scan your code and add instrumentation automatically? I'll find LLM calls, tool dispatches, agent-to-agent calls, and output operations and wrap each with the appropriate tracing scope.
->
-> Reply **yes** to add instrumentation, or **no** to skip (you can add it later).
-> ---"
-
-- If **yes**: scan all agent source files, identify operations matching the scope types in Task B, present a summary of planned changes, confirm with the user, then apply — adding the correct scope wrapper and required usings to each. **Follow the hierarchy rule in Task B:** every instrumented block must have `InvokeAgentScope` as its outermost scope; `InferenceScope`, `ExecuteToolScope`, and `OutputScope` are child scopes that go inside it.
-- If **no**: skip — instrumentation can be added later via Task B.
-
-> **Note — recording response data:** Auto-instrumentation adds scope wrappers only. To attach the actual response text to a span, call the appropriate record method manually after you have the result:
-> - `invokeAgentScope.RecordResponse(responseText)` — adds the agent's final reply to the `invoke_agent` span
-> - `inferenceScope.RecordOutputMessages(...)` / `inferenceScope.RecordInputMessages(...)` — attaches LLM output/input messages to the `Chat` span
->
-> These are one-liners and are best added by hand once you know which variable holds the response.
 
 ---
 
