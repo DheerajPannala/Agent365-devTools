@@ -150,8 +150,25 @@ internal class RegisterCommandExecutor
         if (addResponse is null || !addResponse.IsSuccess)
         {
             var errorMsg = addResponse?.Message ?? "No response received";
-            _logger.LogError("Failed to add MCP server {ServerName}: {Error}", input.ServerName, errorMsg);
+
+            if (errorMsg.Contains("violates a database constraint", StringComparison.OrdinalIgnoreCase)
+                || errorMsg.Contains("delete the existing record", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine();
+                var prevColor = Console.ForegroundColor;
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"ERROR: A server named '{input.ServerName}' already exists. Please choose a different name.");
+                Console.ForegroundColor = prevColor;
+                _logger.LogError("A server named '{ServerName}' already exists. Please choose a different name.", input.ServerName);
+                _logger.LogDebug("Raw server error: {Error}", errorMsg);
+            }
+            else
+            {
+                _logger.LogError("Failed to add MCP server {ServerName}: {Error}", input.ServerName, errorMsg);
+            }
+
             _logger.LogWarning("Entra app registrations were NOT rolled back. Delete them manually in the Azure portal if needed.");
+            Console.WriteLine($"Entra app registrations were NOT rolled back. Delete them manually in the Azure portal if needed.");
             return;
         }
 
@@ -617,7 +634,7 @@ internal class RegisterCommandExecutor
             var copilotRedirectUri = $"ms-appx-web://Microsoft.AAD.BrokerPlugin/{publicClientsClientId}";
             try
             {
-                await _graphApiService.UpdateAppPublicClientRedirectUrisAsync(tenantId, publicClientsObjectId, new[] { copilotRedirectUri, "http://localhost:8080/callback" });
+                await _graphApiService.UpdateAppPublicClientRedirectUrisAsync(tenantId, publicClientsObjectId, new[] { copilotRedirectUri, "http://localhost:8080/callback", "https://vscode.dev/redirect", "http://localhost" });
                 _logger.LogDebug("Set redirect URI on '{AppName}' ({ObjectId}): {Uri}", publicClientsAppName, publicClientsObjectId, copilotRedirectUri);
             }
             catch (Exception ex)
