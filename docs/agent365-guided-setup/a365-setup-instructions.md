@@ -135,7 +135,9 @@ az account show --query "{user:user.name, tenantId:tenantId}" -o json
 
 ### Microsoft Entra ID (Azure AD) roles
 
-The user account you authenticate with must have sufficient privileges to create the necessary resources. According to documentation, the account needs to be at least an **Agent ID Administrator** or **Agent ID Developer**, and certain commands (like the full environment setup) require **Global Administrator + Azure Contributor** roles. If you attempt an operation without adequate permissions, it will fail. Thus, before proceeding, confirm that the logged-in user has one of the required roles (Global Admin is the safest choice for preview setups). If not, prompt the user to either use an appropriate account or have an admin grant the needed roles.
+The user account you authenticate with must have the **Agent ID Developer** role at minimum. This is sufficient for the standard (non-AI Teammate) path: the CLI first attempts the required delegated permission grants programmatically through Microsoft Graph for the agent identity service principal. If those Graph-based grants cannot be created, the CLI surfaces PowerShell fallback instructions in the setup summary — no Application Administrator is required for the normal path. Any interactive consent prompt at runtime applies to the tenant's **"Agent 365 CLI"** client app, not to the agent identity app.
+
+For the AI Teammate path (infrastructure provisioning), **Azure Contributor** is also required. S2S app role assignments require **Agent ID Administrator, Application Administrator, or Global Administrator** — the CLI prints PowerShell fallback instructions if the current user lacks one of these roles. There is no separate `a365 setup admin` command in this flow; if grants cannot be applied automatically, the CLI surfaces the required PowerShell instructions in the setup summary instead.
 
 ### Custom client app
 
@@ -387,6 +389,7 @@ This command may take several minutes. Monitor output carefully:
   - If the CLI is silent for more than 3 minutes after one of these messages: ask the user whether they completed the dialog/code. If yes, the CLI may have an issue — cancel and re-run `a365 setup all`. If no, remind them to complete it.
 
   Once the user completes auth once, the token is cached. Subsequent runs will be fully silent.
+
 - **Idempotency:** `a365 setup all` is safe to re-run after fixing an issue. It skips or reuses existing resources. Use `a365 cleanup` only as a last resort.
 
 ---
@@ -406,7 +409,7 @@ After `a365 setup all` completes, show the user exactly this — nothing more, n
 4. After showing the CLI output sections above, output exactly one of these closing lines — choose based on what the CLI reported:
    - **If the CLI printed an admin consent action item** (i.e., you showed a PowerShell script in step 2 above):
      > "Your agent is provisioned. Have a Global Admin run the PowerShell script above to complete admin consent."
-   - **If Permission Grants row in the Summary shows `ok`** (no action item was printed):
+   - **If Permission Grants row in the Summary shows `granted`** (no action item was printed):
      > "Your agent is provisioned."
 
 ### Step 4 completion
