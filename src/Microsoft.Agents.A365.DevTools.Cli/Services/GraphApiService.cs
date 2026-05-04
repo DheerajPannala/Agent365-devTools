@@ -378,9 +378,9 @@ public class GraphApiService
     /// <summary>
     /// POST to Graph but always return HTTP response details (status, body, parsed JSON)
     /// </summary>
-    public virtual async Task<GraphResponse> GraphPostWithResponseAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null)
+    public virtual async Task<GraphResponse> GraphPostWithResponseAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null, bool forceRefresh = false)
     {
-        if (!await EnsureGraphHeadersAsync(tenantId, scopes: scopes, ct: ct))
+        if (!await EnsureGraphHeadersAsync(tenantId, forceRefresh: forceRefresh, scopes: scopes, ct: ct))
         {
             return new GraphResponse { IsSuccess = false, StatusCode = 0, ReasonPhrase = "NoAuth", Body = "Failed to acquire token" };
         }
@@ -1336,7 +1336,7 @@ public class GraphApiService
         _logger.LogDebug("Body: {Body}", JsonSerializer.Serialize(payload));
 
         var response = await _retryHelper.ExecuteWithRetryAsync<GraphResponse>(
-            token => GraphPostWithResponseAsync(tenantId, AgentRegistrationsPath, payload, token, registrationScopes),
+            token => GraphPostWithResponseAsync(tenantId, AgentRegistrationsPath, payload, token, registrationScopes, forceRefresh: true),
             r =>
             {
                 if (r.StatusCode is not (502 or 503 or 504)) return false;

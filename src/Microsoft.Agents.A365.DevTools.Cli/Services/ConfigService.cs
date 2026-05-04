@@ -687,6 +687,21 @@ public class ConfigService : IConfigService
         {
             config.BotMessagingEndpoint = legacyEndpoint.GetString();
         }
+
+        // Migrate legacy PascalCase keys written by older CLI versions (now camelCase).
+        if (config.AgenticAppId == null &&
+            stateData.TryGetProperty("AgenticAppId", out var legacyAgenticAppId) &&
+            legacyAgenticAppId.ValueKind == JsonValueKind.String)
+        {
+            config.AgenticAppId = legacyAgenticAppId.GetString();
+        }
+
+        if (config.AgenticUserId == null &&
+            stateData.TryGetProperty("AgenticUserId", out var legacyAgenticUserId) &&
+            legacyAgenticUserId.ValueKind == JsonValueKind.String)
+        {
+            config.AgenticUserId = legacyAgenticUserId.GetString();
+        }
     }
 
     /// <summary>

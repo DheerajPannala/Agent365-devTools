@@ -226,6 +226,12 @@ public class SetupResults
     /// <summary>Whether step 8 (Project settings) was written to appsettings.json.</summary>
     public bool ProjectSettingsWritten { get; set; }
 
+    /// <summary>
+    /// True when the permission grants step was explicitly skipped because --agent-registration-only
+    /// was passed. Drives the "skipped" row in the setup summary instead of showing a grant status.
+    /// </summary>
+    public bool PermissionGrantsSkipped { get; set; }
+
     public List<string> Errors { get; } = new();
     public List<string> Warnings { get; } = new();
 

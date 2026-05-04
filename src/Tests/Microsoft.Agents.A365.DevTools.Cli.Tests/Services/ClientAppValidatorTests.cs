@@ -42,6 +42,7 @@ public class ClientAppValidatorTests
     private const string AgentInstanceReadWriteAllId = "aaaa0007-0000-0000-0000-000000000000";
     private const string UserReadId = "aaaa0008-0000-0000-0000-000000000000";
     private const string UserReadWriteAllId = "aaaa0009-0000-0000-0000-000000000000";
+    private const string AgentRegistrationReadWriteAllId = "aaaa000a-0000-0000-0000-000000000000";
 
     // Separate SP object ID used only by the consent-grant path (GetConsentedPermissionsAsync)
     // so it does not conflict with SetupAdminConsentSp / SetupAdminConsentGrantsEmpty.
@@ -210,6 +211,41 @@ public class ClientAppValidatorTests
             () => _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
     }
 
+    [Fact]
+    public async Task EnsureValidClientAppAsync_WhenMissingAgentRegistrationPermission_ThrowsNamingThatPermission()
+    {
+        // App has all permissions except AgentRegistration.ReadWrite.All
+        var requiredResourceAccess = $$"""
+        [
+            {
+                "resourceAppId": "{{AuthenticationConstants.MicrosoftGraphResourceAppId}}",
+                "resourceAccess": [
+                    {"id": "{{AgentBlueprintPrincipalCreateId}}", "type": "Scope"},
+                    {"id": "{{AgentBlueprintReadWriteAllId}}", "type": "Scope"},
+                    {"id": "{{AgentBlueprintUpdateAuthId}}", "type": "Scope"},
+                    {"id": "{{AgentBlueprintAddRemoveCredsId}}", "type": "Scope"},
+                    {"id": "{{DelegatedPermissionGrantReadWriteAllId}}", "type": "Scope"},
+                    {"id": "{{DirectoryReadAllId}}", "type": "Scope"},
+                    {"id": "{{AgentInstanceReadWriteAllId}}", "type": "Scope"},
+                    {"id": "{{UserReadId}}", "type": "Scope"},
+                    {"id": "{{UserReadWriteAllId}}", "type": "Scope"}
+                ]
+            }
+        ]
+        """;
+
+        SetupAppInfoGet(ValidClientAppId, requiredResourceAccess: requiredResourceAccess);
+        SetupPermissionResolution();
+        SetupConsentGrantForAgentIdentityCreate();
+
+        var exception = await Assert.ThrowsAsync<ClientAppValidationException>(
+            () => _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
+
+        exception.ErrorCode.Should().Be(ErrorCodes.ClientAppValidationFailed);
+        exception.ErrorDetails.Should().Contain(d => d.Contains("AgentRegistration.ReadWrite.All"),
+            because: "the missing permission must be identified by name in the error details");
+    }
+
     #endregion
 
     #region EnsureValidClientAppAsync - Success Tests
@@ -350,6 +386,7 @@ public class ClientAppValidatorTests
                     {"id": "{{DelegatedPermissionGrantReadWriteAllId}}", "type": "Scope"},
                     {"id": "{{DirectoryReadAllId}}", "type": "Scope"},
                     {"id": "{{AgentInstanceReadWriteAllId}}", "type": "Scope"},
+                    {"id": "{{AgentRegistrationReadWriteAllId}}", "type": "Scope"},
                     {"id": "{{UserReadId}}", "type": "Scope"},
                     {"id": "{{UserReadWriteAllId}}", "type": "Scope"}
                 ]
@@ -393,6 +430,7 @@ public class ClientAppValidatorTests
                     {"id": "{{DelegatedPermissionGrantReadWriteAllId}}", "value": "DelegatedPermissionGrant.ReadWrite.All"},
                     {"id": "{{DirectoryReadAllId}}", "value": "Directory.Read.All"},
                     {"id": "{{AgentInstanceReadWriteAllId}}", "value": "AgentInstance.ReadWrite.All"},
+                    {"id": "{{AgentRegistrationReadWriteAllId}}", "value": "AgentRegistration.ReadWrite.All"},
                     {"id": "{{UserReadId}}", "value": "User.Read"},
                     {"id": "{{UserReadWriteAllId}}", "value": "User.ReadWrite.All"}
                 ]
@@ -841,6 +879,7 @@ public class ClientAppValidatorTests
                     {"id": "{{DelegatedPermissionGrantReadWriteAllId}}", "type": "Scope"},
                     {"id": "{{DirectoryReadAllId}}", "type": "Scope"},
                     {"id": "{{AgentInstanceReadWriteAllId}}", "type": "Scope"},
+                    {"id": "{{AgentRegistrationReadWriteAllId}}", "type": "Scope"},
                     {"id": "{{UserReadId}}", "type": "Scope"},
                     {"id": "{{UserReadWriteAllId}}", "type": "Scope"}
                 ]
@@ -871,6 +910,7 @@ public class ClientAppValidatorTests
                         {"id": "{{DelegatedPermissionGrantReadWriteAllId}}", "value": "DelegatedPermissionGrant.ReadWrite.All"},
                         {"id": "{{DirectoryReadAllId}}", "value": "Directory.Read.All"},
                         {"id": "{{AgentInstanceReadWriteAllId}}", "value": "AgentInstance.ReadWrite.All"},
+                        {"id": "{{AgentRegistrationReadWriteAllId}}", "value": "AgentRegistration.ReadWrite.All"},
                         {"id": "{{UserReadId}}", "value": "User.Read"},
                         {"id": "{{UserReadWriteAllId}}", "value": "User.ReadWrite.All"}
                     ]

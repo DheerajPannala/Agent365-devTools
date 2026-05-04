@@ -436,13 +436,13 @@ public class Agent365Config
     /// <summary>
     /// Azure AD application/identity ID for the agentic app.
     /// </summary>
-    [JsonPropertyName("AgenticAppId")]
+    [JsonPropertyName("agenticAppId")]
     public string? AgenticAppId { get; set; }
 
     /// <summary>
     /// User ID for the agentic user created during setup.
     /// </summary>
-    [JsonPropertyName("AgenticUserId")]
+    [JsonPropertyName("agenticUserId")]
     public string? AgenticUserId { get; set; }
 
     /// <summary>

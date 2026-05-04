@@ -474,10 +474,11 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
     }
 
     /// <summary>
-    /// Step 5: When the lookup returns null, CreateAgentIdentityDelegatedAsync must be called.
+    /// Step 5 (--agent-registration-only): When the API lookup returns null, the path must error out
+    /// rather than create a new identity — identity creation is not the responsibility of this flag.
     /// </summary>
     [Fact]
-    public async Task Step5_CreatesNewIdentity_WhenNotFoundByApiLookup()
+    public async Task Step5_FailsWithError_WhenIdentityNotFoundByApiLookup()
     {
         var (ctx, graph, blueprintService) = BuildIdempotencyTestContext();
 
@@ -485,20 +486,15 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns((string?)null);
 
-        graph.CreateAgentIdentityDelegatedAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns("new-sp-id");
+        var exitCode = await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
 
-        graph.RegisterAgentInstanceAsyncV2(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
-            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
-            .Returns(("new-reg-id", false));
-
-        await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
-
-        ctx.Results.AgentIdentityId.Should().Be("new-sp-id",
-            because: "a new agent identity must be created when no existing one is found");
-        await graph.Received(1).CreateAgentIdentityDelegatedAsync(
+        exitCode.Should().Be(1,
+            because: "missing agent identity is a fatal error for --agent-registration-only");
+        ctx.Results.AgentIdentityFailed.Should().BeTrue(
+            because: "identity not found via API lookup must surface as an identity failure");
+        ctx.Results.AgentRegistrationFailed.Should().BeTrue(
+            because: "registration cannot proceed without an agent identity");
+        await graph.DidNotReceive().CreateAgentIdentityDelegatedAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 

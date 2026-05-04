@@ -464,6 +464,29 @@ internal static class SetupHelpers
         var pendingS2SAction = permissionGrantsPending && isS2SFlow;
         var pendingDelegatedAction = results.AgentIdentityDelegatedGrantPending;
 
+        if (results.PermissionGrantsSkipped && isNonDw)
+        {
+            // --agent-registration-only: single focused block showing only the registration outcome.
+            if (results.AgentIdentityFailed)
+            {
+                logger.LogWarning(DryRunRow("  Agent Registration") + "not attempted — agent identity not found (run 'a365 setup all' to create it first)");
+            }
+            else if (results.AgentInstanceRegistered)
+            {
+                var verb = (results.AgentRegistrationAlreadyExisted ? "reused" : "registered").PadRight(12);
+                logger.LogInformation(DryRunRow("  Agent Registration") + verb + "'{Name}'",
+                    results.AgentRegistrationDisplayName ?? "unknown");
+                var sub = new string(' ', DryRunValCol);
+                logger.LogInformation(sub + "Registration ID:  {Id}", results.AgentInstanceId ?? "unknown");
+                logger.LogInformation(sub + "Agent identity:   {Id}", results.AgentIdentityId ?? "unknown");
+                if (!string.IsNullOrWhiteSpace(results.BlueprintId))
+                    logger.LogInformation(sub + "Blueprint:        {Id}", results.BlueprintId);
+            }
+            else if (results.AgentRegistrationFailed)
+                logger.LogWarning(DryRunRow("  Agent Registration") + "failed — see warnings");
+        }
+        else
+        {
         // ── Numbered step rows — mirrors the dry-run step list ─────────────────
         // Non-DW omits the Azure hosting step, so all steps after 1 are shifted down by 1.
         var s = isNonDw ? 0 : 1; // step offset: non-DW steps start at 2 (blueprint), DW at 3
@@ -521,6 +544,8 @@ internal static class SetupHelpers
         var permGrantStep = isNonDw ? 5 : 4 + s;
         if (results.BlueprintFailed)
             logger.LogInformation(DryRunRow(permGrantStep, "Permission Grants") + notRun);
+        else if (results.PermissionGrantsSkipped)
+            logger.LogInformation(DryRunRow(permGrantStep, "Permission Grants") + "skipped (--agent-registration-only)");
         else if (isS2SFlow && s2sOk)
         {
             if (isBothMode && !delegatedOk)
@@ -612,6 +637,8 @@ internal static class SetupHelpers
             logger.LogInformation(DryRunRow(settingsStep, "Project settings") + notRun);
         else if (results.ProjectSettingsWritten)
             logger.LogInformation(DryRunRow(settingsStep, "Project settings") + "written");
+
+        } // end full step table
 
         // ── Action Required ────────────────────────────────────────────────────
         var messagingEndpointManualRequired =
@@ -755,8 +782,8 @@ internal static class SetupHelpers
 
         if (results.Errors.Count > 0)
         {
-            logger.LogInformation("");
-            logger.LogInformation("Errors:");
+            logger.LogError("");
+            logger.LogError("Errors:");
             foreach (var error in results.Errors)
                 logger.LogError("  {Error}", error);
         }

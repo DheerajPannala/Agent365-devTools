@@ -43,6 +43,7 @@ public sealed class MsalBrowserCredential : TokenCredential
     private readonly bool _useWam;
     private readonly IntPtr _windowHandle;
     private readonly string? _loginHint;
+    private readonly bool _forceRefresh;
 
     // Shared persistent cache helper - initialized once and reused across all instances.
     // This is the key to reducing multiple WAM prompts during setup operations.
@@ -88,7 +89,8 @@ public sealed class MsalBrowserCredential : TokenCredential
         ILogger? logger = null,
         bool useWam = true,
         string? authority = null,
-        string? loginHint = null)
+        string? loginHint = null,
+        bool forceRefresh = false)
     {
         if (string.IsNullOrWhiteSpace(clientId))
         {
@@ -104,6 +106,7 @@ public sealed class MsalBrowserCredential : TokenCredential
         _tenantId = tenantId;
         _logger = logger;
         _loginHint = loginHint;
+        _forceRefresh = forceRefresh;
 
         // Get window handle for WAM on Windows
         // Try multiple sources: console window, foreground window, or desktop window
@@ -330,6 +333,7 @@ public sealed class MsalBrowserCredential : TokenCredential
                     _logger?.LogDebug("Attempting to acquire token silently from cache...");
                     var silentResult = await _publicClientApp
                         .AcquireTokenSilent(scopes, account)
+                        .WithForceRefresh(_forceRefresh)
                         .ExecuteAsync(cancellationToken);
 
                     _logger?.LogDebug("Successfully acquired token from cache.");
@@ -353,6 +357,7 @@ public sealed class MsalBrowserCredential : TokenCredential
                     _logger?.LogDebug("Probing consent status silently via WAM OS account...");
                     var probeResult = await _publicClientApp
                         .AcquireTokenSilent(scopes, PublicClientApplication.OperatingSystemAccount)
+                        .WithForceRefresh(_forceRefresh)
                         .ExecuteAsync(cancellationToken);
                     _logger?.LogDebug("WAM OS account probe succeeded — consent is granted.");
                     // Only return the OS account token when no login hint is set.
