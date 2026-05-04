@@ -222,7 +222,7 @@ public static class AuthenticationConstants
         "DelegatedPermissionGrant.ReadWrite.All",
         "Directory.Read.All",
         "AgentInstance.ReadWrite.All",  // Required for POST /beta/agentRegistry/agentInstances (PublishCommand)
-        "AgentRegistration.ReadWrite.All",  // Required for POST/DELETE /beta/copilot/agentRegistrations (agent registration); token acquired via .default to avoid AADSTS650053
+        "AgentRegistration.ReadWrite.All",  // Required for POST/DELETE /beta/copilot/agentRegistrations (agent registration)
         // AgentIdentity.ReadWrite.All removed — no code requests it as a token scope.
         // Delete uses AgentIdentity.DeleteRestore.All. Read uses AgentIdentity.Read.All.
         // AgentIdentity.Create.All is a delegated scope used by CreateAgentIdentityDelegatedAsync
@@ -234,6 +234,16 @@ public static class AuthenticationConstants
         "User.ReadWrite.All",  // Required for agent user creation, usage location update, and license assignment
         // Note: RoleManagementReadDirectoryScope is excluded because Directory.Read.All covers the needed read operations.
     };
+
+    /// <summary>
+    /// Scopes for blueprint setup operations — same as <see cref="RequiredClientAppPermissions"/>
+    /// but without AgentRegistration.ReadWrite.All. Blueprint token acquisition must not request
+    /// the registration scope: apps that haven't yet been updated with that permission would get
+    /// an MSAL consent error with no actionable guidance.
+    /// </summary>
+    public static readonly string[] BlueprintOperationScopes = RequiredClientAppPermissions
+        .Where(s => s != "AgentRegistration.ReadWrite.All")
+        .ToArray();
 
     /// <summary>
     /// Required scopes for all PowerShell-based Microsoft Graph operations (OAuth2 grants,

@@ -1321,7 +1321,7 @@ internal static class BlueprintSubcommand
                 objectId,
                 userObjectId: null,
                 ct,
-                scopes: AuthenticationConstants.RequiredClientAppPermissions);
+                scopes: AuthenticationConstants.BlueprintOperationScopes);
 
             if (isOwner)
             {
@@ -1518,7 +1518,7 @@ internal static class BlueprintSubcommand
         {
             using var appDoc = await graphApiService.GraphGetAsync(
                 tenantId, $"/v1.0/applications/{objectId}?$select=api", ct,
-                scopes: AuthenticationConstants.RequiredClientAppPermissions);
+                scopes: AuthenticationConstants.BlueprintOperationScopes);
 
             var existingScopes = new JsonArray();
 
@@ -1562,7 +1562,7 @@ internal static class BlueprintSubcommand
 
             var patched = await graphApiService.GraphPatchAsync(
                 tenantId, $"/v1.0/applications/{objectId}", patch, ct,
-                scopes: AuthenticationConstants.RequiredClientAppPermissions);
+                scopes: AuthenticationConstants.BlueprintOperationScopes);
 
             if (patched)
                 logger.LogInformation("{Scope} scope added to blueprint", ConfigConstants.BlueprintOboScope);

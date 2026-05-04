@@ -256,11 +256,7 @@ internal static class SetupHelpers
         logger.LogInformation("App created: {AppId}", appId);
 
         // Show all required permissions and ask for consent confirmation.
-        // AgentRegistration.ReadWrite.All is excluded from RequiredClientAppPermissions because
-        // ClientAppValidator acquires it via .default to avoid AADSTS650053; here we grant it explicitly.
-        var consentScopes = AuthenticationConstants.RequiredClientAppPermissions
-            .Append("AgentRegistration.ReadWrite.All")
-            .ToArray();
+        var consentScopes = AuthenticationConstants.RequiredClientAppPermissions;
 
         logger.LogInformation("The following permissions will be granted on behalf of all users:");
         logger.LogInformation("  Microsoft Graph / Agent 365 API:");
@@ -469,7 +465,7 @@ internal static class SetupHelpers
             // --agent-registration-only: single focused block showing only the registration outcome.
             if (results.AgentIdentityFailed)
             {
-                logger.LogWarning(DryRunRow("  Agent Registration") + "not attempted — agent identity not found (run 'a365 setup all' to create it first)");
+                logger.LogError(DryRunRow("  Agent Registration") + "not attempted — agent identity not found (run 'a365 setup all' to create it first)");
             }
             else if (results.AgentInstanceRegistered)
             {
@@ -483,7 +479,7 @@ internal static class SetupHelpers
                     logger.LogInformation(sub + "Blueprint:        {Id}", results.BlueprintId);
             }
             else if (results.AgentRegistrationFailed)
-                logger.LogWarning(DryRunRow("  Agent Registration") + "failed — see warnings");
+                logger.LogError(DryRunRow("  Agent Registration") + "failed — see errors");
         }
         else
         {
