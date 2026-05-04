@@ -222,12 +222,7 @@ public static class AuthenticationConstants
         "DelegatedPermissionGrant.ReadWrite.All",
         "Directory.Read.All",
         "AgentInstance.ReadWrite.All",  // Required for POST /beta/agentRegistry/agentInstances (PublishCommand)
-        // AgentRegistration.ReadWrite.All (resource: 00000003-0000-0000-c000-000000000000, ID: 20f263bf-7d50-4e66-912c-16b4b4194fd4)
-        // is required for POST/DELETE /beta/copilot/agentRegistrations. It is acquired via .default
-        // on the custom app token provider (not enumerated explicitly) to avoid AADSTS650053.
-        // This permission must be configured on the custom app via the portal but is not validated here
-        // because ClientAppValidator queries /v1.0/oauth2PermissionGrants which only returns consented
-        // delegated scopes in the same resource app bundle as the existing permissions.
+        "AgentRegistration.ReadWrite.All",  // Required for POST/DELETE /beta/copilot/agentRegistrations (agent registration)
         // AgentIdentity.ReadWrite.All removed — no code requests it as a token scope.
         // Delete uses AgentIdentity.DeleteRestore.All. Read uses AgentIdentity.Read.All.
         // AgentIdentity.Create.All is a delegated scope used by CreateAgentIdentityDelegatedAsync
@@ -239,6 +234,16 @@ public static class AuthenticationConstants
         "User.ReadWrite.All",  // Required for agent user creation, usage location update, and license assignment
         // Note: RoleManagementReadDirectoryScope is excluded because Directory.Read.All covers the needed read operations.
     };
+
+    /// <summary>
+    /// Scopes for blueprint setup operations — same as <see cref="RequiredClientAppPermissions"/>
+    /// but without AgentRegistration.ReadWrite.All. Blueprint token acquisition must not request
+    /// the registration scope: apps that haven't yet been updated with that permission would get
+    /// an MSAL consent error with no actionable guidance.
+    /// </summary>
+    public static readonly string[] BlueprintOperationScopes = RequiredClientAppPermissions
+        .Where(s => s != "AgentRegistration.ReadWrite.All")
+        .ToArray();
 
     /// <summary>
     /// Required scopes for all PowerShell-based Microsoft Graph operations (OAuth2 grants,

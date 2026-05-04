@@ -258,25 +258,29 @@ internal static class AllSubcommand
                                 await WriteBootstrapConfigFileAsync(nonDwConfig, config.FullName, logger);
                         }
 
-                        // Merge AgentRegistrationId from the existing generated config (if present) so
-                        // re-running with --agent-name does not create a duplicate registration. Blueprint
-                        // and identity are found by display name, but registration has no lookup endpoint —
-                        // the stored ID is the only idempotency key available for the registration step.
+                        // Merge stored IDs from the existing generated config (if present) so re-running
+                        // with --agent-name reuses previously created resources. Registration has no
+                        // lookup endpoint so the stored ID is the only idempotency key; blueprint and
+                        // identity IDs are needed for the --agent-registration-only API fallback.
                         var bootstrapGenPath = Path.Combine(
                             config.DirectoryName ?? Environment.CurrentDirectory,
                             "a365.generated.config.json");
-                        if (File.Exists(bootstrapGenPath) && string.IsNullOrWhiteSpace(nonDwConfig.AgentRegistrationId))
+                        if (File.Exists(bootstrapGenPath))
                         {
                             try
                             {
                                 var genConfig = await configService.LoadAsync(config.FullName, bootstrapGenPath);
-                                if (!string.IsNullOrWhiteSpace(genConfig.AgentRegistrationId))
+                                if (!string.IsNullOrWhiteSpace(genConfig.AgentRegistrationId) && string.IsNullOrWhiteSpace(nonDwConfig.AgentRegistrationId))
                                     nonDwConfig.AgentRegistrationId = genConfig.AgentRegistrationId;
+                                if (!string.IsNullOrWhiteSpace(genConfig.AgentBlueprintId) && string.IsNullOrWhiteSpace(nonDwConfig.AgentBlueprintId))
+                                    nonDwConfig.AgentBlueprintId = genConfig.AgentBlueprintId;
+                                if (!string.IsNullOrWhiteSpace(genConfig.AgenticAppId) && string.IsNullOrWhiteSpace(nonDwConfig.AgenticAppId))
+                                    nonDwConfig.AgenticAppId = genConfig.AgenticAppId;
                             }
                             catch (OperationCanceledException) { throw; }
                             catch (Exception ex)
                             {
-                                logger.LogDebug(ex, "Could not merge generated config in bootstrap mode; proceeding without stored registration ID.");
+                                logger.LogDebug(ex, "Could not merge generated config in bootstrap mode; proceeding without stored IDs.");
                             }
                         }
                     }

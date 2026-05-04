@@ -681,11 +681,26 @@ public class ConfigService : IConfigService
         // Migrate legacy key: generated configs written by older CLI versions use "botMessagingEndpoint".
         // If the new key "messagingEndpoint" was not found (BotMessagingEndpoint is still null),
         // fall back to the legacy key so existing setups continue to work without re-running setup.
-        if (config.BotMessagingEndpoint == null &&
+        if (string.IsNullOrWhiteSpace(config.BotMessagingEndpoint) &&
             stateData.TryGetProperty("botMessagingEndpoint", out var legacyEndpoint) &&
             legacyEndpoint.ValueKind == JsonValueKind.String)
         {
             config.BotMessagingEndpoint = legacyEndpoint.GetString();
+        }
+
+        // Migrate legacy PascalCase keys written by older CLI versions (now camelCase).
+        if (string.IsNullOrWhiteSpace(config.AgenticAppId) &&
+            stateData.TryGetProperty("AgenticAppId", out var legacyAgenticAppId) &&
+            legacyAgenticAppId.ValueKind == JsonValueKind.String)
+        {
+            config.AgenticAppId = legacyAgenticAppId.GetString();
+        }
+
+        if (string.IsNullOrWhiteSpace(config.AgenticUserId) &&
+            stateData.TryGetProperty("AgenticUserId", out var legacyAgenticUserId) &&
+            legacyAgenticUserId.ValueKind == JsonValueKind.String)
+        {
+            config.AgenticUserId = legacyAgenticUserId.GetString();
         }
     }
 

@@ -378,9 +378,9 @@ public class GraphApiService
     /// <summary>
     /// POST to Graph but always return HTTP response details (status, body, parsed JSON)
     /// </summary>
-    public virtual async Task<GraphResponse> GraphPostWithResponseAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null)
+    public virtual async Task<GraphResponse> GraphPostWithResponseAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null, bool forceRefresh = false)
     {
-        if (!await EnsureGraphHeadersAsync(tenantId, scopes: scopes, ct: ct))
+        if (!await EnsureGraphHeadersAsync(tenantId, forceRefresh: forceRefresh, scopes: scopes, ct: ct))
         {
             return new GraphResponse { IsSuccess = false, StatusCode = 0, ReasonPhrase = "NoAuth", Body = "Failed to acquire token" };
         }
@@ -1299,10 +1299,8 @@ public class GraphApiService
             return (null, false);
         }
 
-        // Use the custom app token provider with .default so the token is issued to the "Agent 365 CLI"
-        // app (7277bd3e-...) which has AgentRegistration.ReadWrite.All consented. Requesting the scope
-        // by name causes AADSTS650053 with the az CLI public client; .default includes all consented
-        // permissions for the resource without enumerating them.
+        // Use .default so the token includes all permissions consented on the "Agent 365 CLI" app,
+        // including AgentRegistration.ReadWrite.All, without enumerating scopes explicitly.
         IEnumerable<string>? registrationScopes = _tokenProvider != null
             ? [$"{Constants.AuthenticationConstants.MicrosoftGraphResourceUri}/.default"]
             : null;
@@ -1335,8 +1333,9 @@ public class GraphApiService
         _logger.LogDebug("POST {Url}", AgentRegistrationsPath);
         _logger.LogDebug("Body: {Body}", JsonSerializer.Serialize(payload));
 
+        var isRetry = false;
         var response = await _retryHelper.ExecuteWithRetryAsync<GraphResponse>(
-            token => GraphPostWithResponseAsync(tenantId, AgentRegistrationsPath, payload, token, registrationScopes),
+            token => GraphPostWithResponseAsync(tenantId, AgentRegistrationsPath, payload, token, registrationScopes, forceRefresh: isRetry),
             r =>
             {
                 if (r.StatusCode is not (502 or 503 or 504)) return false;
@@ -1344,6 +1343,7 @@ public class GraphApiService
                     "Agent registration request returned HTTP {StatusCode} (transient); retrying...",
                     r.StatusCode);
                 r.Json?.Dispose();
+                isRetry = true;
                 return true;
             },
             maxRetries: 3,
@@ -1415,8 +1415,8 @@ public class GraphApiService
         string registrationId,
         CancellationToken ct = default)
     {
-        // Use the custom app token provider with .default so the token includes AgentRegistration.ReadWrite.All
-        // (consented on the "Agent 365 CLI" app). .default avoids AADSTS650053 from explicit scope names.
+        // Use .default so the token includes all permissions consented on the "Agent 365 CLI" app,
+        // including AgentRegistration.ReadWrite.All, without enumerating scopes explicitly.
         IEnumerable<string>? scopes = _tokenProvider != null
             ? [$"{Constants.AuthenticationConstants.MicrosoftGraphResourceUri}/.default"]
             : null;
