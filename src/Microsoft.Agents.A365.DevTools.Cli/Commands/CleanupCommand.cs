@@ -91,7 +91,15 @@ public class CleanupCommand
             }
             else
             {
-                bootstrapConfig = await LoadConfigAsync(configFile, logger, configService);
+                try
+                {
+                    bootstrapConfig = await LoadConfigAsync(configFile, logger, configService);
+                }
+                catch (ConfigFileNotFoundException ex)
+                {
+                    context.ExitCode = ex.ExitCode;
+                    return;
+                }
                 if (bootstrapConfig is null)
                 {
                     context.ExitCode = 1;
@@ -495,6 +503,10 @@ public class CleanupCommand
                     logger.LogInformation("Blueprint cleanup completed successfully!");
                 }
             }
+            catch (ConfigFileNotFoundException ex)
+            {
+                context.ExitCode = ex.ExitCode;
+            }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Blueprint cleanup failed");
@@ -599,6 +611,10 @@ public class CleanupCommand
                 logger.LogInformation("No Azure Web App resources to clean up.");
                 logger.LogInformation("Azure infrastructure is managed externally.");
                 logger.LogInformation("Azure cleanup completed!");
+            }
+            catch (ConfigFileNotFoundException ex)
+            {
+                context.ExitCode = ex.ExitCode;
             }
             catch (Exception ex)
             {
@@ -763,6 +779,10 @@ public class CleanupCommand
                 }
                 
                 logger.LogInformation("Instance cleanup completed");
+            }
+            catch (ConfigFileNotFoundException ex)
+            {
+                context.ExitCode = ex.ExitCode;
             }
             catch (Exception ex)
             {
@@ -1360,11 +1380,12 @@ public class CleanupCommand
             logger.LogInformation("Loaded configuration successfully from {ConfigFile}", configPath);
             return config;
         }
-        catch (ConfigFileNotFoundException ex)
+        catch (ConfigFileNotFoundException)
         {
-            logger.LogDebug("{Detail}", ex.IssueDescription);
-            logger.LogError("Specify the agent to clean up: a365 cleanup --agent-name <name>");
-            return null;
+            logger.LogError("Agent name required. Use --agent-name to specify it:");
+            logger.LogInformation("");
+            logger.LogInformation("  a365 cleanup --agent-name <name>");
+            throw;
         }
         catch (Exception ex)
         {

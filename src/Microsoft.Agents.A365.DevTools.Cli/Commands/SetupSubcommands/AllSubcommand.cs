@@ -296,6 +296,14 @@ internal static class AllSubcommand
                             : await configService.LoadAsync(config.FullName);
                     }
                     catch (OperationCanceledException) { throw; }
+                    catch (ConfigFileNotFoundException ex) when (!dryRun)
+                    {
+                        logger.LogError("Agent name required. Use --agent-name to specify it:");
+                        logger.LogInformation("");
+                        logger.LogInformation("  a365 setup all --agent-name <name>");
+                        context.ExitCode = ex.ExitCode;
+                        return;
+                    }
                     catch when (dryRun) { /* config is optional for dry-run; falls through to DW dry-run plan */ }
                     // If aiteammate was not explicitly set, respect what the config says
                     // (allows existing AI Teammate configs to keep working without --aiteammate true)
@@ -433,7 +441,19 @@ internal static class AllSubcommand
                         return;
                     }
 
-                    setupConfig = await configService.LoadAsync(config.FullName);
+                    try
+                    {
+                        setupConfig = await configService.LoadAsync(config.FullName);
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (ConfigFileNotFoundException ex)
+                    {
+                        logger.LogError("Agent name required. Use --agent-name to specify it:");
+                        logger.LogInformation("");
+                        logger.LogInformation("  a365 setup all --agent-name <name>");
+                        context.ExitCode = ex.ExitCode;
+                        return;
+                    }
                 }
 
                 // Configure GraphApiService with custom client app ID if available

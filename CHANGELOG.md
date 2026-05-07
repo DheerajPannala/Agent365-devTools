@@ -23,6 +23,8 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 **Option B — CLI** (`a365 setup admin`) has been removed in this release. Use Option A above, or copy the PowerShell instructions printed in the `a365 setup all` summary output.
 
 ### Added
+- `setup blueprint --show-secret` — displays the blueprint client secret stored in `a365.generated.config.json` in plaintext without re-running any setup steps. On Windows, decryption requires the same machine and user account that ran setup (DPAPI). When no secret is found, the command prints instructions to run `a365 setup blueprint --agent-name <name>`.
+- Blueprint client secret is now printed to the terminal at creation time with a "copy this value now" warning. Use `a365 setup blueprint --show-secret` to retrieve it afterwards.
 - Version check: stable-channel users now see an informational notice when a newer preview release exists above the current stable version, without triggering the update-required banner.
 - `setup requirements` Global Administrator path: when the well-known CLI client app is not found in a new tenant, Global Admins are prompted to create the app and grant admin consent automatically (enter an app ID or type `C` to create).
 - `--authmode obo|s2s|both` option on `setup all` — controls how the agent identity service principal receives permissions:
@@ -40,6 +42,7 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 - Defensive fallback when the server rejects the new request with a known contract-mismatch signature — the CLI logs `"Automated messaging endpoint registration is not available for this tenant yet. You'll need to configure it manually."` and directs the user to the Teams Developer Portal. Same user-facing path is reused when registration fails because the signed-in user is not a blueprint owner.
 
 ### Fixed
+- Error messages for commands run without required configuration no longer expose internal file paths. `setup all`, `cleanup`, and `create-instance` without `--agent-name` now show actionable guidance with the exact command to run. `develop addpermissions` and `develop gettoken` without `--app-id` now prompt for the application ID directly.
 - `setup all` no longer inherits stale resource IDs when the user switches tenants between runs (`az logout` + `az login` to a different tenant). The CLI detects the tenant change before loading configuration, silently backs up files from the previous run, and prompts the user to re-run with `--agent-name` for a clean setup in the new tenant.
 - `setup permissions bot` no longer emits "Bot API permissions configured successfully" when any S2S app-role assignment fails; shows a warning with retry instructions instead.
 - Consent-required message "You are running as a non-admin user and cannot grant admin consent" replaced with "An administrator must grant tenant-wide consent to proceed" — the message fires when tenant-wide consent for S2S scopes has not yet been granted, not when the caller lacks admin rights.

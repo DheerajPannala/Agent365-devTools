@@ -220,10 +220,12 @@ class Program
 
             // Validate the configured clientAppId still exists in the tenant before any command runs.
             // If not found, falls back to the well-known display name and patches a365.config.json.
-            // Skip for help/version requests — these never make Graph calls and must work offline.
+            // Skip for help/version/show-secret — these never make Graph calls and must work offline.
             var isHelpOrVersion = args.Length == 0
                 || args.Any(a => a is "--help" or "-h" or "--version");
-            if (!isHelpOrVersion)
+            var isShowSecret = args.Any(a => a.Equals("--show-secret", StringComparison.Ordinal)
+                || a.StartsWith("--show-secret=", StringComparison.Ordinal));
+            if (!isHelpOrVersion && !isShowSecret)
             {
                 try
                 {
