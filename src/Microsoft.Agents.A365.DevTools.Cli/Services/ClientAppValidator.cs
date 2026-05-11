@@ -1090,13 +1090,26 @@ public sealed class ClientAppValidator : IClientAppValidator
                 return consentedPermissions;
             }
 
-            // Get oauth2PermissionGrants
-            using var grantsDoc = await _graphApiService.GraphGetAsync(tenantId,
-                $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'", ct);
+            // Get oauth2PermissionGrants. When the caller lacks DelegatedPermissionGrant.Read.All
+            // the GET returns 403 permanently — fail-open and assume all required permissions
+            // are consented rather than reporting an empty set (which would trigger a false
+            // "permissions not consented" prompt for non-admin developers who can never read
+            // the grants table by design).
+            var grantsResp = await _graphApiService.GraphGetWithResponseAsync(tenantId,
+                $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'", ct: ct);
+            using var grantsDoc = grantsResp.Json;
+
+            if (grantsResp.StatusCode == 403)
+            {
+                _logger.LogDebug("Cannot read oauth2PermissionGrants (caller lacks DelegatedPermissionGrant.Read.All). Treating all required permissions as consented to avoid false prompts. Real consent failures will surface from downstream operations.");
+                foreach (var p in AuthenticationConstants.RequiredClientAppPermissions)
+                    consentedPermissions.Add(p);
+                return consentedPermissions;
+            }
 
             if (grantsDoc == null)
             {
-                _logger.LogDebug("Could not query oauth2PermissionGrants");
+                _logger.LogDebug("Could not query oauth2PermissionGrants (status: {Status})", grantsResp.StatusCode);
                 return consentedPermissions;
             }
 
@@ -1166,25 +1179,34 @@ public sealed class ClientAppValidator : IClientAppValidator
             return true; // Best-effort check
         }
 
-        // Check OAuth2 permission grants
-        using var grantsDoc = await _graphApiService.GraphGetAsync(tenantId,
-            $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'", ct);
+        // Check OAuth2 permission grants. Use GraphGetWithResponseAsync so we can distinguish
+        // "caller lacks DelegatedPermissionGrant.Read.All" (403) from other failure modes
+        // (token acquisition, network, 5xx) — the user-facing message differs and lumping them
+        // together would either misattribute the cause or hide real failures.
+        var grantsResp = await _graphApiService.GraphGetWithResponseAsync(tenantId,
+            $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'", ct: ct);
+        using var grantsDoc = grantsResp.Json;
+
+        if (grantsResp.StatusCode == 403)
+        {
+            // The grants-read 403 only signals the caller lacks DelegatedPermissionGrant.Read.All —
+            // it tells us nothing about whether tenant-wide consent is actually granted. Don't
+            // emit a user-visible warning here: it would be a false positive on every developer
+            // run (developers don't have that scope by design). Real consent failures surface
+            // with actionable errors from the operations that need them.
+            _logger.LogDebug("Skipping tenant-wide consent verification — caller lacks DelegatedPermissionGrant.Read.All. Downstream operations will surface any actual consent issues.");
+            return true;
+        }
 
         if (grantsDoc == null)
         {
-            _logger.LogDebug("Could not verify admin consent status");
-            _logger.LogWarning(
-                "Admin consent status could not be verified — insufficient permissions to read consent grants.");
-            _logger.LogWarning(
-                "If you see 'Need admin approval' during blueprint creation, admin consent has not been granted.");
-            var consentUrl = ClientAppValidationException.BuildAdminConsentUrl(clientAppId, tenantId);
-            if (consentUrl != null)
-            {
-                _logger.LogWarning("A Global Administrator must either:");
-                _logger.LogWarning("  1. Run 'a365 setup requirements' with an admin account to auto-grant consent, OR");
-                _logger.LogWarning("  2. Open this URL to grant consent: {ConsentUrl}", consentUrl);
-            }
-            return true; // Best-effort — still allow developer to proceed
+            // Best-effort skip on transient/auth/network failures other than 403. Treat as
+            // "cannot verify, assume consented" — the same operation will retry with its own
+            // error handling. Logging both the status and reason helps diagnose real failures.
+            _logger.LogDebug(
+                "Skipping tenant-wide consent verification — grants read returned no data (status: {Status} {Reason}). Downstream operations will surface any actual consent issues.",
+                grantsResp.StatusCode, grantsResp.ReasonPhrase);
+            return true;
         }
 
         var grantsJson = JsonNode.Parse(grantsDoc.RootElement.GetRawText());
