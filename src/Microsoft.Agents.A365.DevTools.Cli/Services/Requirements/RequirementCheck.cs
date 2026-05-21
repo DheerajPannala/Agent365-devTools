@@ -28,7 +28,7 @@ public abstract class RequirementCheck : IRequirementCheck
     /// </summary>
     protected virtual void LogCheckSuccess(ILogger logger, string? details = null)
     {
-        logger.LogInformation("Pass: {Name}{Details}", Name,
+        logger.LogDebug("Pass: {Name}{Details}", Name,
             string.IsNullOrWhiteSpace(details) ? "" : $" ({details})");
     }
 
@@ -37,7 +37,7 @@ public abstract class RequirementCheck : IRequirementCheck
     /// </summary>
     protected virtual void LogCheckWarning(ILogger logger, string? message = null)
     {
-        logger.LogWarning("Warn: {Name}{Details}", Name,
+        logger.LogDebug("Warn: {Name}{Details}", Name,
             string.IsNullOrWhiteSpace(message) ? "" : $" - {message}");
     }
 
@@ -46,18 +46,16 @@ public abstract class RequirementCheck : IRequirementCheck
     /// </summary>
     protected virtual void LogCheckFailure(ILogger logger, string errorMessage, string resolutionGuidance)
     {
-        // Single red line — AZ CLI convention: one ERROR line per failure, not per detail
-        logger.LogError("Fail: {Name}", Name);
+        logger.LogDebug("Fail: {Name}", Name);
 
-        // Error details and resolution guidance in white — they describe and guide, not error
         foreach (var line in errorMessage.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-            logger.LogInformation("  {Line}", line.TrimEnd());
+            logger.LogDebug("  {Line}", line.TrimEnd());
 
         if (!string.IsNullOrWhiteSpace(resolutionGuidance))
         {
-            logger.LogInformation("");
+            logger.LogDebug("");
             foreach (var step in resolutionGuidance.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-                logger.LogInformation("  {Step}", step.TrimEnd());
+                logger.LogDebug("  {Step}", step.TrimEnd());
         }
     }
 
