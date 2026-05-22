@@ -259,6 +259,146 @@ public class LocalRuntimeRequirementCheckTests : IDisposable
         return process;
     }
 
+    #region Python Entry Point Detection
+
+    [Fact]
+    public void ResolvePythonEntryPoint_WhenSingleFileHasMainGuard_ReturnsThatFile()
+    {
+        File.WriteAllText(Path.Combine(_tempDir, "bot_runner.py"),
+            "import bot\nif __name__ == \"__main__\":\n    bot.run()");
+
+        var result = LocalRuntimeRequirementCheck.ResolvePythonEntryPoint(_tempDir);
+
+        result.Should().Be("bot_runner.py");
+    }
+
+    [Fact]
+    public void ResolvePythonEntryPoint_WhenMultipleFilesHaveMainGuard_PrefersWellKnownName()
+    {
+        File.WriteAllText(Path.Combine(_tempDir, "app.py"),
+            "if __name__ == '__main__':\n    pass");
+        File.WriteAllText(Path.Combine(_tempDir, "helper.py"),
+            "if __name__ == '__main__':\n    pass");
+
+        var result = LocalRuntimeRequirementCheck.ResolvePythonEntryPoint(_tempDir);
+
+        result.Should().Be("app.py",
+            because: "app.py is a preferred entry point name when multiple files have __main__ guards");
+    }
+
+    [Fact]
+    public void ResolvePythonEntryPoint_WhenNoMainGuard_FallsBackToExistingWellKnownFile()
+    {
+        File.WriteAllText(Path.Combine(_tempDir, "main.py"), "# no guard");
+        File.WriteAllText(Path.Combine(_tempDir, "utils.py"), "# utility");
+
+        var result = LocalRuntimeRequirementCheck.ResolvePythonEntryPoint(_tempDir);
+
+        result.Should().Be("main.py",
+            because: "main.py exists and is a known entry point name even without a __main__ guard");
+    }
+
+    [Fact]
+    public void ResolvePythonEntryPoint_WhenNoPyFiles_FallsBackToAppPy()
+    {
+        var result = LocalRuntimeRequirementCheck.ResolvePythonEntryPoint(_tempDir);
+
+        result.Should().Be("app.py",
+            because: "app.py is the ultimate default when nothing else is found");
+    }
+
+    [Fact]
+    public void ResolvePythonEntryPoint_ProcfileTakesPriority_OverMainGuard()
+    {
+        File.WriteAllText(Path.Combine(_tempDir, "Procfile"), "web: python serve.py --host 0.0.0.0");
+        File.WriteAllText(Path.Combine(_tempDir, "app.py"),
+            "if __name__ == '__main__':\n    pass");
+
+        var result = LocalRuntimeRequirementCheck.ResolvePythonEntryPoint(_tempDir);
+
+        result.Should().Be("serve.py --host 0.0.0.0",
+            because: "Procfile is the explicit user-declared entry point and takes highest priority");
+    }
+
+    [Fact]
+    public void ResolvePythonEntryPoint_WhenProcfileHasGunicorn_FallsToCodeScan()
+    {
+        File.WriteAllText(Path.Combine(_tempDir, "Procfile"), "web: gunicorn app:app");
+        File.WriteAllText(Path.Combine(_tempDir, "bot.py"),
+            "if __name__ == '__main__':\n    run()");
+
+        var result = LocalRuntimeRequirementCheck.ResolvePythonEntryPoint(_tempDir);
+
+        result.Should().Be("bot.py",
+            because: "gunicorn is not a python command so Procfile is skipped and code scanning finds bot.py");
+    }
+
+    [Fact]
+    public void ResolvePythonEntryPoint_WhenProcfileHasDashM_ReturnsModuleArgs()
+    {
+        File.WriteAllText(Path.Combine(_tempDir, "Procfile"), "web: python -m uvicorn app:app");
+
+        var result = LocalRuntimeRequirementCheck.ResolvePythonEntryPoint(_tempDir);
+
+        result.Should().Be("-m uvicorn app:app");
+    }
+
+    [Fact]
+    public void HasMainGuard_WithDoubleQuotes_ReturnsTrue()
+    {
+        var file = Path.Combine(_tempDir, "test.py");
+        File.WriteAllText(file, "import os\nif __name__ == \"__main__\":\n    main()");
+
+        LocalRuntimeRequirementCheck.HasMainGuard(file).Should().BeTrue();
+    }
+
+    [Fact]
+    public void HasMainGuard_WithSingleQuotes_ReturnsTrue()
+    {
+        var file = Path.Combine(_tempDir, "test.py");
+        File.WriteAllText(file, "if __name__ == '__main__':\n    main()");
+
+        LocalRuntimeRequirementCheck.HasMainGuard(file).Should().BeTrue();
+    }
+
+    [Fact]
+    public void HasMainGuard_WithoutGuard_ReturnsFalse()
+    {
+        var file = Path.Combine(_tempDir, "test.py");
+        File.WriteAllText(file, "def main():\n    pass\n\nmain()");
+
+        LocalRuntimeRequirementCheck.HasMainGuard(file).Should().BeFalse();
+    }
+
+    [Fact]
+    public void HasMainGuard_WithIndentation_ReturnsTrue()
+    {
+        var file = Path.Combine(_tempDir, "test.py");
+        File.WriteAllText(file, "# entry\n    if __name__ == '__main__':\n        run()");
+
+        LocalRuntimeRequirementCheck.HasMainGuard(file).Should().BeTrue();
+    }
+
+    [Fact]
+    public void ParseProcfileEntryPoint_WhenEmpty_ReturnsNull()
+    {
+        var procfile = Path.Combine(_tempDir, "Procfile");
+        File.WriteAllText(procfile, "");
+
+        LocalRuntimeRequirementCheck.ParseProcfileEntryPoint(procfile).Should().BeNull();
+    }
+
+    [Fact]
+    public void ParseProcfileEntryPoint_WhenNoWebProcess_ReturnsNull()
+    {
+        var procfile = Path.Combine(_tempDir, "Procfile");
+        File.WriteAllText(procfile, "worker: python worker.py");
+
+        LocalRuntimeRequirementCheck.ParseProcfileEntryPoint(procfile).Should().BeNull();
+    }
+
+    #endregion
+
     /// <summary>
     /// Fake HTTP handler that returns a configurable status code.
     /// </summary>

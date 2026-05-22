@@ -23,6 +23,7 @@ public class ConversationRequirementCheck : RequirementCheck
     private readonly HttpClient _httpClient;
     private readonly IBotCallbackReceiver? _callbackReceiver;
     private readonly bool _launchPlayground;
+    private readonly string? _resolvedUvCommand;
 
     /// <summary>
     /// Maximum time to wait for the app to start and respond on the health endpoint.
@@ -43,6 +44,22 @@ public class ConversationRequirementCheck : RequirementCheck
     /// Interval between health endpoint polls during startup.
     /// </summary>
     internal static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(500);
+
+    /// <summary>
+    /// Delay after health endpoint is ready before sending messages.
+    /// Agents often need additional time to initialize their message pipeline after the HTTP server is up.
+    /// </summary>
+    internal static readonly TimeSpan PostHealthWarmupDelay = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// Maximum number of retries for a conversation turn that fails with a transient error.
+    /// </summary>
+    internal const int MaxTurnRetries = 2;
+
+    /// <summary>
+    /// Delay between retry attempts for a failed conversation turn.
+    /// </summary>
+    internal static readonly TimeSpan TurnRetryDelay = TimeSpan.FromSeconds(2);
 
     /// <summary>
     /// Maximum number of stdout/stderr lines to capture for diagnostics.
@@ -69,13 +86,15 @@ public class ConversationRequirementCheck : RequirementCheck
         IProcessService processService,
         HttpClient? httpClient = null,
         IBotCallbackReceiver? callbackReceiver = null,
-        bool launchPlayground = false)
+        bool launchPlayground = false,
+        string? resolvedUvCommand = null)
     {
         _platformDetector = platformDetector ?? throw new ArgumentNullException(nameof(platformDetector));
         _processService = processService ?? throw new ArgumentNullException(nameof(processService));
         _httpClient = httpClient ?? new HttpClient();
         _callbackReceiver = callbackReceiver;
         _launchPlayground = launchPlayground;
+        _resolvedUvCommand = resolvedUvCommand;
     }
 
     /// <inheritdoc />
@@ -143,12 +162,34 @@ public class ConversationRequirementCheck : RequirementCheck
     {
         var outputLines = new LocalRuntimeRequirementCheck.BoundedLineBuffer(MaxOutputLines);
         var errorLines = new LocalRuntimeRequirementCheck.BoundedLineBuffer(MaxOutputLines);
+        string? agentConsoleLogPath = null;
+        string? conversationLogPath = null;
+        StreamWriter? consoleLogWriter = null;
+        StreamWriter? conversationLogWriter = null;
         Process? process = null;
         IBotCallbackReceiver? receiver = _callbackReceiver;
         bool ownedReceiver = false;
 
         try
         {
+            // Create conversation log file for diagnostics
+            try
+            {
+                conversationLogPath = ConfigService.GetCommandLogPath("validate.conversation");
+                conversationLogWriter = new StreamWriter(conversationLogPath, append: false, encoding: System.Text.Encoding.UTF8)
+                {
+                    AutoFlush = true
+                };
+                conversationLogWriter.WriteLine($"Conversation validation started at {DateTimeOffset.Now:O}");
+                conversationLogWriter.WriteLine($"Platform: {platform}, Port: {port}");
+                conversationLogWriter.WriteLine($"Command: {startInfo.FileName} {startInfo.Arguments}");
+                conversationLogWriter.WriteLine(new string('-', 60));
+            }
+            catch
+            {
+                conversationLogPath = null;
+            }
+
             // Start callback receiver for agent response tracking
             if (receiver is null)
             {
@@ -169,30 +210,79 @@ public class ConversationRequirementCheck : RequirementCheck
             process = _processService.Start(startInfo);
             if (process is null)
             {
-                return RequirementCheckResult.Failure(
-                    $"Failed to start {platform} process",
-                    GetRunGuidance(platform));
+                conversationLogWriter?.WriteLine("FAILED: Could not start process");
+                return new RequirementCheckResult
+                {
+                    Passed = false,
+                    ErrorMessage = $"Failed to start {platform} process",
+                    ResolutionGuidance = GetRunGuidance(platform),
+                    Metadata = new RequirementCheckMetadata
+                    {
+                        Platform = platform.ToString(),
+                        ConversationLogFile = conversationLogPath
+                    }
+                };
+            }
+
+            // Create agent console log file for telemetry analysis
+            try
+            {
+                agentConsoleLogPath = ConfigService.GetCommandLogPath("validate.agent-console");
+                consoleLogWriter = new StreamWriter(agentConsoleLogPath, append: false, encoding: System.Text.Encoding.UTF8)
+                {
+                    AutoFlush = true
+                };
+                logger.LogDebug("Writing agent console output to {LogPath}", agentConsoleLogPath);
+            }
+            catch (Exception ex)
+            {
+                logger.LogDebug(ex, "Could not create agent console log file, telemetry analysis will use in-memory buffer");
+                agentConsoleLogPath = null;
             }
 
             process.OutputDataReceived += (_, args) =>
             {
-                if (args.Data is not null) outputLines.Add(args.Data);
+                if (args.Data is not null)
+                {
+                    outputLines.Add(args.Data);
+                    try { consoleLogWriter?.WriteLine(args.Data); } catch { /* best-effort */ }
+                }
             };
             process.ErrorDataReceived += (_, args) =>
             {
-                if (args.Data is not null) errorLines.Add(args.Data);
+                if (args.Data is not null)
+                {
+                    errorLines.Add(args.Data);
+                    try { consoleLogWriter?.WriteLine(args.Data); } catch { /* best-effort */ }
+                }
             };
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
 
             // Phase 1: Wait for health endpoint
+            conversationLogWriter?.WriteLine("\n[Phase 1] Waiting for health endpoint...");
             var bootResult = await WaitForHealthAsync(process, healthUrl, platform, logger, cancellationToken);
             if (bootResult is not null)
             {
+                conversationLogWriter?.WriteLine($"FAILED: {bootResult.ErrorMessage}");
+                WriteAgentOutputToConversationLog(conversationLogWriter, outputLines, errorLines);
+                bootResult.Metadata = new RequirementCheckMetadata
+                {
+                    Platform = platform.ToString(),
+                    ConversationLogFile = conversationLogPath,
+                    AgentConsoleLogPath = agentConsoleLogPath
+                };
                 return bootResult;
             }
 
+            conversationLogWriter?.WriteLine("Health endpoint ready.");
+
+            // Allow the agent message pipeline to finish initializing after the HTTP server is up.
+            conversationLogWriter?.WriteLine($"Waiting {(int)PostHealthWarmupDelay.TotalSeconds}s for message pipeline warmup...");
+            await Task.Delay(PostHealthWarmupDelay, cancellationToken);
+
             // Phase 2: Multi-turn conversation
+            conversationLogWriter?.WriteLine($"\n[Phase 2] Starting {ConversationPrompts.Length}-turn conversation...");
             var turns = new List<ConversationTurnData>();
             var allOk = true;
 
@@ -201,13 +291,25 @@ public class ConversationRequirementCheck : RequirementCheck
                 if (process.HasExited)
                 {
                     var exitOutput = GetCapturedOutput(outputLines, errorLines);
-                    return RequirementCheckResult.Failure(
-                        $"Agent process exited during conversation (turn {i + 1}):\n{exitOutput}",
-                        GetRunGuidance(platform));
+                    conversationLogWriter?.WriteLine($"\nFAILED: Agent process exited during turn {i + 1}");
+                    WriteAgentOutputToConversationLog(conversationLogWriter, outputLines, errorLines);
+                    return new RequirementCheckResult
+                    {
+                        Passed = false,
+                        ErrorMessage = $"Agent process exited during conversation (turn {i + 1}):\n{exitOutput}",
+                        ResolutionGuidance = GetRunGuidance(platform),
+                        Metadata = new RequirementCheckMetadata
+                        {
+                            Platform = platform.ToString(),
+                            ConversationLogFile = conversationLogPath,
+                            AgentConsoleLogPath = agentConsoleLogPath
+                        }
+                    };
                 }
 
-                var turnResult = await SendTurnAsync(messagesUrl, conversationId, ConversationPrompts[i], i, port, receiver, logger, cancellationToken);
+                var turnResult = await SendTurnWithRetryAsync(messagesUrl, conversationId, ConversationPrompts[i], i, port, receiver, logger, conversationLogWriter, cancellationToken);
                 turns.Add(turnResult);
+                LogTurn(conversationLogWriter, i + 1, turnResult);
 
                 if (!turnResult.Ok)
                 {
@@ -231,6 +333,10 @@ public class ConversationRequirementCheck : RequirementCheck
                 playgroundLaunched = await LaunchPlaygroundAsync(messagesUrl, logger, cancellationToken);
             }
 
+            conversationLogWriter?.WriteLine($"\n[Summary] {turnSummary}");
+            conversationLogWriter?.WriteLine($"Result: {(allOk ? "PASSED" : "FAILED")}");
+            WriteAgentOutputToConversationLog(conversationLogWriter, outputLines, errorLines);
+
             return new RequirementCheckResult
             {
                 Passed = allOk,
@@ -242,6 +348,8 @@ public class ConversationRequirementCheck : RequirementCheck
                     Port = port,
                     Platform = platform.ToString(),
                     PlaygroundLaunched = playgroundLaunched ? true : null,
+                    AgentConsoleLogPath = agentConsoleLogPath,
+                    ConversationLogFile = conversationLogPath,
                     Turns = turns.Select(t => new ConversationTurnMetadata
                     {
                         Input = t.Input,
@@ -258,6 +366,9 @@ public class ConversationRequirementCheck : RequirementCheck
         }
         finally
         {
+            conversationLogWriter?.Dispose();
+            consoleLogWriter?.Dispose();
+
             if (process is not null)
             {
                 try
@@ -341,6 +452,71 @@ public class ConversationRequirementCheck : RequirementCheck
         return RequirementCheckResult.Failure(
             $"App did not respond on {healthUrl} within {(int)StartupTimeout.TotalSeconds} seconds",
             GetRunGuidance(platform));
+    }
+
+    /// <summary>
+    /// Sends a conversation turn with retry logic for transient failures.
+    /// Agents may not have their message pipeline fully ready even after the health endpoint responds.
+    /// </summary>
+    private async Task<ConversationTurnData> SendTurnWithRetryAsync(
+        string messagesUrl,
+        string conversationId,
+        string text,
+        int turnIndex,
+        int port,
+        IBotCallbackReceiver? callbackReceiver,
+        ILogger logger,
+        StreamWriter? conversationLogWriter,
+        CancellationToken cancellationToken)
+    {
+        ConversationTurnData? lastResult = null;
+
+        for (int attempt = 0; attempt <= MaxTurnRetries; attempt++)
+        {
+            lastResult = await SendTurnAsync(messagesUrl, conversationId, text, turnIndex, port, callbackReceiver, logger, cancellationToken);
+
+            if (lastResult.Ok || !IsTransientFailure(lastResult))
+            {
+                return lastResult;
+            }
+
+            if (attempt < MaxTurnRetries)
+            {
+                logger.LogDebug(
+                    "Turn {Turn} failed with transient error, retrying in {Delay}s (attempt {Attempt}/{Max}): {Error}",
+                    turnIndex + 1, (int)TurnRetryDelay.TotalSeconds, attempt + 1, MaxTurnRetries, lastResult.Error);
+                conversationLogWriter?.WriteLine(
+                    $"  [Retry] Turn {turnIndex + 1} failed ({lastResult.Error}), retrying in {(int)TurnRetryDelay.TotalSeconds}s...");
+                await Task.Delay(TurnRetryDelay, cancellationToken);
+            }
+        }
+
+        return lastResult!;
+    }
+
+    /// <summary>
+    /// Determines if a turn failure is transient and worth retrying.
+    /// Connection failures and server errors (5xx) are transient.
+    /// Auth failures (401/403) and client errors (4xx) are not.
+    /// </summary>
+    private static bool IsTransientFailure(ConversationTurnData turnResult)
+    {
+        if (turnResult.Error?.StartsWith("Connection failed", StringComparison.Ordinal) == true)
+        {
+            return true;
+        }
+
+        if (turnResult.Error?.StartsWith("Turn timed out", StringComparison.Ordinal) == true)
+        {
+            return true;
+        }
+
+        if (turnResult.StatusCode is >= 500 and < 600)
+        {
+            return true;
+        }
+
+        return false;
     }
 
     private async Task<ConversationTurnData> SendTurnAsync(
@@ -491,7 +667,7 @@ public class ConversationRequirementCheck : RequirementCheck
         }
     }
 
-    private static ProcessStartInfo BuildProcessStartInfo(ProjectPlatform platform, string projectPath, int port)
+    private ProcessStartInfo BuildProcessStartInfo(ProjectPlatform platform, string projectPath, int port)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -502,8 +678,17 @@ public class ConversationRequirementCheck : RequirementCheck
             CreateNoWindow = true
         };
 
-        // Disable auth so the bot accepts unauthenticated local requests
+        // Disable auth so the bot accepts unauthenticated local requests.
+        // BYPASS_AUTH: used by .NET Agent SDK
         startInfo.EnvironmentVariables["BYPASS_AUTH"] = "true";
+        // Clear credentials that trigger JWT middleware in Python/Node SDKs.
+        // When these are absent, agents run in anonymous mode.
+        startInfo.EnvironmentVariables["CLIENT_ID"] = "";
+        startInfo.EnvironmentVariables["CLIENT_SECRET"] = "";
+        startInfo.EnvironmentVariables["TENANT_ID"] = "";
+        // Also clear .NET Bot Framework equivalents
+        startInfo.EnvironmentVariables["MicrosoftAppId"] = "";
+        startInfo.EnvironmentVariables["MicrosoftAppPassword"] = "";
 
         switch (platform)
         {
@@ -514,14 +699,23 @@ public class ConversationRequirementCheck : RequirementCheck
                 break;
 
             case ProjectPlatform.NodeJs:
-                startInfo.FileName = "npm";
-                startInfo.Arguments = "start";
+                LocalRuntimeRequirementCheck.WrapForWindows(startInfo, "npm", "start");
                 startInfo.EnvironmentVariables["PORT"] = port.ToString();
                 break;
 
             case ProjectPlatform.Python:
-                startInfo.FileName = "python";
-                startInfo.Arguments = "app.py";
+                var entryPoint = LocalRuntimeRequirementCheck.ResolvePythonEntryPoint(projectPath);
+                var usesUv = ProjectBuildRequirementCheck.DetectPythonInstallCommand(projectPath) is ("uv", _);
+                if (usesUv)
+                {
+                    startInfo.FileName = _resolvedUvCommand ?? "uv";
+                    startInfo.Arguments = $"run python {entryPoint}";
+                }
+                else
+                {
+                    startInfo.FileName = "python";
+                    startInfo.Arguments = entryPoint;
+                }
                 startInfo.EnvironmentVariables["PORT"] = port.ToString();
                 break;
 
@@ -543,7 +737,7 @@ public class ConversationRequirementCheck : RequirementCheck
                 "  npm start\n" +
                 "Verify it starts and responds on /api/messages.",
             ProjectPlatform.Python => "Try running the app manually:\n" +
-                "  python app.py\n" +
+                "  python <entry_point>.py  (or: uv run python <entry_point>.py)\n" +
                 "Verify it starts and responds on /api/messages.",
             _ => "Try running the app manually and verify it responds on /api/messages."
         };
@@ -670,6 +864,78 @@ public class ConversationRequirementCheck : RequirementCheck
         }
 
         return sb.ToString().TrimEnd();
+    }
+
+    private static void LogTurn(StreamWriter? writer, int turnNumber, ConversationTurnData turn)
+    {
+        if (writer is null) return;
+
+        try
+        {
+            writer.WriteLine($"\n  Turn {turnNumber}: \"{turn.Input}\"");
+            writer.WriteLine($"    Status: HTTP {turn.StatusCode?.ToString() ?? "N/A"}, Latency: {turn.LatencyMs}ms, Ok: {turn.Ok}");
+
+            if (turn.ResponseSnippet is not null)
+            {
+                writer.WriteLine($"    Response: {turn.ResponseSnippet}");
+            }
+
+            if (turn.AgentResponded is not null)
+            {
+                writer.WriteLine($"    Agent responded: {turn.AgentResponded}");
+            }
+
+            if (turn.AgentResponseText is not null)
+            {
+                writer.WriteLine($"    Agent response: {turn.AgentResponseText}");
+            }
+
+            if (turn.Error is not null)
+            {
+                writer.WriteLine($"    Error: {turn.Error}");
+            }
+        }
+        catch
+        {
+            // best-effort
+        }
+    }
+
+    private static void WriteAgentOutputToConversationLog(
+        StreamWriter? writer,
+        LocalRuntimeRequirementCheck.BoundedLineBuffer outputLines,
+        LocalRuntimeRequirementCheck.BoundedLineBuffer errorLines)
+    {
+        if (writer is null) return;
+
+        try
+        {
+            var stdout = outputLines.GetLines();
+            var stderr = errorLines.GetLines();
+
+            if (stdout.Length > 0 || stderr.Length > 0)
+            {
+                writer.WriteLine($"\n{new string('-', 60)}");
+                writer.WriteLine("[Agent console output]");
+            }
+
+            if (stdout.Length > 0)
+            {
+                foreach (var line in stdout)
+                    writer.WriteLine(line);
+            }
+
+            if (stderr.Length > 0)
+            {
+                writer.WriteLine("[stderr]");
+                foreach (var line in stderr)
+                    writer.WriteLine(line);
+            }
+        }
+        catch
+        {
+            // best-effort
+        }
     }
 
     private static string TruncateResponse(string response, int maxLength)

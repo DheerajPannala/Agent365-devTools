@@ -26,6 +26,7 @@ public sealed class ValidateCommand
     // Status markers — use characters supported across Windows/macOS/Linux terminals
     private const string PassMark = "\u221A";  // √ (square root, same as Windows renders for checkmark)
     private const string FailMark = "X";
+    private const string WarnMark = "!";
     private const string SkipMark = "-";
 
     private static readonly JsonSerializerOptions ReportSerializerOptions = new()
@@ -84,31 +85,74 @@ public sealed class ValidateCommand
                         : null
                 };
 
-                // Phase 2: Run requirement checks and map to tiers
-                var checks = requirementChecksOverride?.ToList()
-                    ?? BuildValidationChecks(platformDetector, commandExecutor, processService, includeConversation: false);
+                // Phase 2: Run structural checks (manifest + build)
+                var structuralChecks = requirementChecksOverride?.ToList()
+                    ?? BuildStructuralChecks(platformDetector, commandExecutor);
 
-                var results = await RunChecksDetailedAsync(checks, config, logger, ct);
+                var results = await RunChecksDetailedAsync(structuralChecks, config, logger, ct);
                 MapResultsToTiers(results, report);
 
-                // Phase 2b: Run conversation check only if boot tier passed
+                // Extract resolved uv command from build step for boot and conversation steps
+                var buildResultEntry = results
+                    .FirstOrDefault(r => r.Check is ProjectBuildRequirementCheck);
+                var resolvedUvCommand = buildResultEntry.Result?.Metadata?.ResolvedUvCommand;
+
+                // Phase 2b: Run boot check only if build passed
+                var buildPassed = report.Tiers.Build is { Skipped: true } or { Ok: true };
+                if (buildPassed && requirementChecksOverride is null)
+                {
+                    var bootChecks = BuildBootChecks(platformDetector, processService, resolvedUvCommand);
+                    if (bootChecks.Count > 0)
+                    {
+                        var bootResults = await RunChecksDetailedAsync(bootChecks, config, logger, ct);
+                        MapResultsToTiers(bootResults, report);
+                        results.AddRange(bootResults);
+                    }
+                }
+                else if (!buildPassed)
+                {
+                    report.Tiers.Boot = new BootTierResult
+                    {
+                        Skipped = true,
+                        Reason = "build failed"
+                    };
+                }
+
+                // Phase 2c: Run conversation check only if boot tier passed
                 var bootPassed = report.Tiers.Boot is { Skipped: false, Ok: true };
                 if (bootPassed && requirementChecksOverride is null)
                 {
-                    var conversationChecks = BuildConversationChecks(platformDetector, processService, launchPlayground);
+                    var conversationChecks = BuildConversationChecks(platformDetector, processService, launchPlayground, resolvedUvCommand);
                     if (conversationChecks.Count > 0)
                     {
                         var conversationResults = await RunChecksDetailedAsync(conversationChecks, config, logger, ct);
                         MapResultsToTiers(conversationResults, report);
                         results.AddRange(conversationResults);
+
+                        // Phase 2c: Run telemetry check using agent's console log file
+                        var conversationResult = conversationResults
+                            .FirstOrDefault(r => r.Check is ConversationRequirementCheck);
+                        var agentLogPath = conversationResult.Result?.Metadata?.AgentConsoleLogPath;
+                        report.AgentConsoleLogFile = agentLogPath;
+                        var telemetryCheck = new TelemetryRequirementCheck(agentLogPath);
+                        var telemetryResults = await RunChecksDetailedAsync(
+                            new List<IRequirementCheck> { telemetryCheck }, config, logger, ct);
+                        MapResultsToTiers(telemetryResults, report);
+                        results.AddRange(telemetryResults);
                     }
                 }
-                else if (!bootPassed && report.Tiers.Boot is not { Skipped: true })
+                else if (!bootPassed)
                 {
+                    var skipReason = report.Tiers.Boot is { Skipped: true } ? "build failed" : "boot tier failed";
                     report.Tiers.Conversation = new ConversationTierResult
                     {
                         Skipped = true,
-                        Reason = "boot tier failed"
+                        Reason = skipReason
+                    };
+                    report.Tiers.Telemetry = new TelemetryTierResult
+                    {
+                        Skipped = true,
+                        Reason = skipReason
                     };
                 }
 
@@ -296,8 +340,9 @@ public sealed class ValidateCommand
                         report.Tiers.Build = new BuildTierResult
                         {
                             Ok = result.Passed,
-                            Log = result.Metadata?.Log,
-                            ExitCode = result.Metadata?.ExitCode
+                            ExitCode = result.Metadata?.ExitCode,
+                            ErrorSummary = result.Passed ? null : result.ErrorMessage,
+                            BuildLogFile = result.Metadata?.BuildLogFile
                         };
                     }
                     break;
@@ -317,7 +362,8 @@ public sealed class ValidateCommand
                         {
                             Ok = result.Passed,
                             Port = result.Metadata?.Port,
-                            BootMs = result.Metadata?.BootMs
+                            BootMs = result.Metadata?.BootMs,
+                            BootLogFile = result.Metadata?.BootLogFile
                         };
                     }
                     break;
@@ -337,6 +383,7 @@ public sealed class ValidateCommand
                         {
                             Ok = result.Passed,
                             PlaygroundLaunched = result.Metadata?.PlaygroundLaunched,
+                            ConversationLogFile = result.Metadata?.ConversationLogFile,
                             Turns = result.Metadata?.Turns?.Select(t => new ConversationTurnResult
                             {
                                 Input = t.Input,
@@ -351,8 +398,101 @@ public sealed class ValidateCommand
                         };
                     }
                     break;
+
+                case TelemetryRequirementCheck:
+                    if (result.IsWarning)
+                    {
+                        report.Tiers.Telemetry = new TelemetryTierResult
+                        {
+                            Ok = true,
+                            Warning = result.ErrorMessage,
+                            ExportDetected = false
+                        };
+                    }
+                    else
+                    {
+                        report.Tiers.Telemetry = new TelemetryTierResult
+                        {
+                            Ok = result.Passed,
+                            ExportDetected = result.Passed,
+                            MatchedPatterns = ParseMatchedPatterns(result.Details)
+                        };
+
+                        if (!result.Passed)
+                        {
+                            report.Tiers.Telemetry.Reason = result.ErrorMessage;
+                        }
+                    }
+                    break;
             }
         }
+    }
+
+    private static List<string>? ParseMatchedPatterns(string? details)
+    {
+        if (string.IsNullOrWhiteSpace(details))
+            return null;
+
+        // Extract pattern names from details like "Telemetry export evidence found: pattern1, pattern2."
+        var colonIndex = details.IndexOf(':');
+        if (colonIndex < 0)
+            return null;
+
+        var patternsText = details[(colonIndex + 1)..].Trim().TrimEnd('.');
+        var dotIndex = patternsText.IndexOf('.');
+        if (dotIndex >= 0)
+            patternsText = patternsText[..dotIndex];
+
+        var patterns = patternsText.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        return patterns.Length > 0 ? patterns.ToList() : null;
+    }
+
+    private static string GetTelemetrySuggestion(TelemetryTierResult telemetry)
+    {
+        var patterns = telemetry.MatchedPatterns;
+        if (patterns is not null)
+        {
+            var lower = patterns.Select(p => p.ToLowerInvariant()).ToHashSet();
+            if (lower.Contains("missing tenant") || lower.Contains("missing agent id"))
+                return "configure tenant ID and agent ID for telemetry export";
+            if (lower.Contains("nothing exported") || lower.Contains("spans skipped") || lower.Contains("spans filtered out"))
+                return "check agent identity configuration for telemetry export";
+            if (lower.Contains("connection refused") || lower.Contains("unavailable") || lower.Contains("deadline_exceeded"))
+                return "check OTLP endpoint connectivity";
+            if (lower.Contains("unauthenticated") || lower.Contains("permissiondenied"))
+                return "check OTLP endpoint credentials";
+        }
+
+        return "check agent console logs for telemetry export errors";
+    }
+
+    private static (string Description, string Suggestion) GetCodeHealthFailureInfo(ValidationTiers tiers)
+    {
+        var buildFailed = tiers.Build is { Skipped: false, Ok: false };
+        var structuralFailed = tiers.Structural is { Skipped: false, Ok: false };
+
+        if (buildFailed)
+        {
+            var buildLogFile = tiers.Build is BuildTierResult bt ? bt.BuildLogFile : null;
+            var suggestion = buildLogFile is not null
+                ? $"fix build errors, see: {buildLogFile}"
+                : "fix build errors and re-run `a365 validate`";
+            return ("build failed", suggestion);
+        }
+
+        if (structuralFailed)
+        {
+            var failedChecks = tiers.Structural is StructuralTierResult st
+                ? st.Checks?.Where(c => !c.Ok).Select(c => c.Name).ToList()
+                : null;
+
+            var desc = failedChecks is { Count: > 0 }
+                ? $"failed: {string.Join(", ", failedChecks)}"
+                : "structural checks failed";
+            return (desc, "fix project structure issues and re-run `a365 validate`");
+        }
+
+        return ("code health check failed", "fix errors and re-run `a365 validate`");
     }
 
     private static string? FindBlocker(ValidationTiers tiers)
@@ -378,6 +518,7 @@ public sealed class ValidateCommand
 
         int passCount = 0;
         int failCount = 0;
+        int warnCount = 0;
         int localChecks = 0;
 
         foreach (var row in rows)
@@ -386,6 +527,17 @@ public sealed class ValidateCommand
             {
                 var reason = row.Reason ?? "not configured";
                 logger.LogInformation("  {Skip}  {Name,-20} skipped ({Reason})", SkipMark, row.Label, reason);
+            }
+            else if (row.IsWarning)
+            {
+                warnCount++;
+                localChecks++;
+                logger.LogInformation("  {Warn} {Name,-20} {Description}", WarnMark, row.Label, row.Description);
+
+                if (row.Suggestion is not null)
+                {
+                    logger.LogInformation("       -> suggestion: {Suggestion}", row.Suggestion);
+                }
             }
             else if (row.Ok)
             {
@@ -410,7 +562,8 @@ public sealed class ValidateCommand
 
         if (failCount == 0 && localChecks > 0)
         {
-            logger.LogInformation("  All {PassCount} checks passed.", passCount);
+            var warnSuffix = warnCount > 0 ? $" ({warnCount} warning(s))" : "";
+            logger.LogInformation("  All {PassCount} checks passed.{WarnSuffix}", passCount, warnSuffix);
         }
         else if (failCount > 0)
         {
@@ -433,12 +586,26 @@ public sealed class ValidateCommand
         if (codeHealthActive.Count > 0)
         {
             var allOk = codeHealthActive.All(t => t.Ok == true);
+            string description;
+            string? suggestion = null;
+
+            if (allOk)
+            {
+                description = "project structure, manifest, build";
+            }
+            else
+            {
+                var (desc, sug) = GetCodeHealthFailureInfo(tiers);
+                description = desc;
+                suggestion = sug;
+            }
+
             rows.Add(new DisplayRow
             {
                 Label = "Code health",
                 Ok = allOk,
-                Description = allOk ? "project structure, manifest, build" : "code health check failed",
-                Suggestion = allOk ? null : "fix build errors and re-run `a365 validate`"
+                Description = description,
+                Suggestion = suggestion
             });
         }
         else
@@ -499,10 +666,51 @@ public sealed class ValidateCommand
             });
         }
 
-        // Remaining individual tiers
-        rows.Add(CreateTierRow("Telemetry", tiers.Telemetry,
-            "tracing and observability",
-            "re-run \"instrument-observability\" skill"));
+        // Row 4: Telemetry
+        var telemetry = tiers.Telemetry;
+        if (!telemetry.Skipped)
+        {
+            var telOk = telemetry.Ok == true;
+            string telDesc;
+            string? telSuggestion = null;
+
+            if (telOk && telemetry.Warning is not null)
+            {
+                // Warning state: SDK not detected
+                telDesc = telemetry.Warning;
+                telSuggestion = "configure OpenTelemetry to export traces to Agent365";
+            }
+            else if (telOk)
+            {
+                telDesc = telemetry.ExportDetected == true
+                    ? "trace export to Agent365 detected"
+                    : "tracing and observability";
+            }
+            else
+            {
+                telDesc = "trace export failures detected";
+                telSuggestion = GetTelemetrySuggestion(telemetry);
+            }
+
+            rows.Add(new DisplayRow
+            {
+                Label = "Telemetry",
+                Ok = telOk && telemetry.Warning is null,
+                Description = telDesc,
+                Suggestion = telSuggestion,
+                IsWarning = telemetry.Warning is not null
+            });
+        }
+        else
+        {
+            rows.Add(new DisplayRow
+            {
+                Label = "Telemetry",
+                Skipped = true,
+                Reason = telemetry.Reason ?? "not yet run"
+            });
+        }
+
         rows.Add(CreateTierRow("Registered", tiers.Blueprint,
             "blueprint registration",
             null));
@@ -538,6 +746,7 @@ public sealed class ValidateCommand
         public bool Skipped { get; init; }
         public string? Reason { get; init; }
         public bool Ok { get; init; }
+        public bool IsWarning { get; init; }
         public string? Description { get; init; }
         public string? Suggestion { get; init; }
     }
@@ -564,11 +773,9 @@ public sealed class ValidateCommand
             : Path.GetFullPath(config.DeploymentProjectPath);
     }
 
-    private static List<IRequirementCheck> BuildValidationChecks(
+    private static List<IRequirementCheck> BuildStructuralChecks(
         PlatformDetector? platformDetector,
-        CommandExecutor? commandExecutor,
-        IProcessService? processService,
-        bool includeConversation = false)
+        CommandExecutor? commandExecutor)
     {
         var checks = new List<IRequirementCheck>
         {
@@ -580,14 +787,20 @@ public sealed class ValidateCommand
             checks.Add(new ProjectBuildRequirementCheck(platformDetector, commandExecutor));
         }
 
+        return checks;
+    }
+
+    private static List<IRequirementCheck> BuildBootChecks(
+        PlatformDetector? platformDetector,
+        IProcessService? processService,
+        string? resolvedUvCommand = null)
+    {
+        var checks = new List<IRequirementCheck>();
+
         if (platformDetector is not null && processService is not null)
         {
-            checks.Add(new LocalRuntimeRequirementCheck(platformDetector, processService));
-
-            if (includeConversation)
-            {
-                checks.Add(new ConversationRequirementCheck(platformDetector, processService));
-            }
+            checks.Add(new LocalRuntimeRequirementCheck(platformDetector, processService,
+                resolvedUvCommand: resolvedUvCommand));
         }
 
         return checks;
@@ -596,14 +809,16 @@ public sealed class ValidateCommand
     private static List<IRequirementCheck> BuildConversationChecks(
         PlatformDetector? platformDetector,
         IProcessService? processService,
-        bool launchPlayground = false)
+        bool launchPlayground = false,
+        string? resolvedUvCommand = null)
     {
         var checks = new List<IRequirementCheck>();
 
         if (platformDetector is not null && processService is not null)
         {
             checks.Add(new ConversationRequirementCheck(
-                platformDetector, processService, launchPlayground: launchPlayground));
+                platformDetector, processService, launchPlayground: launchPlayground,
+                resolvedUvCommand: resolvedUvCommand));
         }
 
         return checks;

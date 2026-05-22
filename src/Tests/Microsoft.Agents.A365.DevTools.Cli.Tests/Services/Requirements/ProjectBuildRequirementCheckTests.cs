@@ -187,6 +187,7 @@ public class ProjectBuildRequirementCheckTests : IDisposable
     {
         // Arrange - create a package.json so PlatformDetector identifies NodeJs
         File.WriteAllText(Path.Combine(_tempDir, "package.json"), "{}");
+        Directory.CreateDirectory(Path.Combine(_tempDir, "node_modules"));
         var config = new Agent365Config { DeploymentProjectPath = _tempDir };
         _commandExecutor.ExecuteAsync(
             Arg.Is("npm"),
@@ -210,6 +211,7 @@ public class ProjectBuildRequirementCheckTests : IDisposable
     {
         // Arrange
         File.WriteAllText(Path.Combine(_tempDir, "package.json"), "{}");
+        Directory.CreateDirectory(Path.Combine(_tempDir, "node_modules"));
         var config = new Agent365Config { DeploymentProjectPath = _tempDir };
         _commandExecutor.ExecuteAsync(
             Arg.Is("npm"),
@@ -305,4 +307,81 @@ public class ProjectBuildRequirementCheckTests : IDisposable
             Arg.Any<bool>(),
             Arg.Any<CancellationToken>());
     }
+
+    #region Python Dependency Detection
+
+    [Fact]
+    public void DetectPythonInstallCommand_WhenUvLockExists_ReturnsUvSync()
+    {
+        File.WriteAllText(Path.Combine(_tempDir, "uv.lock"), "# uv lock");
+
+        var (command, arguments) = ProjectBuildRequirementCheck.DetectPythonInstallCommand(_tempDir);
+
+        command.Should().Be("uv");
+        arguments.Should().Be("sync");
+    }
+
+    [Fact]
+    public void DetectPythonInstallCommand_WhenPyprojectWithUvSection_ReturnsUvSync()
+    {
+        File.WriteAllText(Path.Combine(_tempDir, "pyproject.toml"),
+            "[project]\nname = \"mybot\"\n\n[tool.uv]\ndev-dependencies = []");
+
+        var (command, arguments) = ProjectBuildRequirementCheck.DetectPythonInstallCommand(_tempDir);
+
+        command.Should().Be("uv");
+        arguments.Should().Be("sync");
+    }
+
+    [Fact]
+    public void DetectPythonInstallCommand_WhenPyprojectWithoutUv_ReturnsPipInstall()
+    {
+        File.WriteAllText(Path.Combine(_tempDir, "pyproject.toml"),
+            "[project]\nname = \"mybot\"\n\n[build-system]\nrequires = [\"setuptools\"]");
+
+        var (command, arguments) = ProjectBuildRequirementCheck.DetectPythonInstallCommand(_tempDir);
+
+        command.Should().Be("pip");
+        arguments.Should().Be("install -e .");
+    }
+
+    [Fact]
+    public void DetectPythonInstallCommand_WhenRequirementsTxt_ReturnsPipInstall()
+    {
+        File.WriteAllText(Path.Combine(_tempDir, "requirements.txt"), "flask>=2.0\nbotbuilder-core");
+
+        var (command, arguments) = ProjectBuildRequirementCheck.DetectPythonInstallCommand(_tempDir);
+
+        command.Should().Be("pip");
+        arguments.Should().Be("install -r requirements.txt");
+    }
+
+    [Fact]
+    public void DetectPythonInstallCommand_WhenNoDependencyFile_ReturnsNull()
+    {
+        var (command, arguments) = ProjectBuildRequirementCheck.DetectPythonInstallCommand(_tempDir);
+
+        command.Should().BeNull();
+        arguments.Should().BeNull();
+    }
+
+    [Fact]
+    public void HasUvConfig_WithToolUvSection_ReturnsTrue()
+    {
+        var pyproject = Path.Combine(_tempDir, "pyproject.toml");
+        File.WriteAllText(pyproject, "[project]\nname = \"bot\"\n\n[tool.uv]\ndev-dependencies = []");
+
+        ProjectBuildRequirementCheck.HasUvConfig(pyproject).Should().BeTrue();
+    }
+
+    [Fact]
+    public void HasUvConfig_WithoutToolUvSection_ReturnsFalse()
+    {
+        var pyproject = Path.Combine(_tempDir, "pyproject.toml");
+        File.WriteAllText(pyproject, "[project]\nname = \"bot\"\n\n[build-system]\nrequires = [\"hatchling\"]");
+
+        ProjectBuildRequirementCheck.HasUvConfig(pyproject).Should().BeFalse();
+    }
+
+    #endregion
 }

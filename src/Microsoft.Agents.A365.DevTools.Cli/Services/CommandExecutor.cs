@@ -78,7 +78,20 @@ public class CommandExecutor
             };
         }
 
-        process.Start();
+        try
+        {
+            process.Start();
+        }
+        catch (System.ComponentModel.Win32Exception ex)
+        {
+            _logger.LogDebug(ex, "Process '{Command}' not found", command);
+            return new CommandResult
+            {
+                ExitCode = -1,
+                StandardOutput = string.Empty,
+                StandardError = $"'{command}' not found: {ex.Message}"
+            };
+        }
 
         if (captureOutput)
         {
@@ -202,7 +215,21 @@ public class CommandExecutor
             }
         };
 
-        process.Start();
+        try
+        {
+            process.Start();
+        }
+        catch (System.ComponentModel.Win32Exception ex)
+        {
+            _logger.LogDebug(ex, "Process '{Command}' not found", command);
+            return new CommandResult
+            {
+                ExitCode = -1,
+                StandardOutput = string.Empty,
+                StandardError = $"'{command}' not found: {ex.Message}"
+            };
+        }
+
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 

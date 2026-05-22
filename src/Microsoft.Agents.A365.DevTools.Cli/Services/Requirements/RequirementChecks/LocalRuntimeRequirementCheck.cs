@@ -3,6 +3,7 @@
 
 using System.Diagnostics;
 using System.Net.Http;
+using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Extensions.Logging;
@@ -18,6 +19,7 @@ public class LocalRuntimeRequirementCheck : RequirementCheck
     private readonly PlatformDetector _platformDetector;
     private readonly IProcessService _processService;
     private readonly HttpClient _httpClient;
+    private readonly string? _resolvedUvCommand;
 
     /// <summary>
     /// Default port used when no port can be inferred from configuration.
@@ -47,11 +49,13 @@ public class LocalRuntimeRequirementCheck : RequirementCheck
     public LocalRuntimeRequirementCheck(
         PlatformDetector platformDetector,
         IProcessService processService,
-        HttpClient? httpClient = null)
+        HttpClient? httpClient = null,
+        string? resolvedUvCommand = null)
     {
         _platformDetector = platformDetector ?? throw new ArgumentNullException(nameof(platformDetector));
         _processService = processService ?? throw new ArgumentNullException(nameof(processService));
         _httpClient = httpClient ?? new HttpClient();
+        _resolvedUvCommand = resolvedUvCommand;
     }
 
     /// <inheritdoc />
@@ -130,7 +134,7 @@ public class LocalRuntimeRequirementCheck : RequirementCheck
         return DefaultPort;
     }
 
-    private static ProcessStartInfo BuildProcessStartInfo(ProjectPlatform platform, string projectPath, int port)
+    private ProcessStartInfo BuildProcessStartInfo(ProjectPlatform platform, string projectPath, int port)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -150,14 +154,23 @@ public class LocalRuntimeRequirementCheck : RequirementCheck
                 break;
 
             case ProjectPlatform.NodeJs:
-                startInfo.FileName = "npm";
-                startInfo.Arguments = "start";
+                WrapForWindows(startInfo, "npm", "start");
                 startInfo.EnvironmentVariables["PORT"] = port.ToString();
                 break;
 
             case ProjectPlatform.Python:
-                startInfo.FileName = "python";
-                startInfo.Arguments = "app.py";
+                var entryPoint = ResolvePythonEntryPoint(projectPath);
+                var usesUv = ProjectBuildRequirementCheck.DetectPythonInstallCommand(projectPath) is ("uv", _);
+                if (usesUv)
+                {
+                    startInfo.FileName = _resolvedUvCommand ?? "uv";
+                    startInfo.Arguments = $"run python {entryPoint}";
+                }
+                else
+                {
+                    startInfo.FileName = "python";
+                    startInfo.Arguments = entryPoint;
+                }
                 startInfo.EnvironmentVariables["PORT"] = port.ToString();
                 break;
 
@@ -166,6 +179,30 @@ public class LocalRuntimeRequirementCheck : RequirementCheck
         }
 
         return startInfo;
+    }
+
+    /// <summary>
+    /// On Windows, wraps batch-file commands (npm, npx, node) with cmd.exe /c
+    /// so they can be started with UseShellExecute=false.
+    /// </summary>
+    internal static void WrapForWindows(ProcessStartInfo startInfo, string command, string arguments)
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && IsBatchCommand(command))
+        {
+            startInfo.FileName = "cmd.exe";
+            startInfo.Arguments = $"/c {command} {arguments}";
+        }
+        else
+        {
+            startInfo.FileName = command;
+            startInfo.Arguments = arguments;
+        }
+    }
+
+    private static bool IsBatchCommand(string command)
+    {
+        var name = Path.GetFileNameWithoutExtension(command).ToLowerInvariant();
+        return name is "npm" or "npx" or "node";
     }
 
     private async Task<RequirementCheckResult> SpawnAndProbeAsync(
@@ -180,6 +217,7 @@ public class LocalRuntimeRequirementCheck : RequirementCheck
         var errorLines = new BoundedLineBuffer(MaxOutputLines);
         Process? process = null;
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var bootLogFile = ConfigService.GetCommandLogPath("validate.boot");
 
         try
         {
@@ -210,9 +248,19 @@ public class LocalRuntimeRequirementCheck : RequirementCheck
                 if (process.HasExited)
                 {
                     var exitOutput = GetCapturedOutput(outputLines, errorLines);
-                    return RequirementCheckResult.Failure(
-                        $"App exited early with code {process.ExitCode} before health endpoint responded:\n{exitOutput}",
-                        GetRunGuidance(platform));
+                    WriteBootLog(bootLogFile, outputLines, errorLines);
+                    return new RequirementCheckResult
+                    {
+                        Passed = false,
+                        ErrorMessage = $"App exited early with code {process.ExitCode} before health endpoint responded:\n{exitOutput}",
+                        ResolutionGuidance = GetRunGuidance(platform),
+                        Metadata = new RequirementCheckMetadata
+                        {
+                            Platform = platform.ToString(),
+                            ExitCode = process.ExitCode,
+                            BootLogFile = bootLogFile
+                        }
+                    };
                 }
 
                 try
@@ -260,9 +308,18 @@ public class LocalRuntimeRequirementCheck : RequirementCheck
             cancellationToken.ThrowIfCancellationRequested();
 
             var timeoutOutput = GetCapturedOutput(outputLines, errorLines);
-            return RequirementCheckResult.Failure(
-                $"App did not respond on {healthUrl} within {(int)StartupTimeout.TotalSeconds} seconds:\n{timeoutOutput}",
-                GetRunGuidance(platform));
+            WriteBootLog(bootLogFile, outputLines, errorLines);
+            return new RequirementCheckResult
+            {
+                Passed = false,
+                ErrorMessage = $"App did not respond on {healthUrl} within {(int)StartupTimeout.TotalSeconds} seconds:\n{timeoutOutput}",
+                ResolutionGuidance = GetRunGuidance(platform),
+                Metadata = new RequirementCheckMetadata
+                {
+                    Platform = platform.ToString(),
+                    BootLogFile = bootLogFile
+                }
+            };
         }
         finally
         {
@@ -282,6 +339,48 @@ public class LocalRuntimeRequirementCheck : RequirementCheck
 
                 process.Dispose();
             }
+        }
+    }
+
+    /// <summary>
+    /// Writes captured stdout/stderr to a boot log file for post-mortem inspection.
+    /// </summary>
+    private static void WriteBootLog(string logPath, BoundedLineBuffer outputLines, BoundedLineBuffer errorLines)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(logPath);
+            if (dir is not null)
+            {
+                Directory.CreateDirectory(dir);
+            }
+
+            using var writer = new StreamWriter(logPath, append: false);
+            var stdout = outputLines.GetLines();
+            var stderr = errorLines.GetLines();
+
+            if (stdout.Length > 0)
+            {
+                writer.WriteLine("[stdout]");
+                foreach (var line in stdout)
+                    writer.WriteLine(line);
+            }
+
+            if (stderr.Length > 0)
+            {
+                writer.WriteLine("[stderr]");
+                foreach (var line in stderr)
+                    writer.WriteLine(line);
+            }
+
+            if (stdout.Length == 0 && stderr.Length == 0)
+            {
+                writer.WriteLine("(no output captured)");
+            }
+        }
+        catch
+        {
+            // Best-effort: don't fail the check if log writing fails.
         }
     }
 
@@ -311,6 +410,149 @@ public class LocalRuntimeRequirementCheck : RequirementCheck
         }
 
         return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>
+    /// Resolves the Python entry point by inspecting the project:
+    /// 1. Procfile (web: python &lt;file&gt;) — explicit, highest priority
+    /// 2. Scan top-level .py files for if __name__ == "__main__" guard
+    /// 3. Among matches, prefer well-known names (app.py, main.py)
+    /// 4. Falls back to app.py if nothing is found.
+    /// </summary>
+    internal static string ResolvePythonEntryPoint(string projectPath)
+    {
+        // Check Procfile for explicit command
+        var procfilePath = Path.Combine(projectPath, "Procfile");
+        if (File.Exists(procfilePath))
+        {
+            var entryFromProcfile = ParseProcfileEntryPoint(procfilePath);
+            if (entryFromProcfile is not null)
+            {
+                return entryFromProcfile;
+            }
+        }
+
+        // Scan top-level .py files for entry point guard
+        var pyFiles = Directory.GetFiles(projectPath, "*.py", SearchOption.TopDirectoryOnly);
+        var filesWithMain = new List<string>();
+
+        foreach (var pyFile in pyFiles)
+        {
+            if (HasMainGuard(pyFile))
+            {
+                filesWithMain.Add(Path.GetFileName(pyFile));
+            }
+        }
+
+        if (filesWithMain.Count == 1)
+        {
+            return filesWithMain[0];
+        }
+
+        if (filesWithMain.Count > 1)
+        {
+            // Prefer well-known entry point names among matches
+            string[] preferred = ["app.py", "main.py", "__main__.py", "bot.py", "server.py"];
+            foreach (var name in preferred)
+            {
+                if (filesWithMain.Contains(name, StringComparer.OrdinalIgnoreCase))
+                {
+                    return name;
+                }
+            }
+
+            // Return the first match alphabetically
+            filesWithMain.Sort(StringComparer.OrdinalIgnoreCase);
+            return filesWithMain[0];
+        }
+
+        // No __main__ guard found — check if well-known files exist at all
+        string[] fallbackCandidates = ["app.py", "main.py", "__main__.py", "bot.py", "server.py"];
+        foreach (var candidate in fallbackCandidates)
+        {
+            if (File.Exists(Path.Combine(projectPath, candidate)))
+            {
+                return candidate;
+            }
+        }
+
+        // Default fallback
+        return "app.py";
+    }
+
+    /// <summary>
+    /// Checks whether a Python file contains an if __name__ == "__main__" guard,
+    /// indicating it is designed to be run directly.
+    /// </summary>
+    internal static bool HasMainGuard(string filePath)
+    {
+        try
+        {
+            foreach (var line in File.ReadLines(filePath))
+            {
+                var trimmed = line.TrimStart();
+                // Match: if __name__ == "__main__" or if __name__ == '__main__'
+                if (trimmed.StartsWith("if", StringComparison.Ordinal) &&
+                    trimmed.Contains("__name__") &&
+                    trimmed.Contains("__main__"))
+                {
+                    return true;
+                }
+            }
+        }
+        catch
+        {
+            // Best-effort: unreadable files are skipped
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Parses a Procfile for the web process entry point.
+    /// Expects format: web: python &lt;file.py&gt; [args...]
+    /// </summary>
+    internal static string? ParseProcfileEntryPoint(string procfilePath)
+    {
+        try
+        {
+            var lines = File.ReadAllLines(procfilePath);
+            foreach (var line in lines)
+            {
+                var trimmed = line.Trim();
+                if (!trimmed.StartsWith("web:", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                // Extract the command after "web:"
+                var command = trimmed["web:".Length..].Trim();
+
+                // Match patterns like "python app.py", "python -m module", "python3 main.py"
+                var parts = command.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length < 2)
+                {
+                    continue;
+                }
+
+                // Skip the python executable (python, python3, etc.)
+                if (parts[0].StartsWith("python", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Return everything after the python command as arguments
+                    return string.Join(' ', parts[1..]);
+                }
+
+                // If it's gunicorn/uvicorn, return the full command using -m approach
+                // e.g., "gunicorn app:app" -> we can't directly use this with "python"
+                // So skip and fall through to file detection
+            }
+        }
+        catch
+        {
+            // Best-effort: fall through to file detection
+        }
+
+        return null;
     }
 
     private static string GetRunGuidance(ProjectPlatform platform)

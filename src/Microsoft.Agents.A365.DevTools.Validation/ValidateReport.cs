@@ -21,6 +21,10 @@ public sealed class ValidateReport
 
     [JsonPropertyName("summary")]
     public SummaryResult Summary { get; set; } = new();
+
+    [JsonPropertyName("agentConsoleLogFile")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? AgentConsoleLogFile { get; set; }
 }
 
 /// <summary>
@@ -61,7 +65,7 @@ public sealed class ValidationTiers
     public ConversationTierResult Conversation { get; set; } = TierResult.CreateSkipped<ConversationTierResult>("not yet implemented");
 
     [JsonPropertyName("telemetry")]
-    public TierResult Telemetry { get; set; } = TierResult.CreateSkipped("not yet implemented");
+    public TelemetryTierResult Telemetry { get; set; } = TierResult.CreateSkipped<TelemetryTierResult>("not yet run");
 
     [JsonPropertyName("blueprint")]
     public TierResult Blueprint { get; set; } = TierResult.CreateSkipped("not yet implemented");
@@ -146,6 +150,14 @@ public sealed class BuildTierResult : TierResult
     [JsonPropertyName("exitCode")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? ExitCode { get; set; }
+
+    [JsonPropertyName("errorSummary")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ErrorSummary { get; set; }
+
+    [JsonPropertyName("buildLogFile")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? BuildLogFile { get; set; }
 }
 
 /// <summary>
@@ -160,6 +172,10 @@ public sealed class BootTierResult : TierResult
     [JsonPropertyName("bootMs")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public long? BootMs { get; set; }
+
+    [JsonPropertyName("bootLogFile")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? BootLogFile { get; set; }
 }
 
 /// <summary>
@@ -174,6 +190,28 @@ public sealed class ConversationTierResult : TierResult
     [JsonPropertyName("playgroundLaunched")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? PlaygroundLaunched { get; set; }
+
+    [JsonPropertyName("conversationLogFile")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ConversationLogFile { get; set; }
+}
+
+/// <summary>
+/// Telemetry tier: trace export validation result.
+/// </summary>
+public sealed class TelemetryTierResult : TierResult
+{
+    [JsonPropertyName("exportDetected")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? ExportDetected { get; set; }
+
+    [JsonPropertyName("matchedPatterns")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? MatchedPatterns { get; set; }
+
+    [JsonPropertyName("analyzedLineCount")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? AnalyzedLineCount { get; set; }
 }
 
 /// <summary>

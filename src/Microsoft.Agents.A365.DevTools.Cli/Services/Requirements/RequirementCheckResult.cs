@@ -106,6 +106,34 @@ public sealed class RequirementCheckMetadata
 
     /// <summary>Whether AgentsPlayground was launched for interactive testing.</summary>
     public bool? PlaygroundLaunched { get; init; }
+
+    /// <summary>
+    /// Path to the agent's captured console output log file.
+    /// Written during the conversation step; used by telemetry check and referenced in the report.
+    /// </summary>
+    public string? AgentConsoleLogPath { get; init; }
+
+    /// <summary>
+    /// Path to the MSBuild file log written during project build validation.
+    /// </summary>
+    public string? BuildLogFile { get; init; }
+
+    /// <summary>
+    /// Path to the boot log file written during local runtime validation.
+    /// </summary>
+    public string? BootLogFile { get; init; }
+
+    /// <summary>
+    /// Path to the conversation log file written during conversation validation.
+    /// Contains HTTP request/response details for each turn.
+    /// </summary>
+    public string? ConversationLogFile { get; init; }
+
+    /// <summary>
+    /// Resolved path to the uv command, set during build dependency install.
+    /// Used by the boot step to run Python agents in uv-managed projects.
+    /// </summary>
+    public string? ResolvedUvCommand { get; init; }
 }
 
 /// <summary>
