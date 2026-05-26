@@ -505,9 +505,11 @@ internal static class NonDwBlueprintSetupOrchestrator
             {
                 ctx.Results.EffectiveAuthMode = ctx.IsBothMode ? Models.AuthMode.Both : ctx.IsS2sMode ? Models.AuthMode.S2s : Models.AuthMode.Obo;
 
-                // OBO and Both: principal-scoped delegated grants (no admin required).
-                if (ctx.IsOboMode || ctx.IsBothMode)
-                    await GrantAgentIdentityPermissionsAsync(ctx, specs);
+                // OBO and Both: delegated permissions for the agent identity are inherited from the
+                // blueprint via the inheritable permissions configured in Phase 1 plus the tenant-wide
+                // admin consent granted via the /v2.0/adminconsent URL in Phase 2. No per-identity
+                // POST /oauth2PermissionGrants call is needed (and would require
+                // DelegatedPermissionGrant.ReadWrite.All, which the CLI's token never carries).
 
                 // S2S and Both: app role assignments (requires Global Admin; falls back to PowerShell instructions).
                 if (ctx.IsS2sMode || ctx.IsBothMode)
@@ -638,127 +640,6 @@ internal static class NonDwBlueprintSetupOrchestrator
     }
 
     /// <summary>
-    /// Grants the same oauth2 permission grants to the Agent Identity SP that the blueprint has.
-    /// Called after agent identity creation so the identity can acquire app-only tokens for all
-    /// blueprint resources (e.g. Power Platform, Observability API) via the FMI token chain.
-    /// This step is idempotent — safe to re-run on subsequent setup invocations.
-    /// </summary>
-    internal static async Task GrantAgentIdentityPermissionsAsync(
-        SetupContext ctx,
-        List<ResourcePermissionSpec> specs)
-    {
-        if (specs.Count == 0)
-        {
-            ctx.Logger.LogDebug("No permission specs to grant to agent identity; skipping.");
-            return;
-        }
-
-        ctx.Logger.LogDebug("Granting permissions to agent identity ({AgentId})...", ctx.Config.AgenticAppId);
-
-        // Resolve the current developer's object ID so we can create Principal-scoped grants
-        // that don't require GA or Cloud App Admin.
-        var currentUserObjectId = await ctx.GraphApiService.GetCurrentUserObjectIdAsync(
-            ctx.Config.TenantId!, ctx.CancellationToken);
-
-        if (string.IsNullOrWhiteSpace(currentUserObjectId))
-        {
-            ctx.Logger.LogWarning(
-                "Could not resolve current user object ID. " +
-                "Permissions to the agent identity must be granted manually in the Entra portal.");
-            ctx.Results.Warnings.Add(
-                "Could not resolve current user object ID for Principal-scoped permission grants. " +
-                "Grant them manually in the Entra portal.");
-            return;
-        }
-
-        // AgenticAppId is the SP object ID returned by CreateAgentIdentityAsync and stored in config.
-        var agentIdentitySpObjectId = ctx.Config.AgenticAppId;
-
-        if (string.IsNullOrWhiteSpace(agentIdentitySpObjectId))
-        {
-            ctx.Logger.LogWarning(
-                "Agent identity ID not found in config. " +
-                "Permissions must be granted manually in the Entra portal.");
-            return;
-        }
-
-        var anyFailed = false;
-        foreach (var spec in specs)
-        {
-            if (spec.Scopes.Length == 0) continue;
-
-            var resourceSpObjectId = await ctx.GraphApiService.EnsureServicePrincipalForAppIdAsync(
-                ctx.Config.TenantId!,
-                spec.ResourceAppId,
-                ctx.CancellationToken,
-                Constants.AuthenticationConstants.RequiredPermissionGrantScopes);
-
-            if (string.IsNullOrWhiteSpace(resourceSpObjectId))
-            {
-                ctx.Logger.LogWarning(
-                    "Could not resolve SP for resource {ResourceName} ({ResourceAppId}); skipping.",
-                    spec.ResourceName, spec.ResourceAppId);
-                anyFailed = true;
-                continue;
-            }
-
-            // Query the resource SP's published scopes and filter out any that haven't
-            // been rolled out to this tenant yet. Attempting to grant a non-existent scope
-            // returns Request_BadRequest from Graph, which would surface as a misleading warning.
-            var availableScopes = await ctx.GraphApiService.GetAvailableScopeNamesAsync(
-                ctx.Config.TenantId!, resourceSpObjectId, ctx.CancellationToken);
-
-            var scopesToGrant = availableScopes.Count > 0
-                ? spec.Scopes.Where(s => availableScopes.Contains(s)).ToArray()
-                : spec.Scopes; // if the query failed, try all and let Graph surface any real error
-
-            if (scopesToGrant.Length == 0)
-            {
-                ctx.Logger.LogInformation(
-                    "Scopes [{Scopes}] not yet available on {ResourceName} in this tenant — skipping.",
-                    string.Join(" ", spec.Scopes), spec.ResourceName);
-                continue;
-            }
-
-            var granted = await ctx.GraphApiService.CreatePrincipalOauth2PermissionGrantAsync(
-                ctx.Config.TenantId!,
-                agentIdentitySpObjectId,
-                resourceSpObjectId,
-                currentUserObjectId,
-                scopesToGrant,
-                ctx.CancellationToken,
-                Constants.AuthenticationConstants.RequiredPermissionGrantScopes);
-
-            if (granted)
-                ctx.Logger.LogDebug(
-                    "Granted {Scopes} on {ResourceName} to agent identity (principal scope).",
-                    string.Join(" ", scopesToGrant), spec.ResourceName);
-            else
-            {
-                ctx.Logger.LogWarning(
-                    "Failed to grant {Scopes} on {ResourceName} to agent identity.",
-                    string.Join(" ", scopesToGrant), spec.ResourceName);
-                anyFailed = true;
-            }
-        }
-
-        if (anyFailed)
-        {
-            ctx.Results.AgentIdentityDelegatedOutcome = Models.GrantOutcome.Failed;
-            ctx.Results.Warnings.Add(
-                "Delegated permissions for the agent identity could not be granted automatically. " +
-                "See the Action Required section for PowerShell instructions.");
-        }
-        else
-        {
-            var grantedNames = string.Join(", ", specs.Where(s => s.Scopes.Length > 0).Select(s => s.ResourceName));
-            using (ctx.Logger.Indent())
-                ctx.Logger.LogInformation("Developer-scoped permissions granted ({Resources}).", grantedNames);
-            ctx.Results.AgentIdentityDelegatedOutcome = Models.GrantOutcome.Granted;
-        }
-    }
-
-    /// <summary>
     /// Attempts to grant app role assignments on the agent identity SP for S2S access.
     /// Requires Agent ID Administrator, Application Administrator, or Global Administrator. When the signed-in user lacks
     /// one of those roles, prints PowerShell instructions covering only the app permission section.
@@ -789,7 +670,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         var failedSpecs = new List<ResourcePermissionSpec>();
         foreach (var spec in s2sSpecs)
         {
-            var granted = await ctx.BlueprintService.GrantAppRoleAssignmentAsync(
+            var grantResult = await ctx.BlueprintService.GrantAppRoleAssignmentAsync(
                 ctx.Config.TenantId!,
                 agentIdentitySpObjectId,
                 spec.ResourceAppId,
@@ -797,8 +678,9 @@ internal static class NonDwBlueprintSetupOrchestrator
                 Constants.AuthenticationConstants.RequiredPermissionGrantScopes,
                 ctx.CancellationToken);
 
-            if (granted)
-                ctx.Logger.LogDebug("S2S app roles granted on {ResourceName} to agent identity.", spec.ResourceName);
+            if (grantResult.AllSucceeded)
+                ctx.Logger.LogDebug("S2S app roles granted on {ResourceName} to agent identity (already assigned: {AlreadyAssigned}).",
+                    spec.ResourceName, grantResult.AllAlreadyAssigned);
             else
             {
                 ctx.Logger.LogDebug("S2S app role assignment failed for {ResourceName} — user likely lacks a required role ({Roles}).", spec.ResourceName, AuthenticationConstants.S2SGrantRequiredRoles);
@@ -820,7 +702,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         ctx.Logger.LogInformation("S2S app role assignments require {Roles}. Run the following PowerShell:", AuthenticationConstants.S2SGrantRequiredRoles);
         ctx.Logger.LogInformation("");
         ctx.Logger.LogInformation("  # Connect to Microsoft Graph");
-        ctx.Logger.LogInformation("  Connect-MgGraph -TenantId '{TenantId}' -Scopes 'AppRoleAssignment.ReadWrite.All', 'Directory.Read.All'", ctx.Config.TenantId);
+        ctx.Logger.LogInformation("  Connect-MgGraph -TenantId '{TenantId}' -Scopes 'AppRoleAssignment.ReadWrite.All','Application.Read.All' -UseDeviceCode", ctx.Config.TenantId);
         ctx.Logger.LogInformation("");
         ctx.Logger.LogInformation("  $agentSpId = '{AgentSpId}'", agentIdentitySpObjectId);
 

@@ -753,11 +753,15 @@ internal static class AllSubcommand
                     ctx.Config.AgentBlueprintId!, ctx.Config.TenantId!,
                     specs, ctx.Logger, ctx.Results, ctx.CancellationToken,
                     knownBlueprintSpObjectId: knownBlueprintSpObjectId,
-                    confirmationProvider: ctx.ConfirmationProvider);
+                    confirmationProvider: ctx.ConfirmationProvider,
+                    commandExecutor: ctx.Executor);
 
             ctx.Results.BatchPermissionsPhase1Completed = blueprintPermissionsUpdated;
             ctx.Results.BatchPermissionsPhase2Completed = inheritedPermissionsConfigured;
-            ctx.Results.TenantWideConsentOutcome = consentGranted ? Models.GrantOutcome.Granted : Models.GrantOutcome.Failed;
+            ctx.Results.TenantWideConsentOutcome =
+                consentGranted && adminConsentUrl == null ? Models.GrantOutcome.Granted :
+                consentGranted ? Models.GrantOutcome.Unverified :
+                Models.GrantOutcome.Failed;
             ctx.Results.AdminConsentUrl = adminConsentUrl;
         }
         catch (OperationCanceledException)

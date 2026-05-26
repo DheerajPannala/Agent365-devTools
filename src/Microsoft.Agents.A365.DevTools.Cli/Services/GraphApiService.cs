@@ -155,6 +155,13 @@ public class GraphApiService
             _logger.LogError("Failed to acquire Graph API access token for tenant {TenantId}", tenantId);
             return null;
         }
+        catch (OperationCanceledException)
+        {
+            // Honor cancellation — never swallow. Otherwise Ctrl+C is silently converted to
+            // a "no token" result, and the caller falls through to interactive prompts or
+            // misleading "not found" errors.
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error acquiring Graph API access token");
@@ -479,9 +486,9 @@ public class GraphApiService
                 var body = await resp.Content.ReadAsStringAsync(ct);
                 var errorMessage = TryExtractGraphErrorMessage(body);
                 if (errorMessage != null)
-                    _logger.LogError("Graph PATCH {Url} failed: {ErrorMessage}", url, errorMessage);
+                    _logger.LogDebug("Graph PATCH {Url} failed: {ErrorMessage}", url, errorMessage);
                 else
-                    _logger.LogError("Graph PATCH {Url} failed {Code} {Reason}", url, (int)resp.StatusCode, resp.ReasonPhrase);
+                    _logger.LogDebug("Graph PATCH {Url} failed {Code} {Reason}", url, (int)resp.StatusCode, resp.ReasonPhrase);
                 _logger.LogDebug("Graph PATCH response body: {Body}", body);
             }
 
