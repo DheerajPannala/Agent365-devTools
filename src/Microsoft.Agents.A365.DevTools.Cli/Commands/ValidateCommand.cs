@@ -41,6 +41,7 @@ public sealed class ValidateCommand
         PlatformDetector? platformDetector = null,
         CommandExecutor? commandExecutor = null,
         IProcessService? processService = null,
+        GraphApiService? graphApiService = null,
         IEnumerable<IRequirementCheck>? requirementChecksOverride = null)
     {
         var command = new Command(CommandNames.Validate,
@@ -91,6 +92,16 @@ public sealed class ValidateCommand
 
                 var results = await RunChecksDetailedAsync(structuralChecks, config, logger, ct);
                 MapResultsToTiers(results, report);
+
+                // Phase 2a: Run blueprint registration check (independent of build/boot)
+                if (requirementChecksOverride is null && graphApiService is not null)
+                {
+                    var registrationCheck = new BlueprintRegistrationRequirementCheck(graphApiService);
+                    var registrationResults = await RunChecksDetailedAsync(
+                        new List<IRequirementCheck> { registrationCheck }, config, logger, ct);
+                    MapResultsToTiers(registrationResults, report);
+                    results.AddRange(registrationResults);
+                }
 
                 // Extract resolved uv command from build step for boot and conversation steps
                 var buildResultEntry = results
@@ -400,13 +411,18 @@ public sealed class ValidateCommand
                     break;
 
                 case TelemetryRequirementCheck:
+                    // ConsoleExporterActive is true if span blocks were found, even if some operations are missing.
+                    // The Details field contains "Console exporter active" when spans were detected.
+                    var exporterDetected = result.Details?.Contains("Console exporter active", StringComparison.OrdinalIgnoreCase) == true
+                        || result.Details?.Contains("span(s)", StringComparison.OrdinalIgnoreCase) == true;
+
                     if (result.IsWarning)
                     {
                         report.Tiers.Telemetry = new TelemetryTierResult
                         {
                             Ok = true,
                             Warning = result.ErrorMessage,
-                            ExportDetected = false
+                            ConsoleExporterActive = exporterDetected
                         };
                     }
                     else
@@ -414,8 +430,7 @@ public sealed class ValidateCommand
                         report.Tiers.Telemetry = new TelemetryTierResult
                         {
                             Ok = result.Passed,
-                            ExportDetected = result.Passed,
-                            MatchedPatterns = ParseMatchedPatterns(result.Details)
+                            ConsoleExporterActive = exporterDetected || result.Passed
                         };
 
                         if (!result.Passed)
@@ -424,46 +439,27 @@ public sealed class ValidateCommand
                         }
                     }
                     break;
+
+                case BlueprintRegistrationRequirementCheck:
+                    if (result.IsWarning)
+                    {
+                        report.Tiers.Blueprint = new TierResult
+                        {
+                            Ok = true,
+                            Warning = result.ErrorMessage
+                        };
+                    }
+                    else
+                    {
+                        report.Tiers.Blueprint = new TierResult
+                        {
+                            Ok = result.Passed,
+                            Reason = result.Passed ? null : result.ErrorMessage
+                        };
+                    }
+                    break;
             }
         }
-    }
-
-    private static List<string>? ParseMatchedPatterns(string? details)
-    {
-        if (string.IsNullOrWhiteSpace(details))
-            return null;
-
-        // Extract pattern names from details like "Telemetry export evidence found: pattern1, pattern2."
-        var colonIndex = details.IndexOf(':');
-        if (colonIndex < 0)
-            return null;
-
-        var patternsText = details[(colonIndex + 1)..].Trim().TrimEnd('.');
-        var dotIndex = patternsText.IndexOf('.');
-        if (dotIndex >= 0)
-            patternsText = patternsText[..dotIndex];
-
-        var patterns = patternsText.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-        return patterns.Length > 0 ? patterns.ToList() : null;
-    }
-
-    private static string GetTelemetrySuggestion(TelemetryTierResult telemetry)
-    {
-        var patterns = telemetry.MatchedPatterns;
-        if (patterns is not null)
-        {
-            var lower = patterns.Select(p => p.ToLowerInvariant()).ToHashSet();
-            if (lower.Contains("missing tenant") || lower.Contains("missing agent id"))
-                return "configure tenant ID and agent ID for telemetry export";
-            if (lower.Contains("nothing exported") || lower.Contains("spans skipped") || lower.Contains("spans filtered out"))
-                return "check agent identity configuration for telemetry export";
-            if (lower.Contains("connection refused") || lower.Contains("unavailable") || lower.Contains("deadline_exceeded"))
-                return "check OTLP endpoint connectivity";
-            if (lower.Contains("unauthenticated") || lower.Contains("permissiondenied"))
-                return "check OTLP endpoint credentials";
-        }
-
-        return "check agent console logs for telemetry export errors";
     }
 
     private static (string Description, string Suggestion) GetCodeHealthFailureInfo(ValidationTiers tiers)
@@ -676,20 +672,18 @@ public sealed class ValidateCommand
 
             if (telOk && telemetry.Warning is not null)
             {
-                // Warning state: SDK not detected
+                // Warning state: console exporter not detected
                 telDesc = telemetry.Warning;
-                telSuggestion = "configure OpenTelemetry to export traces to Agent365";
+                telSuggestion = "configure OpenTelemetry console exporter to output traces";
             }
             else if (telOk)
             {
-                telDesc = telemetry.ExportDetected == true
-                    ? "trace export to Agent365 detected"
-                    : "tracing and observability";
+                telDesc = "console exporter active, all GenAI operation spans detected";
             }
             else
             {
-                telDesc = "trace export failures detected";
-                telSuggestion = GetTelemetrySuggestion(telemetry);
+                telDesc = telemetry.Reason ?? "telemetry check failed";
+                telSuggestion = "ensure Agent365Sdk console exporter is enabled with invoke_agent, chat, and execute_tool spans";
             }
 
             rows.Add(new DisplayRow
@@ -712,8 +706,8 @@ public sealed class ValidateCommand
         }
 
         rows.Add(CreateTierRow("Registered", tiers.Blueprint,
-            "blueprint registration",
-            null));
+            "blueprint registered in Entra ID",
+            "run 'a365 setup blueprint' to register the blueprint"));
         rows.Add(CreateTierRow("Visible in MAC", tiers.Mac,
             "app compliance checks",
             null));

@@ -7,6 +7,7 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Extensions.Logging;
 
@@ -72,14 +73,115 @@ public class ConversationRequirementCheck : RequirementCheck
     internal const int DefaultPort = 5000;
 
     /// <summary>
-    /// Multi-turn conversation prompts used for validation.
+    /// Default multi-turn conversation prompts used for validation.
+    /// The middle turn is replaced with a tool-specific prompt when ToolingManifest.json is available.
     /// </summary>
-    internal static readonly string[] ConversationPrompts = new[]
+    internal static readonly string[] DefaultConversationPrompts = new[]
     {
         "Hello",
         "What can you do?",
         "Thanks"
     };
+
+    /// <summary>
+    /// Fallback prompt when no tools are discovered from ToolingManifest.json.
+    /// </summary>
+    internal const string FallbackToolPrompt = "What can you do?";
+
+    /// <summary>
+    /// Maps well-known MCP server names to natural-language questions that would trigger tool usage.
+    /// Keys are lowercase for case-insensitive matching.
+    /// </summary>
+    internal static readonly Dictionary<string, string> KnownToolPrompts = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["mail"] = "Get me my recent emails",
+        ["calendar"] = "What meetings do I have today?",
+        ["sharepoint"] = "Get me my recent SharePoint files",
+        ["onedrive"] = "List my recent OneDrive files",
+        ["teams"] = "Show me my recent Teams messages",
+        ["planner"] = "What tasks are assigned to me?",
+        ["todo"] = "Show me my to-do items",
+        ["people"] = "Find my recent contacts",
+        ["search"] = "Search for recent documents",
+        ["files"] = "List my recent files",
+    };
+
+    /// <summary>
+    /// Builds a natural-language prompt that would trigger the agent to invoke a configured tool.
+    /// Looks up the first MCP server name in <see cref="KnownToolPrompts"/> for a matching question,
+    /// falls back to a description-based prompt, then to a generic question.
+    /// </summary>
+    internal static string BuildToolInvocationPrompt(string projectPath, ILogger logger)
+    {
+        var manifestPath = Path.Combine(projectPath, McpConstants.ToolingManifestFileName);
+        if (!File.Exists(manifestPath))
+        {
+            logger.LogDebug("No ToolingManifest.json found at {Path}, using default prompt", manifestPath);
+            return FallbackToolPrompt;
+        }
+
+        try
+        {
+            var json = File.ReadAllText(manifestPath);
+            var manifest = JsonSerializer.Deserialize<ToolingManifest>(json);
+
+            if (manifest?.McpServers is null || manifest.McpServers.Length == 0)
+            {
+                logger.LogDebug("ToolingManifest.json has no MCP servers, using default prompt");
+                return FallbackToolPrompt;
+            }
+
+            var firstTool = manifest.McpServers[0];
+            var toolName = firstTool.McpServerName;
+
+            if (string.IsNullOrWhiteSpace(toolName))
+            {
+                logger.LogDebug("First MCP server has no name, using default prompt");
+                return FallbackToolPrompt;
+            }
+
+            // Check for a well-known tool keyword in the server name (e.g. "SharePoint" matches "M365SharePoint")
+            var matchedPrompt = KnownToolPrompts
+                .FirstOrDefault(kvp => toolName.Contains(kvp.Key, StringComparison.OrdinalIgnoreCase));
+
+            if (matchedPrompt.Value is not null)
+            {
+                logger.LogDebug("Using known tool prompt for MCP server: {ToolName} (matched keyword: {Keyword})", toolName, matchedPrompt.Key);
+                return matchedPrompt.Value;
+            }
+
+            // Fall back to a description-based prompt if available
+            if (!string.IsNullOrWhiteSpace(firstTool.Description))
+            {
+                logger.LogDebug("Using description-based prompt for MCP server: {ToolName}", toolName);
+                return $"Help me with {firstTool.Description.TrimEnd('.')}";
+            }
+
+            // Generic prompt referencing the tool name
+            logger.LogDebug("Using generic prompt for MCP server: {ToolName}", toolName);
+            return $"Help me with {toolName}";
+        }
+        catch (JsonException ex)
+        {
+            logger.LogDebug(ex, "Failed to parse ToolingManifest.json for tool discovery, using default prompt");
+            return FallbackToolPrompt;
+        }
+    }
+
+    /// <summary>
+    /// Builds conversation prompts, replacing the middle turn with a tool invocation prompt
+    /// when ToolingManifest.json is present and contains configured tools.
+    /// </summary>
+    internal static string[] BuildConversationPrompts(string projectPath, ILogger logger)
+    {
+        var toolPrompt = BuildToolInvocationPrompt(projectPath, logger);
+        return new[]
+        {
+            DefaultConversationPrompts[0],
+            toolPrompt,
+            DefaultConversationPrompts[2]
+        };
+    }
 
     public ConversationRequirementCheck(
         PlatformDetector platformDetector,
@@ -147,7 +249,8 @@ public class ConversationRequirementCheck : RequirementCheck
             platform, port, projectPath);
 
         var startInfo = BuildProcessStartInfo(platform, projectPath, port);
-        return await SpawnAndConverse(startInfo, healthUrl, messagesUrl, conversationId, platform, port, logger, cancellationToken);
+        var prompts = BuildConversationPrompts(projectPath, logger);
+        return await SpawnAndConverse(startInfo, healthUrl, messagesUrl, conversationId, platform, port, prompts, logger, cancellationToken);
     }
 
     private async Task<RequirementCheckResult> SpawnAndConverse(
@@ -157,6 +260,7 @@ public class ConversationRequirementCheck : RequirementCheck
         string conversationId,
         ProjectPlatform platform,
         int port,
+        string[] conversationPrompts,
         ILogger logger,
         CancellationToken cancellationToken)
     {
@@ -282,11 +386,11 @@ public class ConversationRequirementCheck : RequirementCheck
             await Task.Delay(PostHealthWarmupDelay, cancellationToken);
 
             // Phase 2: Multi-turn conversation
-            conversationLogWriter?.WriteLine($"\n[Phase 2] Starting {ConversationPrompts.Length}-turn conversation...");
+            conversationLogWriter?.WriteLine($"\n[Phase 2] Starting {conversationPrompts.Length}-turn conversation...");
             var turns = new List<ConversationTurnData>();
             var allOk = true;
 
-            for (int i = 0; i < ConversationPrompts.Length; i++)
+            for (int i = 0; i < conversationPrompts.Length; i++)
             {
                 if (process.HasExited)
                 {
@@ -307,7 +411,7 @@ public class ConversationRequirementCheck : RequirementCheck
                     };
                 }
 
-                var turnResult = await SendTurnWithRetryAsync(messagesUrl, conversationId, ConversationPrompts[i], i, port, receiver, logger, conversationLogWriter, cancellationToken);
+                var turnResult = await SendTurnWithRetryAsync(messagesUrl, conversationId, conversationPrompts[i], i, port, receiver, logger, conversationLogWriter, cancellationToken);
                 turns.Add(turnResult);
                 LogTurn(conversationLogWriter, i + 1, turnResult);
 
@@ -678,17 +782,6 @@ public class ConversationRequirementCheck : RequirementCheck
             CreateNoWindow = true
         };
 
-        // Disable auth so the bot accepts unauthenticated local requests.
-        // BYPASS_AUTH: used by .NET Agent SDK
-        startInfo.EnvironmentVariables["BYPASS_AUTH"] = "true";
-        // Clear credentials that trigger JWT middleware in Python/Node SDKs.
-        // When these are absent, agents run in anonymous mode.
-        startInfo.EnvironmentVariables["CLIENT_ID"] = "";
-        startInfo.EnvironmentVariables["CLIENT_SECRET"] = "";
-        startInfo.EnvironmentVariables["TENANT_ID"] = "";
-        // Also clear .NET Bot Framework equivalents
-        startInfo.EnvironmentVariables["MicrosoftAppId"] = "";
-        startInfo.EnvironmentVariables["MicrosoftAppPassword"] = "";
 
         switch (platform)
         {

@@ -3,6 +3,8 @@
 
 using System.Diagnostics;
 using System.Net;
+using System.Runtime.InteropServices;
+using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
@@ -254,8 +256,16 @@ public class ConversationRequirementCheckTests : IDisposable
 
         await check.CheckAsync(config, _logger);
 
-        _processService.Received(1).Start(Arg.Is<ProcessStartInfo>(p =>
-            p.FileName == "npm" && p.Arguments == "start"));
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            _processService.Received(1).Start(Arg.Is<ProcessStartInfo>(p =>
+                p.FileName == "cmd.exe" && p.Arguments == "/c npm start"));
+        }
+        else
+        {
+            _processService.Received(1).Start(Arg.Is<ProcessStartInfo>(p =>
+                p.FileName == "npm" && p.Arguments == "start"));
+        }
     }
 
     [Fact]
@@ -699,5 +709,186 @@ public class ConversationRequirementCheckTests : IDisposable
 
             return new HttpResponseMessage(HttpStatusCode.NotFound);
         }
+    }
+
+    [Fact]
+    public void BuildToolInvocationPrompt_NoManifest_ReturnsFallback()
+    {
+        var prompt = ConversationRequirementCheck.BuildToolInvocationPrompt(_tempDir, _logger);
+        prompt.Should().Be(ConversationRequirementCheck.FallbackToolPrompt,
+            because: "no ToolingManifest.json means we fall back to the default prompt");
+    }
+
+    [Fact]
+    public void BuildToolInvocationPrompt_EmptyServers_ReturnsFallback()
+    {
+        var manifest = new { mcpServers = Array.Empty<object>() };
+        File.WriteAllText(
+            Path.Combine(_tempDir, "ToolingManifest.json"),
+            JsonSerializer.Serialize(manifest));
+
+        var prompt = ConversationRequirementCheck.BuildToolInvocationPrompt(_tempDir, _logger);
+        prompt.Should().Be(ConversationRequirementCheck.FallbackToolPrompt,
+            because: "an empty mcpServers array means no tools to invoke");
+    }
+
+    [Fact]
+    public void BuildToolInvocationPrompt_InvalidJson_ReturnsFallback()
+    {
+        File.WriteAllText(
+            Path.Combine(_tempDir, "ToolingManifest.json"),
+            "{ not valid json }}}");
+
+        var prompt = ConversationRequirementCheck.BuildToolInvocationPrompt(_tempDir, _logger);
+        prompt.Should().Be(ConversationRequirementCheck.FallbackToolPrompt,
+            because: "malformed JSON should not crash the check");
+    }
+
+    [Fact]
+    public void BuildToolInvocationPrompt_WithKnownTool_ReturnsNaturalQuestion()
+    {
+        var manifest = new
+        {
+            mcpServers = new[]
+            {
+                new { mcpServerName = "Mail", url = "https://example.com/mail" }
+            }
+        };
+        File.WriteAllText(
+            Path.Combine(_tempDir, "ToolingManifest.json"),
+            JsonSerializer.Serialize(manifest));
+
+        var prompt = ConversationRequirementCheck.BuildToolInvocationPrompt(_tempDir, _logger);
+        prompt.Should().Be("Get me my recent emails",
+            because: "Mail is a known tool with a mapped natural-language question");
+    }
+
+    [Fact]
+    public void BuildToolInvocationPrompt_MultipleTools_UsesFirstTool()
+    {
+        var manifest = new
+        {
+            mcpServers = new[]
+            {
+                new { mcpServerName = "Calendar", url = "https://example.com/cal" },
+                new { mcpServerName = "Mail", url = "https://example.com/mail" }
+            }
+        };
+        File.WriteAllText(
+            Path.Combine(_tempDir, "ToolingManifest.json"),
+            JsonSerializer.Serialize(manifest));
+
+        var prompt = ConversationRequirementCheck.BuildToolInvocationPrompt(_tempDir, _logger);
+        prompt.Should().Be("What meetings do I have today?",
+            because: "Calendar is first and is a known tool");
+    }
+
+    [Fact]
+    public void BuildToolInvocationPrompt_UnknownToolWithDescription_UsesDescription()
+    {
+        var manifest = new
+        {
+            mcpServers = new[]
+            {
+                new { mcpServerName = "CustomCRM", url = "https://example.com/crm", description = "Manage customer relationships." }
+            }
+        };
+        File.WriteAllText(
+            Path.Combine(_tempDir, "ToolingManifest.json"),
+            JsonSerializer.Serialize(manifest));
+
+        var prompt = ConversationRequirementCheck.BuildToolInvocationPrompt(_tempDir, _logger);
+        prompt.Should().Be("Help me with Manage customer relationships",
+            because: "unknown tools with a description fall back to description-based prompt");
+    }
+
+    [Fact]
+    public void BuildToolInvocationPrompt_UnknownToolNoDescription_UsesToolName()
+    {
+        var manifest = new
+        {
+            mcpServers = new[]
+            {
+                new { mcpServerName = "CustomCRM", url = "https://example.com/crm" }
+            }
+        };
+        File.WriteAllText(
+            Path.Combine(_tempDir, "ToolingManifest.json"),
+            JsonSerializer.Serialize(manifest));
+
+        var prompt = ConversationRequirementCheck.BuildToolInvocationPrompt(_tempDir, _logger);
+        prompt.Should().Be("Help me with CustomCRM",
+            because: "unknown tools without a description fall back to name-based prompt");
+    }
+
+    [Fact]
+    public void BuildToolInvocationPrompt_KnownToolCaseInsensitive_ReturnsNaturalQuestion()
+    {
+        var manifest = new
+        {
+            mcpServers = new[]
+            {
+                new { mcpServerName = "SHAREPOINT", url = "https://example.com/sp" }
+            }
+        };
+        File.WriteAllText(
+            Path.Combine(_tempDir, "ToolingManifest.json"),
+            JsonSerializer.Serialize(manifest));
+
+        var prompt = ConversationRequirementCheck.BuildToolInvocationPrompt(_tempDir, _logger);
+        prompt.Should().Be("Get me my recent SharePoint files",
+            because: "tool name matching should be case-insensitive");
+    }
+
+    [Fact]
+    public void BuildToolInvocationPrompt_ContainsKnownKeyword_ReturnsNaturalQuestion()
+    {
+        var manifest = new
+        {
+            mcpServers = new[]
+            {
+                new { mcpServerName = "M365SharePoint", url = "https://example.com/sp" }
+            }
+        };
+        File.WriteAllText(
+            Path.Combine(_tempDir, "ToolingManifest.json"),
+            JsonSerializer.Serialize(manifest));
+
+        var prompt = ConversationRequirementCheck.BuildToolInvocationPrompt(_tempDir, _logger);
+        prompt.Should().Be("Get me my recent SharePoint files",
+            because: "tool name containing a known keyword should match via contains");
+    }
+
+    [Fact]
+    public void BuildConversationPrompts_NoManifest_ReturnsDefaults()
+    {
+        var prompts = ConversationRequirementCheck.BuildConversationPrompts(_tempDir, _logger);
+        prompts.Should().HaveCount(3);
+        prompts[0].Should().Be("Hello");
+        prompts[1].Should().Be("What can you do?",
+            because: "without a manifest the fallback prompt is used");
+        prompts[2].Should().Be("Thanks");
+    }
+
+    [Fact]
+    public void BuildConversationPrompts_WithManifest_ReplacesMiddleTurn()
+    {
+        var manifest = new
+        {
+            mcpServers = new[]
+            {
+                new { mcpServerName = "Mail", url = "https://example.com/mail" }
+            }
+        };
+        File.WriteAllText(
+            Path.Combine(_tempDir, "ToolingManifest.json"),
+            JsonSerializer.Serialize(manifest));
+
+        var prompts = ConversationRequirementCheck.BuildConversationPrompts(_tempDir, _logger);
+        prompts.Should().HaveCount(3);
+        prompts[0].Should().Be("Hello");
+        prompts[1].Should().Be("Get me my recent emails",
+            because: "the middle turn should be a natural question that triggers the Mail tool");
+        prompts[2].Should().Be("Thanks");
     }
 }

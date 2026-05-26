@@ -201,17 +201,37 @@ public sealed class ConversationTierResult : TierResult
 /// </summary>
 public sealed class TelemetryTierResult : TierResult
 {
-    [JsonPropertyName("exportDetected")]
+    [JsonPropertyName("consoleExporterActive")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public bool? ExportDetected { get; set; }
+    public bool? ConsoleExporterActive { get; set; }
 
-    [JsonPropertyName("matchedPatterns")]
+    [JsonPropertyName("foundOperations")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public List<string>? MatchedPatterns { get; set; }
+    public List<string>? FoundOperations { get; set; }
 
-    [JsonPropertyName("analyzedLineCount")]
+    [JsonPropertyName("missingOperations")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public int? AnalyzedLineCount { get; set; }
+    public List<string>? MissingOperations { get; set; }
+
+    [JsonPropertyName("scopeVersionPresent")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? ScopeVersionPresent { get; set; }
+
+    [JsonPropertyName("parentLinksValid")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? ParentLinksValid { get; set; }
+
+    [JsonPropertyName("childSpansMissingParent")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? ChildSpansMissingParent { get; set; }
+
+    [JsonPropertyName("resourceAttributesPresent")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? ResourceAttributesPresent { get; set; }
+
+    [JsonPropertyName("missingResourceAttributes")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? MissingResourceAttributes { get; set; }
 }
 
 /// <summary>

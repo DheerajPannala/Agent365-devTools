@@ -3,6 +3,7 @@
 
 using System.Diagnostics;
 using System.Net;
+using System.Runtime.InteropServices;
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
@@ -201,8 +202,16 @@ public class LocalRuntimeRequirementCheckTests : IDisposable
 
         // Assert
         result.Passed.Should().BeTrue();
-        _processService.Received(1).Start(Arg.Is<ProcessStartInfo>(p =>
-            p.FileName == "npm" && p.Arguments == "start"));
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            _processService.Received(1).Start(Arg.Is<ProcessStartInfo>(p =>
+                p.FileName == "cmd.exe" && p.Arguments == "/c npm start"));
+        }
+        else
+        {
+            _processService.Received(1).Start(Arg.Is<ProcessStartInfo>(p =>
+                p.FileName == "npm" && p.Arguments == "start"));
+        }
     }
 
     [Fact]
