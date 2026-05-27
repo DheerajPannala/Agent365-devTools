@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Extensions.Logging;
 
@@ -10,12 +12,28 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementCh
 /// Validates that the agent blueprint is registered in Microsoft Entra ID.
 /// Checks that the blueprint application exists, has a service principal,
 /// (if configured) has an agent registration, and has inheritable permissions configured.
+/// Expected permissions come from a static baseline plus the tooling manifest (if present).
 /// Uses the same Graph API methods as <c>query-entra</c>.
 /// </summary>
 public class BlueprintRegistrationRequirementCheck : RequirementCheck
 {
     private readonly GraphApiService _graphApiService;
     private readonly AgentBlueprintService? _blueprintService;
+
+    /// <summary>
+    /// Static baseline permissions required for every agent blueprint.
+    /// </summary>
+    internal static readonly List<(string ResourceAppId, string ResourceName, string[] Scopes)> BaselinePermissions =
+    [
+        (ConfigConstants.ObservabilityApiAppId, "Agent365 Observability",
+            new[] { ConfigConstants.ObservabilityApiOtelWriteScope }),
+        (AuthenticationConstants.MicrosoftGraphResourceAppId, "Microsoft Graph",
+            ConfigConstants.DefaultAgentApplicationScopes.ToArray()),
+        (PowerPlatformConstants.PowerPlatformApiResourceAppId, "Power Platform API",
+            new[] { PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead }),
+        (McpConstants.WorkIQToolsProdAppId, "Work IQ Tools",
+            new[] { "McpServersMetadata.Read.All" }),
+    ];
 
     public BlueprintRegistrationRequirementCheck(GraphApiService graphApiService, AgentBlueprintService? blueprintService = null)
     {
@@ -81,10 +99,12 @@ public class BlueprintRegistrationRequirementCheck : RequirementCheck
 
         if (!appExists)
         {
-            return RequirementCheckResult.Failure(
+            var result = RequirementCheckResult.Failure(
                 $"Blueprint application '{blueprintId}' not found in Entra ID",
                 "Run 'a365 setup blueprint' to create the blueprint application, or verify the agentBlueprintId in your configuration.",
                 details: $"No Entra application with appId '{blueprintId}' exists in tenant '{tenantId}'.");
+            result.Metadata = new RequirementCheckMetadata { AppExists = false };
+            return result;
         }
 
         // Check 2: Service principal exists for the blueprint
@@ -96,17 +116,21 @@ public class BlueprintRegistrationRequirementCheck : RequirementCheck
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogDebug(ex, "Failed to query Entra for blueprint service principal");
-            return RequirementCheckResult.Warning(
+            var result = RequirementCheckResult.Warning(
                 "Blueprint application exists but could not verify service principal",
                 details: $"Graph API query failed: {ex.Message}");
+            result.Metadata = new RequirementCheckMetadata { AppExists = true };
+            return result;
         }
 
         if (string.IsNullOrEmpty(servicePrincipalId))
         {
-            return RequirementCheckResult.Failure(
+            var result = RequirementCheckResult.Failure(
                 $"Service principal not found for blueprint '{blueprintId}'",
                 "Run 'a365 setup blueprint' to ensure the service principal is provisioned.",
                 details: $"Application '{blueprintId}' exists but has no service principal in tenant '{tenantId}'.");
+            result.Metadata = new RequirementCheckMetadata { AppExists = true, ServicePrincipalExists = false };
+            return result;
         }
 
         // Check 3: Agent registration exists (if registrationId is configured)
@@ -121,41 +145,54 @@ public class BlueprintRegistrationRequirementCheck : RequirementCheck
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 logger.LogDebug(ex, "Failed to query agent registration");
-                return RequirementCheckResult.Warning(
+                var result = RequirementCheckResult.Warning(
                     "Blueprint and service principal exist but could not verify agent registration",
                     details: $"Agent registry query failed: {ex.Message}");
+                result.Metadata = new RequirementCheckMetadata { AppExists = true, ServicePrincipalExists = true };
+                return result;
             }
 
             if (registrationExists == false)
             {
-                return RequirementCheckResult.Failure(
+                var result = RequirementCheckResult.Failure(
                     $"Agent registration '{config.AgentRegistrationId}' not found",
                     "Run 'a365 setup all' to register the agent, or verify the agentRegistrationId in your configuration.",
                     details: $"Blueprint '{blueprintId}' and service principal exist, but agent registration " +
                         $"'{config.AgentRegistrationId}' was not found in the agent registry.");
+                result.Metadata = new RequirementCheckMetadata
+                {
+                    AppExists = true,
+                    ServicePrincipalExists = true,
+                    RegistrationExists = false
+                };
+                return result;
             }
 
             if (registrationExists == null)
             {
-                return RequirementCheckResult.Warning(
+                var result = RequirementCheckResult.Warning(
                     "Blueprint registered but agent registration status is unknown",
                     details: $"Application and service principal verified. Agent registration '{config.AgentRegistrationId}' " +
                         "could not be confirmed (insufficient permissions or transient error).");
+                result.Metadata = new RequirementCheckMetadata { AppExists = true, ServicePrincipalExists = true };
+                return result;
             }
 
             return await BuildSuccessResult(config, blueprintId, tenantId, logger,
                 $"Blueprint '{blueprintId}' registered with service principal and agent registration '{config.AgentRegistrationId}'.",
+                registrationExists: true,
                 cancellationToken);
         }
 
             return await BuildSuccessResult(config, blueprintId, tenantId, logger,
             $"Blueprint '{blueprintId}' registered with service principal '{servicePrincipalId}'.",
+            registrationExists: null,
             cancellationToken);
     }
 
     /// <summary>
-    /// After core registration checks pass, verify inheritable permissions and consent status
-    /// by comparing config.ResourceConsents (expected) against what is actually in Entra.
+    /// After core registration checks pass, verify inheritable permissions
+    /// by comparing the static baseline + tooling manifest scopes against what is actually in Entra.
     /// Missing or mismatched permissions produce a warning (not a failure).
     /// </summary>
     private async Task<RequirementCheckResult> BuildSuccessResult(
@@ -164,12 +201,25 @@ public class BlueprintRegistrationRequirementCheck : RequirementCheck
             string tenantId,
             ILogger logger,
             string baseDetails,
+            bool? registrationExists,
             CancellationToken cancellationToken)
     {
-            if (_blueprintService is null || config.ResourceConsents.Count == 0)
+            var baseMetadata = new RequirementCheckMetadata
             {
-                return RequirementCheckResult.Success(details: baseDetails);
+                AppExists = true,
+                ServicePrincipalExists = true,
+                RegistrationExists = registrationExists
+            };
+
+            if (_blueprintService is null)
+            {
+                var result = RequirementCheckResult.Success(details: baseDetails);
+                result.Metadata = baseMetadata;
+                return result;
             }
+
+            // Build expected permissions: static baseline + tooling manifest scopes
+            var expectedPermissions = BuildExpectedPermissions(config, logger);
 
             List<(string ResourceAppId, List<string> Scopes)> actualPermissions;
             try
@@ -180,9 +230,11 @@ public class BlueprintRegistrationRequirementCheck : RequirementCheck
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 logger.LogDebug(ex, "Failed to query inheritable permissions");
-                return RequirementCheckResult.Warning(
+                var result = RequirementCheckResult.Warning(
                     "Blueprint registered but could not verify inheritable permissions",
                     details: $"{baseDetails} Permissions query failed: {ex.Message}");
+                result.Metadata = baseMetadata;
+                return result;
             }
 
             var actualByResource = actualPermissions.ToDictionary(
@@ -191,16 +243,22 @@ public class BlueprintRegistrationRequirementCheck : RequirementCheck
                 StringComparer.OrdinalIgnoreCase);
 
             var warnings = new List<string>();
+            var resourcePermissionResults = new List<BlueprintResourcePermission>();
 
-            foreach (var expected in config.ResourceConsents)
+            foreach (var expected in expectedPermissions)
             {
-                var resourceLabel = !string.IsNullOrWhiteSpace(expected.ResourceName)
-                    ? expected.ResourceName
-                    : expected.ResourceAppId;
-
                 if (!actualByResource.TryGetValue(expected.ResourceAppId, out var actualScopes))
                 {
-                    warnings.Add($"{resourceLabel}: no inheritable permissions configured in Entra");
+                    warnings.Add($"{expected.ResourceName}: no inheritable permissions configured in Entra");
+                    resourcePermissionResults.Add(new BlueprintResourcePermission
+                    {
+                        ResourceName = expected.ResourceName,
+                        ResourceAppId = expected.ResourceAppId,
+                        ExpectedScopes = expected.Scopes.ToList(),
+                        ActualScopes = new List<string>(),
+                        MissingScopes = expected.Scopes.ToList(),
+                        InheritablePermissionsConfigured = false
+                    });
                     continue;
                 }
 
@@ -210,28 +268,96 @@ public class BlueprintRegistrationRequirementCheck : RequirementCheck
 
                 if (missingScopes.Count > 0)
                 {
-                    warnings.Add($"{resourceLabel}: missing scopes: {string.Join(", ", missingScopes)}");
+                    warnings.Add($"{expected.ResourceName}: missing scopes: {string.Join(", ", missingScopes)}");
                 }
 
-                if (expected.ConsentGranted is false)
+                resourcePermissionResults.Add(new BlueprintResourcePermission
                 {
-                    warnings.Add($"{resourceLabel}: admin consent not granted");
-                }
+                    ResourceName = expected.ResourceName,
+                    ResourceAppId = expected.ResourceAppId,
+                    ExpectedScopes = expected.Scopes.ToList(),
+                    ActualScopes = actualScopes.ToList(),
+                    MissingScopes = missingScopes,
+                    InheritablePermissionsConfigured = true
+                });
             }
+
+            baseMetadata.ResourcePermissions = resourcePermissionResults;
 
             if (warnings.Count > 0)
             {
-                return RequirementCheckResult.Warning(
+                var result = RequirementCheckResult.Failure(
                     "Blueprint registered but permissions/consent gaps detected",
-                    details: $"{baseDetails} {string.Join(". ", warnings)}. " +
-                        "Run 'a365 setup all' or grant consent in the Azure portal.");
+                    "Run 'a365 setup all' or grant consent in the Azure portal.",
+                    details: $"{baseDetails} {string.Join(". ", warnings)}.");
+                result.Metadata = baseMetadata;
+                return result;
             }
 
-            var scopeSummary = string.Join("; ", config.ResourceConsents.Select(r =>
-                $"{(string.IsNullOrWhiteSpace(r.ResourceName) ? r.ResourceAppId : r.ResourceName)}: " +
-                $"{string.Join(", ", r.Scopes)}"));
+            var scopeSummary = string.Join("; ", expectedPermissions.Select(r =>
+                $"{r.ResourceName}: {string.Join(", ", r.Scopes)}"));
 
-            return RequirementCheckResult.Success(
+            var successResult = RequirementCheckResult.Success(
                 details: $"{baseDetails} Permissions verified: {scopeSummary}");
+            successResult.Metadata = baseMetadata;
+            return successResult;
+    }
+
+    /// <summary>
+    /// Builds the expected permission list from the static baseline plus tooling manifest scopes.
+    /// Scopes for the same resource app ID are merged.
+    /// </summary>
+    internal static List<(string ResourceAppId, string ResourceName, List<string> Scopes)> BuildExpectedPermissions(
+        Agent365Config config, ILogger logger)
+    {
+        var merged = new Dictionary<string, (string ResourceName, HashSet<string> Scopes)>(StringComparer.OrdinalIgnoreCase);
+
+        // Add static baseline
+        foreach (var (appId, name, scopes) in BaselinePermissions)
+        {
+            if (!merged.TryGetValue(appId, out var entry))
+            {
+                entry = (name, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+                merged[appId] = entry;
+            }
+
+            foreach (var scope in scopes)
+            {
+                entry.Scopes.Add(scope);
+            }
+        }
+
+        // Add tooling manifest scopes (if manifest exists)
+        var manifestPath = Path.Combine(
+            config.DeploymentProjectPath ?? Directory.GetCurrentDirectory(),
+            McpConstants.ToolingManifestFileName);
+
+        if (File.Exists(manifestPath))
+        {
+            try
+            {
+                var scopesByAudience = ManifestHelper.GetScopesByAudienceAsync(manifestPath).GetAwaiter().GetResult();
+
+                foreach (var (audienceAppId, scopes) in scopesByAudience)
+                {
+                    if (!merged.TryGetValue(audienceAppId, out var entry))
+                    {
+                        entry = ("Agent 365 Tools", new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+                        merged[audienceAppId] = entry;
+                    }
+
+                    foreach (var scope in scopes)
+                    {
+                        entry.Scopes.Add(scope);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogDebug(ex, "Failed to read tooling manifest at {Path}, skipping manifest scopes", manifestPath);
+            }
+        }
+
+        return merged.Select(kvp => (kvp.Key, kvp.Value.ResourceName, kvp.Value.Scopes.OrderBy(s => s).ToList())).ToList();
     }
 }

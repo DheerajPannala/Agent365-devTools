@@ -134,6 +134,18 @@ public sealed class RequirementCheckMetadata
     /// Used by the boot step to run Python agents in uv-managed projects.
     /// </summary>
     public string? ResolvedUvCommand { get; init; }
+
+    /// <summary>Whether the blueprint application exists in Entra ID.</summary>
+    public bool? AppExists { get; init; }
+
+    /// <summary>Whether a service principal exists for the blueprint.</summary>
+    public bool? ServicePrincipalExists { get; init; }
+
+    /// <summary>Whether the agent registration exists (null if not configured).</summary>
+    public bool? RegistrationExists { get; init; }
+
+    /// <summary>Resource permission results from comparing config vs Entra.</summary>
+    public List<BlueprintResourcePermission>? ResourcePermissions { get; set; }
 }
 
 /// <summary>
@@ -164,4 +176,31 @@ public sealed class ConversationTurnMetadata
 
     /// <summary>The text content of the agent's callback response, if any.</summary>
     public string? AgentResponseText { get; init; }
+}
+
+/// <summary>
+/// Permission status for a single resource API in the blueprint registration check.
+/// </summary>
+public sealed class BlueprintResourcePermission
+{
+    /// <summary>Display name of the resource (e.g., "Microsoft Graph").</summary>
+    public string ResourceName { get; init; } = string.Empty;
+
+    /// <summary>Application ID of the resource.</summary>
+    public string ResourceAppId { get; init; } = string.Empty;
+
+    /// <summary>Scopes expected from config.</summary>
+    public List<string> ExpectedScopes { get; init; } = new();
+
+    /// <summary>Scopes actually found in Entra inheritable permissions.</summary>
+    public List<string> ActualScopes { get; init; } = new();
+
+    /// <summary>Scopes in config but missing from Entra.</summary>
+    public List<string> MissingScopes { get; init; } = new();
+
+    /// <summary>Whether admin consent has been granted (from config).</summary>
+    public bool? ConsentGranted { get; init; }
+
+    /// <summary>Whether inheritable permissions are configured in Entra for this resource.</summary>
+    public bool InheritablePermissionsConfigured { get; init; }
 }

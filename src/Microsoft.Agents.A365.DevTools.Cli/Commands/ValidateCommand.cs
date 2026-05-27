@@ -54,6 +54,11 @@ public sealed class ValidateCommand
             "Launch AgentsPlayground after automated conversation turns for interactive testing");
         command.AddOption(playgroundOption);
 
+        var withTenantOption = new Option<bool>(
+            "--with-tenant",
+            "Run tenant-level checks (blueprint registration, permissions, consent)");
+        command.AddOption(withTenantOption);
+
         command.SetHandler(async (InvocationContext context) =>
         {
             var ct = context.GetCancellationToken();
@@ -61,6 +66,7 @@ public sealed class ValidateCommand
             var configPath = Path.Combine(cwd, ConfigConstants.DefaultConfigFileName);
             var report = new ValidateReport();
             var launchPlayground = context.ParseResult.GetValueForOption(playgroundOption);
+            var withTenant = context.ParseResult.GetValueForOption(withTenantOption);
 
             try
             {
@@ -94,14 +100,20 @@ public sealed class ValidateCommand
                 var results = await RunChecksDetailedAsync(structuralChecks, config, logger, ct);
                 MapResultsToTiers(results, report);
 
-                // Phase 2a: Run blueprint registration check (independent of build/boot)
-                if (requirementChecksOverride is null && graphApiService is not null)
+                // Phase 2a: Run blueprint registration check (requires --with-tenant)
+                if (withTenant && requirementChecksOverride is null && graphApiService is not null)
                 {
                     var registrationCheck = new BlueprintRegistrationRequirementCheck(graphApiService, agentBlueprintService);
                     var registrationResults = await RunChecksDetailedAsync(
                         new List<IRequirementCheck> { registrationCheck }, config, logger, ct);
                     MapResultsToTiers(registrationResults, report);
                     results.AddRange(registrationResults);
+                }
+                else if (!withTenant && requirementChecksOverride is null)
+                {
+                    report.Tiers.Blueprint = TierResult.CreateSkipped<BlueprintTierResult>("use --with-tenant");
+                    report.Tiers.AgentMetrics = TierResult.CreateSkipped("use --with-tenant");
+                    report.Tiers.M365 = TierResult.CreateSkipped("use --with-tenant");
                 }
 
                 // Extract resolved uv command from build step for boot and conversation steps
@@ -442,22 +454,41 @@ public sealed class ValidateCommand
                     break;
 
                 case BlueprintRegistrationRequirementCheck:
+                    var blueprintTier = new BlueprintTierResult();
                     if (result.IsWarning)
                     {
-                        report.Tiers.Blueprint = new TierResult
-                        {
-                            Ok = true,
-                            Warning = result.ErrorMessage
-                        };
+                        blueprintTier.Ok = true;
+                        blueprintTier.Warning = result.ErrorMessage;
                     }
                     else
                     {
-                        report.Tiers.Blueprint = new TierResult
-                        {
-                            Ok = result.Passed,
-                            Reason = result.Passed ? null : result.ErrorMessage
-                        };
+                        blueprintTier.Ok = result.Passed;
+                        blueprintTier.Reason = result.Passed ? null : result.ErrorMessage;
                     }
+
+                    if (result.Metadata is not null)
+                    {
+                        blueprintTier.AppExists = result.Metadata.AppExists;
+                        blueprintTier.ServicePrincipalExists = result.Metadata.ServicePrincipalExists;
+                        blueprintTier.RegistrationExists = result.Metadata.RegistrationExists;
+
+                        if (result.Metadata.ResourcePermissions is { Count: > 0 })
+                        {
+                            blueprintTier.Resources = result.Metadata.ResourcePermissions.Select(rp =>
+                                new BlueprintResourceResult
+                                {
+                                    ResourceName = rp.ResourceName,
+                                    ResourceAppId = rp.ResourceAppId,
+                                    ExpectedScopes = rp.ExpectedScopes,
+                                    ActualScopes = rp.ActualScopes,
+                                    MissingScopes = rp.MissingScopes.Count > 0 ? rp.MissingScopes : null,
+                                    ConsentGranted = rp.ConsentGranted,
+                                    InheritablePermissionsConfigured = rp.InheritablePermissionsConfigured
+                                }).ToList();
+                        }
+                    }
+
+                    report.Tiers.Blueprint = blueprintTier;
                     break;
             }
         }
@@ -500,9 +531,8 @@ public sealed class ValidateCommand
         if (tiers.Conversation is { Skipped: false, Ok: false }) return "conversation";
         if (tiers.Telemetry is { Skipped: false, Ok: false }) return "telemetry";
         if (tiers.Blueprint is { Skipped: false, Ok: false }) return "blueprint";
-        if (tiers.Mac is { Skipped: false, Ok: false }) return "mac";
+        if (tiers.AgentMetrics is { Skipped: false, Ok: false }) return "agentMetrics";
         if (tiers.M365 is { Skipped: false, Ok: false }) return "m365";
-        if (tiers.Judge is { Skipped: false, Ok: false }) return "judge";
         return null;
     }
 
@@ -565,7 +595,7 @@ public sealed class ValidateCommand
         else if (failCount > 0)
         {
             logger.LogInformation(
-                "  {FailCount} of {LocalChecks} checks failed.  Run `a365 validate --fix` to attempt auto-repair.",
+                "  {FailCount} of {LocalChecks} checks failed.",
                 failCount, localChecks);
         }
 
@@ -708,8 +738,10 @@ public sealed class ValidateCommand
 
         rows.Add(CreateTierRow("Registered", tiers.Blueprint,
             "blueprint registered in Entra ID",
-            "run 'a365 setup blueprint' to register the blueprint"));
-        rows.Add(CreateTierRow("Visible in MAC", tiers.Mac,
+            tiers.Blueprint.Reason?.Contains("permissions/consent", StringComparison.OrdinalIgnoreCase) == true
+                ? "run 'a365 setup permissions' to configure inheritable permissions"
+                : "run 'a365 setup blueprint' to register the blueprint"));
+        rows.Add(CreateTierRow("Agent Metrics Visible", tiers.AgentMetrics,
             "app compliance checks",
             null));
         rows.Add(CreateTierRow("Visible in M365", tiers.M365,

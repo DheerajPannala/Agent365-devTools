@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using FluentAssertions;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
@@ -310,150 +311,31 @@ public class BlueprintRegistrationRequirementCheckTests
     }
 
     [Fact]
-    public async Task CheckAsync_WithPermissions_IncludesScopesInDetails()
+    public async Task CheckAsync_AllBaselinePermissionsPresent_ReturnsSuccess()
     {
         var config = new Agent365Config
         {
             TenantId = TestTenantId,
-            AgentBlueprintId = TestBlueprintId,
-            ResourceConsents = new List<ResourceConsent>
-            {
-                new()
-                {
-                    ResourceName = "Microsoft Graph",
-                    ResourceAppId = "00000003-0000-0000-c000-000000000000",
-                    ConsentGranted = true,
-                    Scopes = new List<string> { "User.Read", "Mail.Read" }
-                }
-            }
+            AgentBlueprintId = TestBlueprintId
         };
 
         SetupAppAndSpExist();
         var mockBpService = CreateMockBlueprintService();
         mockBpService.ListInheritablePermissionsAsync(TestTenantId, TestBlueprintId, Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
-            .Returns(new List<(string ResourceAppId, List<string> Scopes)>
-            {
-                ("00000003-0000-0000-c000-000000000000", new List<string> { "User.Read", "Mail.Read" })
-            });
+            .Returns(BlueprintRegistrationRequirementCheck.BaselinePermissions.Select(b =>
+                (b.ResourceAppId, b.Scopes.ToList())).ToList());
 
         var check = new BlueprintRegistrationRequirementCheck(_mockGraphApiService, mockBpService);
         var result = await check.CheckAsync(config, _logger);
 
-        result.Passed.Should().BeTrue(because: "all expected scopes are present in Entra");
+        result.Passed.Should().BeTrue(because: "all baseline scopes are present in Entra");
         result.IsWarning.Should().BeFalse();
-        result.Details.Should().Contain("User.Read",
-            because: "details should list the configured scopes");
+        result.Details.Should().Contain("Permissions verified",
+            because: "details should confirm permissions were verified");
     }
 
     [Fact]
-    public async Task CheckAsync_MissingScopes_ReturnsWarning()
-    {
-        var config = new Agent365Config
-        {
-            TenantId = TestTenantId,
-            AgentBlueprintId = TestBlueprintId,
-            ResourceConsents = new List<ResourceConsent>
-            {
-                new()
-                {
-                    ResourceName = "Microsoft Graph",
-                    ResourceAppId = "00000003-0000-0000-c000-000000000000",
-                    ConsentGranted = true,
-                    Scopes = new List<string> { "User.Read", "Mail.Read", "Mail.Send" }
-                }
-            }
-        };
-
-        SetupAppAndSpExist();
-        var mockBpService = CreateMockBlueprintService();
-        mockBpService.ListInheritablePermissionsAsync(TestTenantId, TestBlueprintId, Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
-            .Returns(new List<(string ResourceAppId, List<string> Scopes)>
-            {
-                ("00000003-0000-0000-c000-000000000000", new List<string> { "User.Read" })
-            });
-
-        var check = new BlueprintRegistrationRequirementCheck(_mockGraphApiService, mockBpService);
-        var result = await check.CheckAsync(config, _logger);
-
-        result.Passed.Should().BeTrue(because: "missing scopes is a warning, not a failure");
-        result.IsWarning.Should().BeTrue();
-        result.Details.Should().Contain("Mail.Read",
-            because: "warning should list the missing scopes");
-        result.Details.Should().Contain("Mail.Send",
-            because: "warning should list all missing scopes");
-    }
-
-    [Fact]
-    public async Task CheckAsync_ResourceNotInEntra_ReturnsWarning()
-    {
-        var config = new Agent365Config
-        {
-            TenantId = TestTenantId,
-            AgentBlueprintId = TestBlueprintId,
-            ResourceConsents = new List<ResourceConsent>
-            {
-                new()
-                {
-                    ResourceName = "Agent 365 Tools",
-                    ResourceAppId = "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1",
-                    ConsentGranted = true,
-                    Scopes = new List<string> { "McpServers.DASearch.All" }
-                }
-            }
-        };
-
-        SetupAppAndSpExist();
-        var mockBpService = CreateMockBlueprintService();
-        mockBpService.ListInheritablePermissionsAsync(TestTenantId, TestBlueprintId, Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
-            .Returns(new List<(string ResourceAppId, List<string> Scopes)>());
-
-        var check = new BlueprintRegistrationRequirementCheck(_mockGraphApiService, mockBpService);
-        var result = await check.CheckAsync(config, _logger);
-
-        result.Passed.Should().BeTrue(because: "missing resource permissions is a warning, not a failure");
-        result.IsWarning.Should().BeTrue();
-        result.Details.Should().Contain("Agent 365 Tools",
-            because: "warning should name the resource missing permissions");
-    }
-
-    [Fact]
-    public async Task CheckAsync_ConsentNotGranted_ReturnsWarning()
-    {
-        var config = new Agent365Config
-        {
-            TenantId = TestTenantId,
-            AgentBlueprintId = TestBlueprintId,
-            ResourceConsents = new List<ResourceConsent>
-            {
-                new()
-                {
-                    ResourceName = "Microsoft Graph",
-                    ResourceAppId = "00000003-0000-0000-c000-000000000000",
-                    ConsentGranted = false,
-                    Scopes = new List<string> { "User.Read" }
-                }
-            }
-        };
-
-        SetupAppAndSpExist();
-        var mockBpService = CreateMockBlueprintService();
-        mockBpService.ListInheritablePermissionsAsync(TestTenantId, TestBlueprintId, Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
-            .Returns(new List<(string ResourceAppId, List<string> Scopes)>
-            {
-                ("00000003-0000-0000-c000-000000000000", new List<string> { "User.Read" })
-            });
-
-        var check = new BlueprintRegistrationRequirementCheck(_mockGraphApiService, mockBpService);
-        var result = await check.CheckAsync(config, _logger);
-
-        result.Passed.Should().BeTrue(because: "consent issues are warnings, not failures");
-        result.IsWarning.Should().BeTrue();
-        result.Details.Should().Contain("admin consent not granted",
-            because: "warning should indicate consent is missing");
-    }
-
-    [Fact]
-    public async Task CheckAsync_NoResourceConsentsInConfig_SkipsPermissionsCheck()
+    public async Task CheckAsync_MissingGraphScopes_ReturnsFail()
     {
         var config = new Agent365Config
         {
@@ -464,11 +346,45 @@ public class BlueprintRegistrationRequirementCheckTests
         SetupAppAndSpExist();
         var mockBpService = CreateMockBlueprintService();
 
+        // Return all baseline resources but Graph only has User.Read (missing other scopes)
+        var actual = BlueprintRegistrationRequirementCheck.BaselinePermissions.Select(b =>
+            b.ResourceAppId == AuthenticationConstants.MicrosoftGraphResourceAppId
+                ? (b.ResourceAppId, new List<string> { "User.Read.All" })
+                : (b.ResourceAppId, b.Scopes.ToList())).ToList();
+        mockBpService.ListInheritablePermissionsAsync(TestTenantId, TestBlueprintId, Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(actual);
+
         var check = new BlueprintRegistrationRequirementCheck(_mockGraphApiService, mockBpService);
         var result = await check.CheckAsync(config, _logger);
 
-        result.Passed.Should().BeTrue(because: "no resource consents in config means permissions check is skipped");
-        result.IsWarning.Should().BeFalse();
+        result.Passed.Should().BeFalse(because: "missing scopes should fail the tier");
+        result.ErrorMessage.Should().Contain("gaps detected",
+            because: "error should describe permission gaps");
+        result.Details.Should().Contain("Mail.ReadWrite",
+            because: "details should list one of the missing Graph scopes");
+    }
+
+    [Fact]
+    public async Task CheckAsync_ResourceNotInEntra_ReturnsFail()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = TestTenantId,
+            AgentBlueprintId = TestBlueprintId
+        };
+
+        SetupAppAndSpExist();
+        var mockBpService = CreateMockBlueprintService();
+        // Return empty — no resources configured at all
+        mockBpService.ListInheritablePermissionsAsync(TestTenantId, TestBlueprintId, Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(new List<(string ResourceAppId, List<string> Scopes)>());
+
+        var check = new BlueprintRegistrationRequirementCheck(_mockGraphApiService, mockBpService);
+        var result = await check.CheckAsync(config, _logger);
+
+        result.Passed.Should().BeFalse(because: "missing resource permissions should fail the tier");
+        result.Details.Should().Contain("no inheritable permissions configured in Entra",
+            because: "details should indicate resources are missing");
     }
 
     [Fact]
@@ -477,16 +393,7 @@ public class BlueprintRegistrationRequirementCheckTests
         var config = new Agent365Config
         {
             TenantId = TestTenantId,
-            AgentBlueprintId = TestBlueprintId,
-            ResourceConsents = new List<ResourceConsent>
-            {
-                new()
-                {
-                    ResourceAppId = "00000003-0000-0000-c000-000000000000",
-                    ConsentGranted = true,
-                    Scopes = new List<string> { "User.Read" }
-                }
-            }
+            AgentBlueprintId = TestBlueprintId
         };
 
         SetupAppAndSpExist();
@@ -519,5 +426,184 @@ public class BlueprintRegistrationRequirementCheckTests
 
         result.Passed.Should().BeTrue(because: "without blueprint service, permissions check is skipped");
         result.IsWarning.Should().BeFalse(because: "skipping permissions check is not a warning");
+    }
+
+    // --- Metadata population ---
+
+    [Fact]
+    public async Task CheckAsync_AppNotFound_MetadataHasAppExistsFalse()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = TestTenantId,
+            AgentBlueprintId = TestBlueprintId
+        };
+
+        _mockGraphApiService.ApplicationExistsByAppIdAsync(TestTenantId, TestBlueprintId, Arg.Any<CancellationToken>())
+            .Returns(false);
+
+        var check = new BlueprintRegistrationRequirementCheck(_mockGraphApiService);
+        var result = await check.CheckAsync(config, _logger);
+
+        result.Metadata.Should().NotBeNull(because: "metadata should be set on failure results");
+        result.Metadata!.AppExists.Should().BeFalse(because: "app does not exist in Entra");
+    }
+
+    [Fact]
+    public async Task CheckAsync_NoServicePrincipal_MetadataHasAppTrueSpFalse()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = TestTenantId,
+            AgentBlueprintId = TestBlueprintId
+        };
+
+        _mockGraphApiService.ApplicationExistsByAppIdAsync(TestTenantId, TestBlueprintId, Arg.Any<CancellationToken>())
+            .Returns(true);
+        _mockGraphApiService.LookupServicePrincipalByAppIdAsync(TestTenantId, TestBlueprintId, Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns((string?)null);
+
+        var check = new BlueprintRegistrationRequirementCheck(_mockGraphApiService);
+        var result = await check.CheckAsync(config, _logger);
+
+        result.Metadata.Should().NotBeNull();
+        result.Metadata!.AppExists.Should().BeTrue(because: "app exists");
+        result.Metadata.ServicePrincipalExists.Should().BeFalse(because: "SP does not exist");
+    }
+
+    [Fact]
+    public async Task CheckAsync_RegistrationNotFound_MetadataHasRegistrationFalse()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = TestTenantId,
+            AgentBlueprintId = TestBlueprintId,
+            AgentRegistrationId = TestRegistrationId
+        };
+
+        SetupAppAndSpExist();
+        _mockGraphApiService.AgentRegistrationExistsAsync(TestTenantId, TestRegistrationId, Arg.Any<CancellationToken>())
+            .Returns(false);
+
+        var check = new BlueprintRegistrationRequirementCheck(_mockGraphApiService);
+        var result = await check.CheckAsync(config, _logger);
+
+        result.Metadata.Should().NotBeNull();
+        result.Metadata!.AppExists.Should().BeTrue();
+        result.Metadata.ServicePrincipalExists.Should().BeTrue();
+        result.Metadata.RegistrationExists.Should().BeFalse(because: "registration was not found");
+    }
+
+    [Fact]
+    public async Task CheckAsync_Success_MetadataHasAllTrue()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = TestTenantId,
+            AgentBlueprintId = TestBlueprintId
+        };
+
+        SetupAppAndSpExist();
+
+        var check = new BlueprintRegistrationRequirementCheck(_mockGraphApiService);
+        var result = await check.CheckAsync(config, _logger);
+
+        result.Metadata.Should().NotBeNull(because: "metadata should be set on success results");
+        result.Metadata!.AppExists.Should().BeTrue();
+        result.Metadata.ServicePrincipalExists.Should().BeTrue();
+        result.Metadata.RegistrationExists.Should().BeNull(
+            because: "no registration ID was configured, so registration check was skipped");
+    }
+
+    [Fact]
+    public async Task CheckAsync_WithPermissions_MetadataHasResourceDetails()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = TestTenantId,
+            AgentBlueprintId = TestBlueprintId
+        };
+
+        SetupAppAndSpExist();
+        var mockBpService = CreateMockBlueprintService();
+        // Return all baseline resources with their full scopes
+        mockBpService.ListInheritablePermissionsAsync(TestTenantId, TestBlueprintId, Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(BlueprintRegistrationRequirementCheck.BaselinePermissions.Select(b =>
+                (b.ResourceAppId, b.Scopes.ToList())).ToList());
+
+        var check = new BlueprintRegistrationRequirementCheck(_mockGraphApiService, mockBpService);
+        var result = await check.CheckAsync(config, _logger);
+
+        result.Metadata.Should().NotBeNull();
+        result.Metadata!.ResourcePermissions.Should().NotBeNull();
+
+        var graphResource = result.Metadata.ResourcePermissions!
+            .FirstOrDefault(r => r.ResourceAppId == AuthenticationConstants.MicrosoftGraphResourceAppId);
+        graphResource.Should().NotBeNull(because: "Microsoft Graph is a baseline resource");
+        graphResource!.ResourceName.Should().Be("Microsoft Graph");
+        graphResource.MissingScopes.Should().BeEmpty(because: "all expected scopes are present");
+        graphResource.InheritablePermissionsConfigured.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task CheckAsync_MissingScopes_MetadataHasMissingScopesListed()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = TestTenantId,
+            AgentBlueprintId = TestBlueprintId
+        };
+
+        SetupAppAndSpExist();
+        var mockBpService = CreateMockBlueprintService();
+        // Return Graph with only User.Read.All — missing other baseline scopes
+        var actual = BlueprintRegistrationRequirementCheck.BaselinePermissions.Select(b =>
+            b.ResourceAppId == AuthenticationConstants.MicrosoftGraphResourceAppId
+                ? (b.ResourceAppId, new List<string> { "User.Read.All" })
+                : (b.ResourceAppId, b.Scopes.ToList())).ToList();
+        mockBpService.ListInheritablePermissionsAsync(TestTenantId, TestBlueprintId, Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(actual);
+
+        var check = new BlueprintRegistrationRequirementCheck(_mockGraphApiService, mockBpService);
+        var result = await check.CheckAsync(config, _logger);
+
+        result.Metadata.Should().NotBeNull();
+        var graphResource = result.Metadata!.ResourcePermissions!
+            .First(r => r.ResourceAppId == AuthenticationConstants.MicrosoftGraphResourceAppId);
+        graphResource.MissingScopes.Should().Contain("Mail.ReadWrite",
+            because: "Mail.ReadWrite is a baseline Graph scope not returned by Entra");
+        graphResource.InheritablePermissionsConfigured.Should().BeTrue(
+            because: "the resource exists in Entra, just missing some scopes");
+    }
+
+    [Fact]
+    public async Task CheckAsync_ResourceNotInEntra_MetadataShowsNotConfigured()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = TestTenantId,
+            AgentBlueprintId = TestBlueprintId
+        };
+
+        SetupAppAndSpExist();
+        var mockBpService = CreateMockBlueprintService();
+        // Return no resources at all
+        mockBpService.ListInheritablePermissionsAsync(TestTenantId, TestBlueprintId, Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(new List<(string ResourceAppId, List<string> Scopes)>());
+
+        var check = new BlueprintRegistrationRequirementCheck(_mockGraphApiService, mockBpService);
+        var result = await check.CheckAsync(config, _logger);
+
+        result.Metadata.Should().NotBeNull();
+        result.Metadata!.ResourcePermissions.Should().NotBeNull()
+            .And.HaveCountGreaterOrEqualTo(BlueprintRegistrationRequirementCheck.BaselinePermissions.Count,
+                because: "all baseline resources should appear in metadata even when missing from Entra");
+
+        var graphResource = result.Metadata.ResourcePermissions!
+            .First(r => r.ResourceAppId == AuthenticationConstants.MicrosoftGraphResourceAppId);
+        graphResource.InheritablePermissionsConfigured.Should().BeFalse(
+            because: "the resource was not found in Entra at all");
+        graphResource.MissingScopes.Should().Contain("Mail.ReadWrite",
+            because: "all expected scopes are missing when resource is not configured");
     }
 }

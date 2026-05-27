@@ -182,9 +182,7 @@ public class ValidateCommandTests : IDisposable
         report!.Tiers.Conversation.Skipped.Should().BeTrue();
         report.Tiers.Telemetry.Skipped.Should().BeTrue();
         report.Tiers.Blueprint.Skipped.Should().BeTrue();
-        report.Tiers.Mac.Skipped.Should().BeTrue();
+        report.Tiers.AgentMetrics.Skipped.Should().BeTrue();
         report.Tiers.M365.Skipped.Should().BeTrue();
-        report.Tiers.Judge.Skipped.Should().BeTrue();
-        report.Repair.Skipped.Should().BeTrue();
     }
 }

@@ -16,9 +16,6 @@ public sealed class ValidateReport
     [JsonPropertyName("tiers")]
     public ValidationTiers Tiers { get; set; } = new();
 
-    [JsonPropertyName("repair")]
-    public RepairResult Repair { get; set; } = RepairResult.NotImplemented();
-
     [JsonPropertyName("summary")]
     public SummaryResult Summary { get; set; } = new();
 
@@ -68,16 +65,14 @@ public sealed class ValidationTiers
     public TelemetryTierResult Telemetry { get; set; } = TierResult.CreateSkipped<TelemetryTierResult>("not yet run");
 
     [JsonPropertyName("blueprint")]
-    public TierResult Blueprint { get; set; } = TierResult.CreateSkipped("not yet implemented");
+    public BlueprintTierResult Blueprint { get; set; } = TierResult.CreateSkipped<BlueprintTierResult>("not yet implemented");
 
-    [JsonPropertyName("mac")]
-    public TierResult Mac { get; set; } = TierResult.CreateSkipped("not yet implemented");
+    [JsonPropertyName("agentMetrics")]
+    public TierResult AgentMetrics { get; set; } = TierResult.CreateSkipped("not yet implemented");
 
     [JsonPropertyName("m365")]
     public TierResult M365 { get; set; } = TierResult.CreateSkipped("not yet implemented");
 
-    [JsonPropertyName("judge")]
-    public TierResult Judge { get; set; } = TierResult.CreateSkipped("not yet implemented");
 }
 
 /// <summary>
@@ -235,6 +230,60 @@ public sealed class TelemetryTierResult : TierResult
 }
 
 /// <summary>
+/// Blueprint tier: Entra registration, permissions, and consent validation.
+/// </summary>
+public sealed class BlueprintTierResult : TierResult
+{
+    [JsonPropertyName("appExists")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? AppExists { get; set; }
+
+    [JsonPropertyName("servicePrincipalExists")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? ServicePrincipalExists { get; set; }
+
+    [JsonPropertyName("registrationExists")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? RegistrationExists { get; set; }
+
+    [JsonPropertyName("resources")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<BlueprintResourceResult>? Resources { get; set; }
+}
+
+/// <summary>
+/// Permission and consent status for a single resource API in the blueprint.
+/// </summary>
+public sealed class BlueprintResourceResult
+{
+    [JsonPropertyName("resourceName")]
+    public string ResourceName { get; set; } = string.Empty;
+
+    [JsonPropertyName("resourceAppId")]
+    public string ResourceAppId { get; set; } = string.Empty;
+
+    [JsonPropertyName("expectedScopes")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? ExpectedScopes { get; set; }
+
+    [JsonPropertyName("actualScopes")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? ActualScopes { get; set; }
+
+    [JsonPropertyName("missingScopes")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? MissingScopes { get; set; }
+
+    [JsonPropertyName("consentGranted")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? ConsentGranted { get; set; }
+
+    [JsonPropertyName("inheritablePermissionsConfigured")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? InheritablePermissionsConfigured { get; set; }
+}
+
+/// <summary>
 /// Result of a single conversation turn.
 /// </summary>
 public sealed class ConversationTurnResult
@@ -268,34 +317,6 @@ public sealed class ConversationTurnResult
     [JsonPropertyName("agentResponseText")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? AgentResponseText { get; set; }
-}
-
-/// <summary>
-/// Repair result (not yet implemented).
-/// </summary>
-public sealed class RepairResult
-{
-    [JsonPropertyName("skipped")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-    public bool Skipped { get; set; }
-
-    [JsonPropertyName("reason")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? Reason { get; set; }
-
-    [JsonPropertyName("iterations")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public int? Iterations { get; set; }
-
-    [JsonPropertyName("patches")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public List<string>? Patches { get; set; }
-
-    [JsonPropertyName("finalOk")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public bool? FinalOk { get; set; }
-
-    public static RepairResult NotImplemented() => new() { Skipped = true, Reason = "not yet implemented" };
 }
 
 /// <summary>
