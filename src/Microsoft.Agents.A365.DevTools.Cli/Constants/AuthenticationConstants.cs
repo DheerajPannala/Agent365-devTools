@@ -153,8 +153,10 @@ public static class AuthenticationConstants
     public const string AgentIdAdminRoleTemplateId = "db506228-d27e-4b7d-95e5-295956d6615f";
 
     /// <summary>
-    /// Delegated scope for broad directory read access.
-    /// Required for /me/memberOf and other directory read operations.
+    /// Delegated scope for broad directory read access. Retained for callers that explicitly need
+    /// a tenant-wide read; production code prefers the narrower <c>Application.Read.All</c> for
+    /// service-principal lookups by appId. Role detection no longer requires this scope — directory
+    /// role membership is read from the <c>wids</c> optional claim on the access token.
     /// </summary>
     public const string DirectoryReadAllScope = "Directory.Read.All";
 
@@ -265,12 +267,10 @@ public static class AuthenticationConstants
     public const string S2SGrantRequiredRoles = "Application Administrator or Global Administrator";
 
     /// <summary>
-    /// Roles required to create tenant-wide AllPrincipals oauth2PermissionGrants via the PowerShell
-    /// fallback path (when programmatic Principal-scoped grants fail). Note: the programmatic path
-    /// creates Principal-scoped grants and does not require an Entra admin role — only admin consent
-    /// on the client app for DelegatedPermissionGrant.ReadWrite.All.
+    /// Roles required to create tenant-wide AllPrincipals oauth2PermissionGrants.
+    /// The CLI's automated path detects Global Administrator via the wids token claim only.
     /// </summary>
-    public const string DelegatedGrantRequiredRoles = "Application Administrator or Global Administrator";
+    public const string DelegatedGrantRequiredRoles = "Global Administrator";
 
     /// <summary>
     /// Roles required to configure inheritable permissions on an agent blueprint or agent identity

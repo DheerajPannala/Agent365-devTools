@@ -127,6 +127,14 @@ public class GraphApiService
     }
 
     /// <summary>
+    /// Clears the persistent MSAL token cache. Passthrough to <see cref="IAuthenticationService.ClearTokenCacheAsync"/>
+    /// so callers that only hold a <see cref="GraphApiService"/> reference (e.g. <c>ClientAppValidator</c>)
+    /// can invalidate after an operation that makes cached tokens stale — most commonly after adding
+    /// the <c>wids</c> optional claim to the client app registration.
+    /// </summary>
+    public virtual Task ClearTokenCacheAsync() => _authService.ClearTokenCacheAsync();
+
+    /// <summary>
     /// Acquires an access token for Microsoft Graph API via MSAL (WAM on Windows,
     /// browser/device-code on macOS/Linux). Token is cached persistently by
     /// AuthenticationService — no az CLI subprocess involved.
@@ -146,6 +154,13 @@ public class GraphApiService
             }
             _logger.LogError("Failed to acquire Graph API access token for tenant {TenantId}", tenantId);
             return null;
+        }
+        catch (OperationCanceledException)
+        {
+            // Honor cancellation — never swallow. Otherwise Ctrl+C is silently converted to
+            // a "no token" result, and the caller falls through to interactive prompts or
+            // misleading "not found" errors.
+            throw;
         }
         catch (Exception ex)
         {
@@ -471,9 +486,9 @@ public class GraphApiService
                 var body = await resp.Content.ReadAsStringAsync(ct);
                 var errorMessage = TryExtractGraphErrorMessage(body);
                 if (errorMessage != null)
-                    _logger.LogError("Graph PATCH {Url} failed: {ErrorMessage}", url, errorMessage);
+                    _logger.LogDebug("Graph PATCH {Url} failed: {ErrorMessage}", url, errorMessage);
                 else
-                    _logger.LogError("Graph PATCH {Url} failed {Code} {Reason}", url, (int)resp.StatusCode, resp.ReasonPhrase);
+                    _logger.LogDebug("Graph PATCH {Url} failed {Code} {Reason}", url, (int)resp.StatusCode, resp.ReasonPhrase);
                 _logger.LogDebug("Graph PATCH response body: {Body}", body);
             }
 
@@ -548,6 +563,25 @@ public class GraphApiService
         if (doc == null) return null;
         if (!doc.RootElement.TryGetProperty("value", out var value) || value.GetArrayLength() == 0) return null;
         return value[0].GetProperty("id").GetString();
+    }
+
+    /// <summary>
+    /// Looks up a service principal's displayName by application (client) ID. Used by display-only
+    /// commands (e.g. `query-entra inheritance`) to render readable names for resources that aren't
+    /// in the small well-known list. Returns null when the SP is not present in the tenant or the
+    /// query fails — callers should fall back to the raw GUID.
+    /// </summary>
+    public virtual async Task<string?> GetServicePrincipalDisplayNameByAppIdAsync(
+        string tenantId, string appId, CancellationToken ct = default, IEnumerable<string>? scopes = null)
+    {
+        using var doc = await GraphGetAsync(
+            tenantId,
+            $"/v1.0/servicePrincipals?$filter=appId eq '{appId}'&$select=displayName",
+            ct,
+            scopes);
+        if (doc == null) return null;
+        if (!doc.RootElement.TryGetProperty("value", out var value) || value.GetArrayLength() == 0) return null;
+        return value[0].TryGetProperty("displayName", out var dn) ? dn.GetString() : null;
     }
 
     /// <summary>
@@ -668,12 +702,24 @@ public class GraphApiService
     public virtual async Task<(string? appId, string? spId)> CreateCliClientAppAsync(
         string tenantId, string displayName, CancellationToken ct = default)
     {
+        // 'wids' on accessToken is REQUIRED — without it, IsCurrentUserAdminAsync cannot detect
+        // Global Administrator role and the orchestrator's AllPrincipals grant phase is silently
+        // skipped. Set it at creation time so newly-provisioned apps don't hit the bug.
         var body = new
         {
             displayName,
             signInAudience = "AzureADMyOrg",
             isFallbackPublicClient = true,
-            publicClient = new { redirectUris = AuthenticationConstants.RequiredRedirectUris }
+            publicClient = new { redirectUris = AuthenticationConstants.RequiredRedirectUris },
+            optionalClaims = new
+            {
+                accessToken = new[]
+                {
+                    new { name = "wids", essential = false, additionalProperties = Array.Empty<string>() }
+                },
+                idToken = Array.Empty<object>(),
+                saml2Token = Array.Empty<object>()
+            }
         };
 
         using var appDoc = await GraphPostAsync(tenantId, "/v1.0/applications", body, ct);
@@ -965,86 +1011,6 @@ public class GraphApiService
         }
 
         return grants;
-    }
-
-    /// <summary>
-    /// Checks if the current user has sufficient privileges to create service principals.
-    /// Virtual to allow mocking in unit tests using Moq.
-    /// </summary>
-    /// <param name="tenantId">The tenant ID</param>
-    /// <param name="ct">Cancellation token</param>
-    /// <returns>True if user has required roles, false otherwise</returns>
-    public virtual async Task<(bool hasPrivileges, List<string> roles)> CheckServicePrincipalCreationPrivilegesAsync(
-        string tenantId,
-        CancellationToken ct = default)
-    {
-        try
-        {
-            _logger.LogDebug("Checking user's directory roles for service principal creation privileges");
-
-            var token = await GetGraphAccessTokenAsync(tenantId, ct: ct);
-            if (token == null)
-            {
-                _logger.LogWarning("Could not acquire Graph token to check privileges");
-                return (false, new List<string>());
-            }
-
-            // Trim token to remove any newline characters that may cause header validation errors
-            token = token.Trim();
-
-            using var request = new HttpRequestMessage(HttpMethod.Get,
-                $"{_graphBaseUrl}/v1.0/me/memberOf/microsoft.graph.directoryRole");
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-            using var response = await _httpClient.SendAsync(request, ct);
-            if (!response.IsSuccessStatusCode)
-            {
-                _logger.LogWarning("Could not retrieve user's directory roles: {Status}", response.StatusCode);
-                return (false, new List<string>());
-            }
-
-            var json = await response.Content.ReadAsStringAsync(ct);
-            using var doc = JsonDocument.Parse(json);
-
-            var roles = new List<string>();
-            if (doc.RootElement.TryGetProperty("value", out var rolesArray))
-            {
-                roles = rolesArray.EnumerateArray()
-                    .Where(role => role.TryGetProperty("displayName", out var displayName))
-                    .Select(role => role.GetProperty("displayName").GetString())
-                    .Where(roleName => !string.IsNullOrEmpty(roleName))
-                    .ToList()!;
-            }
-
-            _logger.LogDebug("User has {Count} directory roles", roles.Count);
-
-            // Check for required roles
-            var requiredRoles = new[]
-            {
-                "Application Administrator",
-                "Cloud Application Administrator",
-                "Global Administrator"
-            };
-
-            var hasRequiredRole = roles.Any(r => requiredRoles.Contains(r, StringComparer.OrdinalIgnoreCase));
-
-            if (hasRequiredRole)
-            {
-                _logger.LogDebug("User has sufficient privileges for service principal creation");
-            }
-            else
-            {
-                _logger.LogDebug("User does not have required roles for service principal creation. Roles: {Roles}",
-                    string.Join(", ", roles));
-            }
-
-            return (hasRequiredRole, roles);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to check service principal creation privileges: {Message}", ex.Message);
-            return (false, new List<string>());
-        }
     }
 
     /// <summary>
@@ -2153,26 +2119,61 @@ public class GraphApiService
 
     /// <summary>
     /// Adds a password (client secret) to an Entra application.
+    /// When <paramref name="lifetimeMonths"/> is null, Graph applies its default lifetime (~2 years).
+    /// When provided, an explicit endDateTime computed via <see cref="DateTimeOffset.AddMonths(int)"/>
+    /// is sent so callers can fit within tenant appManagementPolicies caps. Calendar-aware: e.g.
+    /// Jan 31 + 1 month resolves to Feb 28/29 rather than overflowing.
     /// </summary>
     public virtual async Task<string?> AddAppPasswordAsync(
-        string tenantId, string applicationObjectId, string displayName = "CLI-generated secret", CancellationToken ct = default)
+        string tenantId, string applicationObjectId, string displayName = "CLI-generated secret", int? lifetimeMonths = null, CancellationToken ct = default)
     {
-        var payload = new
+        object payload;
+        if (lifetimeMonths is { } months)
         {
-            passwordCredential = new
+            payload = new
             {
-                displayName,
-            },
-        };
-
-        using var doc = await GraphPostAsync(tenantId, $"/v1.0/applications/{applicationObjectId}/addPassword", payload, ct);
-        if (doc == null)
+                passwordCredential = new
+                {
+                    displayName,
+                    endDateTime = DateTimeOffset.UtcNow.AddMonths(months).ToString("o", System.Globalization.CultureInfo.InvariantCulture),
+                },
+            };
+        }
+        else
         {
-            _logger.LogError("Failed to add password to application {ObjectId}", applicationObjectId);
+            payload = new { passwordCredential = new { displayName } };
+        }
+
+        var response = await GraphPostWithResponseAsync(tenantId, $"/v1.0/applications/{applicationObjectId}/addPassword", payload, ct);
+
+        if (!response.IsSuccess)
+        {
+            using var _ = response.Json;
+            var errorMessage = TryExtractGraphErrorMessage(response.Body);
+            if (IsTenantSecretLifetimePolicyRejection(response.StatusCode, errorMessage))
+            {
+                var attempted = lifetimeMonths is { } m
+                    ? $"the requested {m}-month lifetime"
+                    : "the Graph default (~2 years)";
+                _logger.LogError(
+                    "Tenant Entra ID policy rejected {Attempted} for the client secret on application {ObjectId}. Pass --secret-lifetime-months N with a smaller value (e.g. --secret-lifetime-months 3) that fits inside your tenant's appManagementPolicies cap. Graph response: {Error}",
+                    attempted,
+                    applicationObjectId,
+                    errorMessage ?? $"HTTP {response.StatusCode} {response.ReasonPhrase}");
+            }
+            else
+            {
+                _logger.LogError(
+                    "Failed to add password to application {ObjectId}: {Error}",
+                    applicationObjectId,
+                    errorMessage ?? $"HTTP {response.StatusCode} {response.ReasonPhrase}");
+            }
+
             return null;
         }
 
-        if (!doc.RootElement.TryGetProperty("secretText", out var secretTextElement))
+        using var doc = response.Json;
+        if (doc == null || !doc.RootElement.TryGetProperty("secretText", out var secretTextElement))
         {
             _logger.LogError("Graph response for application {ObjectId} did not contain secretText", applicationObjectId);
             return null;
@@ -2181,6 +2182,26 @@ public class GraphApiService
         var secretText = secretTextElement.GetString();
         _logger.LogDebug("Added password to application {ObjectId}", applicationObjectId);
         return secretText;
+    }
+
+    // Detects the Microsoft Graph error returned when a tenant's appManagementPolicies
+    // restrict the maximum lifetime of a client secret to a value shorter than the one requested.
+    // Graph returns HTTP 400/403 with no stable machine-readable code, so we match on tokens
+    // that are specific to the lifetime case: "lifetime", "appManagementPolic" (matches both
+    // "appManagementPolicy" and "appManagementPolicies"), or "endDateTime" (the field we send
+    // to specify the desired expiry). A broader "policy + password" match was intentionally
+    // dropped because it also fires for password-strength / complexity rejections, which would
+    // wrongly steer users toward --secret-lifetime-months. If Graph reword changes break this
+    // matcher, update both the token list here and the GraphApiServiceAddAppPasswordTests
+    // Theory cases that pin it.
+    internal static bool IsTenantSecretLifetimePolicyRejection(int statusCode, string? errorMessage)
+    {
+        if (statusCode != 400 && statusCode != 403) return false;
+        if (string.IsNullOrWhiteSpace(errorMessage)) return false;
+        var msg = errorMessage;
+        return msg.Contains("lifetime", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("appManagementPolic", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("endDateTime", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

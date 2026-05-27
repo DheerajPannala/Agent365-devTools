@@ -203,4 +203,19 @@ public sealed class BlueprintResourcePermission
 
     /// <summary>Whether inheritable permissions are configured in Entra for this resource.</summary>
     public bool InheritablePermissionsConfigured { get; init; }
+
+    /// <summary>Whether kind=allAllowed is set for delegated scopes on this resource.</summary>
+    public bool ScopesAllAllowed { get; init; }
+
+    /// <summary>Whether kind=allAllowed is set for app roles on this resource.</summary>
+    public bool RolesAllAllowed { get; init; }
+
+    /// <summary>App roles actually granted on the blueprint SP for this resource.</summary>
+    public List<string> ActualAppRoles { get; init; } = new();
+
+    /// <summary>
+    /// Effective inheritance status: true when kind=allAllowed on both sides AND at least one
+    /// permission is granted on the blueprint SP for this resource.
+    /// </summary>
+    public bool EffectiveInheritance { get; init; }
 }

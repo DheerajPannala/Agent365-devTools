@@ -321,9 +321,7 @@ public class BlueprintRegistrationRequirementCheckTests
 
         SetupAppAndSpExist();
         var mockBpService = CreateMockBlueprintService();
-        mockBpService.ListInheritablePermissionsAsync(TestTenantId, TestBlueprintId, Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
-            .Returns(BlueprintRegistrationRequirementCheck.BaselinePermissions.Select(b =>
-                (b.ResourceAppId, b.Scopes.ToList())).ToList());
+        SetupAllBaselinePermissionsPresent(mockBpService);
 
         var check = new BlueprintRegistrationRequirementCheck(_mockGraphApiService, mockBpService);
         var result = await check.CheckAsync(config, _logger);
@@ -346,13 +344,16 @@ public class BlueprintRegistrationRequirementCheckTests
         SetupAppAndSpExist();
         var mockBpService = CreateMockBlueprintService();
 
-        // Return all baseline resources but Graph only has User.Read (missing other scopes)
-        var actual = BlueprintRegistrationRequirementCheck.BaselinePermissions.Select(b =>
-            b.ResourceAppId == AuthenticationConstants.MicrosoftGraphResourceAppId
-                ? (b.ResourceAppId, new List<string> { "User.Read.All" })
-                : (b.ResourceAppId, b.Scopes.ToList())).ToList();
+        // All resources have inheritable permissions configured
         mockBpService.ListInheritablePermissionsAsync(TestTenantId, TestBlueprintId, Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
-            .Returns(actual);
+            .Returns(BlueprintRegistrationRequirementCheck.BaselinePermissions.Select(b =>
+                (b.ResourceAppId, true, true)).ToList());
+
+        // Return all baseline resources but Graph only has User.Read.All (missing other scopes)
+        var grants = BuildBaselineGrants();
+        grants[AuthenticationConstants.MicrosoftGraphResourceAppId] = (new[] { "User.Read.All" }, Array.Empty<string>());
+        mockBpService.GetBlueprintSpGrantsAsync(TestTenantId, TestBlueprintId, Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(grants);
 
         var check = new BlueprintRegistrationRequirementCheck(_mockGraphApiService, mockBpService);
         var result = await check.CheckAsync(config, _logger);
@@ -377,7 +378,9 @@ public class BlueprintRegistrationRequirementCheckTests
         var mockBpService = CreateMockBlueprintService();
         // Return empty — no resources configured at all
         mockBpService.ListInheritablePermissionsAsync(TestTenantId, TestBlueprintId, Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
-            .Returns(new List<(string ResourceAppId, List<string> Scopes)>());
+            .Returns(new List<(string ResourceAppId, bool ScopesAllAllowed, bool RolesAllAllowed)>());
+        mockBpService.GetBlueprintSpGrantsAsync(TestTenantId, TestBlueprintId, Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(new Dictionary<string, (string[] DelegatedScopes, string[] AppRoleNames)>(StringComparer.OrdinalIgnoreCase));
 
         var check = new BlueprintRegistrationRequirementCheck(_mockGraphApiService, mockBpService);
         var result = await check.CheckAsync(config, _logger);
@@ -526,10 +529,7 @@ public class BlueprintRegistrationRequirementCheckTests
 
         SetupAppAndSpExist();
         var mockBpService = CreateMockBlueprintService();
-        // Return all baseline resources with their full scopes
-        mockBpService.ListInheritablePermissionsAsync(TestTenantId, TestBlueprintId, Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
-            .Returns(BlueprintRegistrationRequirementCheck.BaselinePermissions.Select(b =>
-                (b.ResourceAppId, b.Scopes.ToList())).ToList());
+        SetupAllBaselinePermissionsPresent(mockBpService);
 
         var check = new BlueprintRegistrationRequirementCheck(_mockGraphApiService, mockBpService);
         var result = await check.CheckAsync(config, _logger);
@@ -556,13 +556,17 @@ public class BlueprintRegistrationRequirementCheckTests
 
         SetupAppAndSpExist();
         var mockBpService = CreateMockBlueprintService();
-        // Return Graph with only User.Read.All — missing other baseline scopes
-        var actual = BlueprintRegistrationRequirementCheck.BaselinePermissions.Select(b =>
-            b.ResourceAppId == AuthenticationConstants.MicrosoftGraphResourceAppId
-                ? (b.ResourceAppId, new List<string> { "User.Read.All" })
-                : (b.ResourceAppId, b.Scopes.ToList())).ToList();
+
+        // All resources have inheritable permissions configured
         mockBpService.ListInheritablePermissionsAsync(TestTenantId, TestBlueprintId, Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
-            .Returns(actual);
+            .Returns(BlueprintRegistrationRequirementCheck.BaselinePermissions.Select(b =>
+                (b.ResourceAppId, true, true)).ToList());
+
+        // Return Graph with only User.Read.All — missing other baseline scopes
+        var grants = BuildBaselineGrants();
+        grants[AuthenticationConstants.MicrosoftGraphResourceAppId] = (new[] { "User.Read.All" }, Array.Empty<string>());
+        mockBpService.GetBlueprintSpGrantsAsync(TestTenantId, TestBlueprintId, Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(grants);
 
         var check = new BlueprintRegistrationRequirementCheck(_mockGraphApiService, mockBpService);
         var result = await check.CheckAsync(config, _logger);
@@ -589,7 +593,9 @@ public class BlueprintRegistrationRequirementCheckTests
         var mockBpService = CreateMockBlueprintService();
         // Return no resources at all
         mockBpService.ListInheritablePermissionsAsync(TestTenantId, TestBlueprintId, Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
-            .Returns(new List<(string ResourceAppId, List<string> Scopes)>());
+            .Returns(new List<(string ResourceAppId, bool ScopesAllAllowed, bool RolesAllAllowed)>());
+        mockBpService.GetBlueprintSpGrantsAsync(TestTenantId, TestBlueprintId, Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(new Dictionary<string, (string[] DelegatedScopes, string[] AppRoleNames)>(StringComparer.OrdinalIgnoreCase));
 
         var check = new BlueprintRegistrationRequirementCheck(_mockGraphApiService, mockBpService);
         var result = await check.CheckAsync(config, _logger);
@@ -605,5 +611,115 @@ public class BlueprintRegistrationRequirementCheckTests
             because: "the resource was not found in Entra at all");
         graphResource.MissingScopes.Should().Contain("Mail.ReadWrite",
             because: "all expected scopes are missing when resource is not configured");
+    }
+
+    [Fact]
+    public async Task CheckAsync_RolesNotAllAllowed_ReturnsFail()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = TestTenantId,
+            AgentBlueprintId = TestBlueprintId
+        };
+
+        SetupAppAndSpExist();
+        var mockBpService = CreateMockBlueprintService();
+        // Scopes allAllowed but roles NOT allAllowed
+        mockBpService.ListInheritablePermissionsAsync(TestTenantId, TestBlueprintId, Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(BlueprintRegistrationRequirementCheck.BaselinePermissions.Select(b =>
+                (b.ResourceAppId, true, false)).ToList());
+        mockBpService.GetBlueprintSpGrantsAsync(TestTenantId, TestBlueprintId, Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(BuildBaselineGrants());
+
+        var check = new BlueprintRegistrationRequirementCheck(_mockGraphApiService, mockBpService);
+        var result = await check.CheckAsync(config, _logger);
+
+        result.Passed.Should().BeFalse(because: "roles not allAllowed should fail the tier");
+        result.Details.Should().Contain("roles",
+            because: "details should indicate roles are not allAllowed");
+    }
+
+    [Fact]
+    public async Task CheckAsync_AllAllowedButNoGrants_ReturnsFail()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = TestTenantId,
+            AgentBlueprintId = TestBlueprintId
+        };
+
+        SetupAppAndSpExist();
+        var mockBpService = CreateMockBlueprintService();
+        // Both allAllowed
+        mockBpService.ListInheritablePermissionsAsync(TestTenantId, TestBlueprintId, Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(BlueprintRegistrationRequirementCheck.BaselinePermissions.Select(b =>
+                (b.ResourceAppId, true, true)).ToList());
+        // But no grants on the blueprint SP
+        var emptyGrants = new Dictionary<string, (string[] DelegatedScopes, string[] AppRoleNames)>(StringComparer.OrdinalIgnoreCase);
+        foreach (var baseline in BlueprintRegistrationRequirementCheck.BaselinePermissions)
+        {
+            emptyGrants[baseline.ResourceAppId] = (Array.Empty<string>(), Array.Empty<string>());
+        }
+        mockBpService.GetBlueprintSpGrantsAsync(TestTenantId, TestBlueprintId, Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(emptyGrants);
+
+        var check = new BlueprintRegistrationRequirementCheck(_mockGraphApiService, mockBpService);
+        var result = await check.CheckAsync(config, _logger);
+
+        result.Passed.Should().BeFalse(because: "no grants means nothing to inherit");
+        result.Details.Should().Contain("nothing to inherit",
+            because: "details should explain inheritance has nothing to inherit");
+    }
+
+    [Fact]
+    public async Task CheckAsync_EffectiveInheritance_MetadataReflectsStatus()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = TestTenantId,
+            AgentBlueprintId = TestBlueprintId
+        };
+
+        SetupAppAndSpExist();
+        var mockBpService = CreateMockBlueprintService();
+        SetupAllBaselinePermissionsPresent(mockBpService);
+
+        var check = new BlueprintRegistrationRequirementCheck(_mockGraphApiService, mockBpService);
+        var result = await check.CheckAsync(config, _logger);
+
+        result.Metadata.Should().NotBeNull();
+        var graphResource = result.Metadata!.ResourcePermissions!
+            .First(r => r.ResourceAppId == AuthenticationConstants.MicrosoftGraphResourceAppId);
+        graphResource.ScopesAllAllowed.Should().BeTrue(
+            because: "scopes kind=allAllowed was configured");
+        graphResource.RolesAllAllowed.Should().BeTrue(
+            because: "roles kind=allAllowed was configured");
+        graphResource.EffectiveInheritance.Should().BeTrue(
+            because: "kind=allAllowed on both sides AND grants exist");
+    }
+
+    /// <summary>
+    /// Builds a grants dictionary with all baseline scopes present as delegated scopes.
+    /// </summary>
+    private static Dictionary<string, (string[] DelegatedScopes, string[] AppRoleNames)> BuildBaselineGrants()
+    {
+        var grants = new Dictionary<string, (string[] DelegatedScopes, string[] AppRoleNames)>(StringComparer.OrdinalIgnoreCase);
+        foreach (var baseline in BlueprintRegistrationRequirementCheck.BaselinePermissions)
+        {
+            grants[baseline.ResourceAppId] = (baseline.Scopes.ToArray(), Array.Empty<string>());
+        }
+        return grants;
+    }
+
+    /// <summary>
+    /// Sets up mocks so all baseline resources have inheritable permissions configured and all scopes are granted.
+    /// </summary>
+    private void SetupAllBaselinePermissionsPresent(AgentBlueprintService mockBpService)
+    {
+        mockBpService.ListInheritablePermissionsAsync(TestTenantId, TestBlueprintId, Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(BlueprintRegistrationRequirementCheck.BaselinePermissions.Select(b =>
+                (b.ResourceAppId, true, true)).ToList());
+        mockBpService.GetBlueprintSpGrantsAsync(TestTenantId, TestBlueprintId, Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(BuildBaselineGrants());
     }
 }

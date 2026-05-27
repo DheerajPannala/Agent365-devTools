@@ -68,7 +68,7 @@ public sealed class ValidationTiers
     public BlueprintTierResult Blueprint { get; set; } = TierResult.CreateSkipped<BlueprintTierResult>("not yet implemented");
 
     [JsonPropertyName("agentMetrics")]
-    public TierResult AgentMetrics { get; set; } = TierResult.CreateSkipped("not yet implemented");
+    public AgentMetricsTierResult AgentMetrics { get; set; } = TierResult.CreateSkipped<AgentMetricsTierResult>("not yet implemented");
 
     [JsonPropertyName("m365")]
     public TierResult M365 { get; set; } = TierResult.CreateSkipped("not yet implemented");
@@ -281,6 +281,60 @@ public sealed class BlueprintResourceResult
     [JsonPropertyName("inheritablePermissionsConfigured")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? InheritablePermissionsConfigured { get; set; }
+
+    [JsonPropertyName("scopesAllAllowed")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? ScopesAllAllowed { get; set; }
+
+    [JsonPropertyName("rolesAllAllowed")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? RolesAllAllowed { get; set; }
+
+    [JsonPropertyName("actualAppRoles")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? ActualAppRoles { get; set; }
+
+    [JsonPropertyName("effectiveInheritance")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? EffectiveInheritance { get; set; }
+}
+
+/// <summary>
+/// Agent metrics tier result with baseline/post-conversation snapshots and increment status.
+/// </summary>
+public sealed class AgentMetricsTierResult : TierResult
+{
+    [JsonPropertyName("baselineMetrics")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public AgentMetricsSnapshotResult? BaselineMetrics { get; set; }
+
+    [JsonPropertyName("conversationGenerated")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? ConversationGenerated { get; set; }
+
+    [JsonPropertyName("postConversationMetrics")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public AgentMetricsSnapshotResult? PostConversationMetrics { get; set; }
+
+    [JsonPropertyName("metricsIncremented")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? MetricsIncremented { get; set; }
+}
+
+/// <summary>
+/// Snapshot of agent metrics at a point in time.
+/// </summary>
+public sealed class AgentMetricsSnapshotResult
+{
+    [JsonPropertyName("invocationCount")]
+    public long InvocationCount { get; set; }
+
+    [JsonPropertyName("errorCount")]
+    public long ErrorCount { get; set; }
+
+    [JsonPropertyName("averageLatencyMs")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? AverageLatencyMs { get; set; }
 }
 
 /// <summary>

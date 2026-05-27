@@ -102,6 +102,9 @@ internal static class BlueprintSubcommand
         var checks = new List<Services.Requirements.IRequirementCheck>(SetupCommand.GetBaseChecks(auth))
         {
             new ClientAppRequirementCheck(clientAppValidator),
+            // Verify the wids optional claim too — its absence is what silently breaks GA role detection
+            // in the batch permissions orchestrator and leaves the blueprint with no granted scopes/roles.
+            new WidsOptionalClaimRequirementCheck(clientAppValidator),
         };
 
         return checks;
@@ -990,6 +993,33 @@ internal static class BlueprintSubcommand
         // ========================================================================
         // Blueprint Creation: No existing blueprint found
         // ========================================================================
+        // The blueprint is the root of every dynamic identifier stored in
+        // a365.generated.config.json (agent identity, registration, SP IDs, client secret,
+        // resource consents, bot state, infra). Creating a new blueprint orphans every one
+        // of those fields by construction. Back up the existing generated config and reset
+        // both the on-disk file and the in-memory mirrors (Agent365Config + the JsonObject
+        // the caller will write blueprint identifiers into) so nothing downstream acts on
+        // stale state.
+        var generatedConfigPathForInvalidation = Path.Combine(
+            configFile.DirectoryName ?? Environment.CurrentDirectory,
+            "a365.generated.config.json");
+        var invalidationBackup = await configService.InvalidateGeneratedConfigAsync(
+            setupConfig,
+            reason: "newblueprint",
+            statePath: generatedConfigPathForInvalidation);
+        logger.LogDebug(
+            "Invalidating generated configuration before creating a new blueprint. Backup: {Backup}",
+            invalidationBackup ?? "(no prior file)");
+        // Clear the JsonObject the caller will mutate next. SaveStateAsync above has already
+        // persisted an empty file; the in-memory JsonObject was loaded earlier in the call
+        // chain and must be reset to match, otherwise the subsequent writes (e.g.
+        // generatedConfig["agentBlueprintId"] = ...) would re-introduce stale entries.
+        var jsonKeysToClear = generatedConfig.Select(kvp => kvp.Key).ToList();
+        foreach (var key in jsonKeysToClear)
+        {
+            generatedConfig.Remove(key);
+        }
+
         try
         {
             logger.LogInformation("Creating blueprint application...");
@@ -1195,20 +1225,73 @@ internal static class BlueprintSubcommand
                 }
             };
 
-            var patchResponse = await httpClient.PatchAsync(
-                patchAppUrl,
-                new StringContent(patchBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
+            // PATCH /v1.0/applications/{id} for newly created blueprint apps frequently returns
+            // 404 Request_ResourceNotFound for several seconds after creation, even after the GET
+            // propagation check above succeeds — the write replica lags the read replica. Retry
+            // with backoff until the write replica catches up, otherwise we silently leave the
+            // blueprint without an identifier URI or the OBO scope.
+            var patchBodyJson = patchBody.ToJsonString();
+            var patchSucceeded = false;
+            string? lastPatchError = null;
+            await retryHelper.ExecuteWithRetryAsync(
+                async innerCt =>
+                {
+                    using var patchContent = new StringContent(patchBodyJson, System.Text.Encoding.UTF8, "application/json");
+                    using var patchResponse = await httpClient.PatchAsync(patchAppUrl, patchContent, innerCt);
+                    if (patchResponse.IsSuccessStatusCode)
+                    {
+                        patchSucceeded = true;
+                        lastPatchError = null;
+                        return true;
+                    }
+                    lastPatchError = await patchResponse.Content.ReadAsStringAsync(innerCt);
+
+                    // Only the read-replica-lag race is worth retrying: HTTP 404 with
+                    // Request_ResourceNotFound after a freshly created application. Any other
+                    // failure (400 invalid body, 403 missing permission, 5xx server error) is
+                    // unlikely to clear on its own and should fall through to the post-loop
+                    // SetupValidationException so the user sees the real error immediately
+                    // instead of waiting 10 * 3s of pointless retries.
+                    var isReplicaLag = patchResponse.StatusCode == System.Net.HttpStatusCode.NotFound
+                        && lastPatchError != null
+                        && lastPatchError.Contains("Request_ResourceNotFound", StringComparison.Ordinal);
+                    if (isReplicaLag)
+                    {
+                        logger.LogDebug("Identifier URI / scope PATCH attempt failed (404 Request_ResourceNotFound); waiting for write replica to catch up...");
+                        return false;
+                    }
+
+                    logger.LogDebug(
+                        "Identifier URI / scope PATCH failed with non-retryable status {Status}; aborting retry loop.",
+                        (int)patchResponse.StatusCode);
+                    // Returning a non-default success token signals 'don't retry'. The post-loop
+                    // 'if (!patchSucceeded)' branch will throw with lastPatchError.
+                    return true;
+                },
+                result => !result,
+                maxRetries: 10,
+                baseDelaySeconds: 3,
                 ct);
 
-            if (!patchResponse.IsSuccessStatusCode)
+            if (patchSucceeded)
             {
-                var patchError = await patchResponse.Content.ReadAsStringAsync(ct);
-                logger.LogDebug("Waiting for application propagation before setting identifier URI...");
-                logger.LogDebug("Identifier URI / scope update deferred (propagation delay): {Error}", patchError);
+                logger.LogDebug("Identifier URI set to {Uri}; {Scope} scope added", identifierUri, Constants.ConfigConstants.BlueprintOboScope);
             }
             else
             {
-                logger.LogDebug("Identifier URI set to {Uri}; {Scope} scope added", identifierUri, Constants.ConfigConstants.BlueprintOboScope);
+                // Blueprint without an identifier URI cannot perform on-behalf-of token exchange,
+                // so the agent will fail at runtime. Surface this as a hard error with a clear
+                // remediation step rather than continuing setup silently. The blueprint app object
+                // already exists, so re-running the setup command will retry the PATCH against a
+                // (by now) caught-up write replica.
+                logger.LogError("Identifier URI / scope update did not complete after retries: {Error}", lastPatchError);
+                throw new Exceptions.SetupValidationException(
+                    issueDescription: $"Blueprint application '{appId}' was created but the identifier URI / OBO scope PATCH did not complete after retries. The blueprint is incomplete and OBO token exchange will fail.",
+                    mitigationSteps: new List<string>
+                    {
+                        "Re-run: a365 setup blueprint --agent-name <name>",
+                        "If the failure repeats, wait a few minutes for Entra replication to settle and try again."
+                    });
             }
 
             // Create service principal
@@ -1671,9 +1754,17 @@ internal static class BlueprintSubcommand
                 }
             };
 
-            var patched = await graphApiService.GraphPatchAsync(
-                tenantId, $"/v1.0/applications/{objectId}", patch, ct,
-                scopes: AuthenticationConstants.BlueprintOperationScopes);
+            // Retry on transient PATCH failure: write replica may lag the read replica for newly
+            // created blueprint apps. See note in BlueprintSubcommand.CreateBlueprintAsync.
+            var retryHelper = new RetryHelper(logger);
+            var patched = await retryHelper.ExecuteWithRetryAsync(
+                async innerCt => await graphApiService.GraphPatchAsync(
+                    tenantId, $"/v1.0/applications/{objectId}", patch, innerCt,
+                    scopes: AuthenticationConstants.BlueprintOperationScopes),
+                result => !result,
+                maxRetries: 2,
+                baseDelaySeconds: 2,
+                ct);
 
             if (patched)
                 logger.LogInformation("{Scope} scope added to blueprint", ConfigConstants.BlueprintOboScope);
@@ -1871,19 +1962,15 @@ internal static class BlueprintSubcommand
         logger.LogInformation("If the browser does not open automatically, navigate to this URL to grant consent: {ConsentUrl}", consentUrlGraph);
         BrowserHelper.TryOpenUrl(consentUrlGraph, logger);
 
-        bool consentSuccess;
-        if (!string.IsNullOrWhiteSpace(blueprintSpId))
-        {
-            consentSuccess = await AdminConsentHelper.PollAdminConsentAsync(
-                graphApiService, logger, tenantId, blueprintSpId,
-                "Graph API Scopes", 180, 5, ct);
-        }
-        else
-        {
-            logger.LogDebug("Could not resolve blueprint service principal. Falling back to az rest polling.");
-            consentSuccess = await AdminConsentHelper.PollAdminConsentAsync(executor, logger, appId, "Graph API Scopes", 180, 5, ct);
-        }
-
+        // Poll via az rest. The Graph overload of PollAdminConsentAsync cannot reliably read
+        // /oauth2PermissionGrants with the CLI's delegated token (DelegatedPermissionGrant.Read.All
+        // was removed from the CLI client app in PR #409), so it timed out into AssumedComplete on
+        // every successful consent — printing a misleading "continuing without auto-verification"
+        // hint even when the grant had actually landed. The az rest path uses the Azure CLI's GA
+        // directory-role access to read grants directly, matching the pattern used by
+        // BatchPermissionsOrchestrator's pre-check and post-consent polling.
+        var consentSuccess = await AdminConsentHelper.PollAdminConsentAsync(
+            executor, logger, appId, "Graph API Scopes", 180, 5, ct);
         if (consentSuccess)
         {
             logger.LogInformation("Graph API admin consent granted successfully!");

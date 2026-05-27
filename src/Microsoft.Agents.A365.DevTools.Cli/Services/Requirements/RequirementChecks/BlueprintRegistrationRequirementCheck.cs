@@ -221,10 +221,10 @@ public class BlueprintRegistrationRequirementCheck : RequirementCheck
             // Build expected permissions: static baseline + tooling manifest scopes
             var expectedPermissions = BuildExpectedPermissions(config, logger);
 
-            List<(string ResourceAppId, List<string> Scopes)> actualPermissions;
+            List<(string ResourceAppId, bool ScopesAllAllowed, bool RolesAllAllowed)> inheritableEntries;
             try
             {
-                actualPermissions = await _blueprintService.ListInheritablePermissionsAsync(
+                inheritableEntries = await _blueprintService.ListInheritablePermissionsAsync(
                     tenantId, blueprintId, ct: cancellationToken);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -237,17 +237,57 @@ public class BlueprintRegistrationRequirementCheck : RequirementCheck
                 return result;
             }
 
-            var actualByResource = actualPermissions.ToDictionary(
-                p => p.ResourceAppId,
-                p => new HashSet<string>(p.Scopes, StringComparer.OrdinalIgnoreCase),
+            var inheritableByResource = inheritableEntries.ToDictionary(
+                e => e.ResourceAppId,
+                e => (e.ScopesAllAllowed, e.RolesAllAllowed),
                 StringComparer.OrdinalIgnoreCase);
+
+            // Fetch actual granted scopes on the blueprint SP for each expected resource
+            Dictionary<string, (string[] DelegatedScopes, string[] AppRoleNames)> grantsByResource;
+            try
+            {
+                grantsByResource = await _blueprintService.GetBlueprintSpGrantsAsync(
+                    tenantId, blueprintId,
+                    expectedPermissions.Select(e => e.ResourceAppId),
+                    ct: cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogDebug(ex, "Failed to query blueprint SP grants");
+                grantsByResource = new Dictionary<string, (string[] DelegatedScopes, string[] AppRoleNames)>(
+                    StringComparer.OrdinalIgnoreCase);
+            }
 
             var warnings = new List<string>();
             var resourcePermissionResults = new List<BlueprintResourcePermission>();
 
             foreach (var expected in expectedPermissions)
             {
-                if (!actualByResource.TryGetValue(expected.ResourceAppId, out var actualScopes))
+                var hasInheritableConfig = inheritableByResource.TryGetValue(
+                    expected.ResourceAppId, out var inheritableFlags);
+                var scopesAllAllowed = hasInheritableConfig && inheritableFlags.ScopesAllAllowed;
+                var rolesAllAllowed = hasInheritableConfig && inheritableFlags.RolesAllAllowed;
+
+                // Get actual delegated scopes and app roles from the blueprint SP grants
+                var actualScopes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var actualAppRoles = new List<string>();
+                if (grantsByResource.TryGetValue(expected.ResourceAppId, out var grants))
+                {
+                    foreach (var scope in grants.DelegatedScopes)
+                    {
+                        actualScopes.Add(scope);
+                    }
+                    actualAppRoles.AddRange(grants.AppRoleNames);
+                }
+
+                var hasDelegatedGrants = actualScopes.Count > 0;
+                var hasAppRoleGrants = actualAppRoles.Count > 0;
+                var hasAnyGrants = hasDelegatedGrants || hasAppRoleGrants;
+
+                // Effective inheritance: kind=allAllowed on both sides AND at least one grant
+                var effectiveInheritance = scopesAllAllowed && rolesAllAllowed && hasAnyGrants;
+
+                if (!hasInheritableConfig)
                 {
                     warnings.Add($"{expected.ResourceName}: no inheritable permissions configured in Entra");
                     resourcePermissionResults.Add(new BlueprintResourcePermission
@@ -255,11 +295,27 @@ public class BlueprintRegistrationRequirementCheck : RequirementCheck
                         ResourceName = expected.ResourceName,
                         ResourceAppId = expected.ResourceAppId,
                         ExpectedScopes = expected.Scopes.ToList(),
-                        ActualScopes = new List<string>(),
+                        ActualScopes = actualScopes.ToList(),
                         MissingScopes = expected.Scopes.ToList(),
-                        InheritablePermissionsConfigured = false
+                        InheritablePermissionsConfigured = false,
+                        ScopesAllAllowed = false,
+                        RolesAllAllowed = false,
+                        ActualAppRoles = actualAppRoles,
+                        EffectiveInheritance = false
                     });
                     continue;
+                }
+
+                if (!scopesAllAllowed || !rolesAllAllowed)
+                {
+                    warnings.Add($"{expected.ResourceName}: kind is not allAllowed for " +
+                        (!scopesAllAllowed && !rolesAllAllowed ? "scopes and roles" :
+                         !scopesAllAllowed ? "scopes" : "roles") +
+                        " — re-run 'a365 setup permissions' to reconcile");
+                }
+                else if (!hasAnyGrants)
+                {
+                    warnings.Add($"{expected.ResourceName}: kind=allAllowed configured but no permissions granted on blueprint SP — inheritance has nothing to inherit");
                 }
 
                 var missingScopes = expected.Scopes
@@ -278,7 +334,11 @@ public class BlueprintRegistrationRequirementCheck : RequirementCheck
                     ExpectedScopes = expected.Scopes.ToList(),
                     ActualScopes = actualScopes.ToList(),
                     MissingScopes = missingScopes,
-                    InheritablePermissionsConfigured = true
+                    InheritablePermissionsConfigured = true,
+                    ScopesAllAllowed = scopesAllAllowed,
+                    RolesAllAllowed = rolesAllAllowed,
+                    ActualAppRoles = actualAppRoles,
+                    EffectiveInheritance = effectiveInheritance
                 });
             }
 

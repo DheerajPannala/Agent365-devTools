@@ -59,6 +59,11 @@ public sealed class ValidateCommand
             "Run tenant-level checks (blueprint registration, permissions, consent)");
         command.AddOption(withTenantOption);
 
+        var instanceNameOption = new Option<string?>(
+            "--instance-name",
+            "Agent instance display name in Copilot Chat (used for agent metrics conversation test)");
+        command.AddOption(instanceNameOption);
+
         command.SetHandler(async (InvocationContext context) =>
         {
             var ct = context.GetCancellationToken();
@@ -67,6 +72,7 @@ public sealed class ValidateCommand
             var report = new ValidateReport();
             var launchPlayground = context.ParseResult.GetValueForOption(playgroundOption);
             var withTenant = context.ParseResult.GetValueForOption(withTenantOption);
+            var instanceName = context.ParseResult.GetValueForOption(instanceNameOption);
 
             try
             {
@@ -108,11 +114,26 @@ public sealed class ValidateCommand
                         new List<IRequirementCheck> { registrationCheck }, config, logger, ct);
                     MapResultsToTiers(registrationResults, report);
                     results.AddRange(registrationResults);
+
+                    // Phase 2a-ii: Run agent metrics check (after blueprint, requires --with-tenant + --instance-name)
+                    if (!string.IsNullOrWhiteSpace(instanceName))
+                    {
+                        var playwrightService = new CopilotChatPlaywrightService(logger);
+                        var metricsCheck = new AgentMetricsRequirementCheck(playwrightService, instanceName);
+                        var metricsResults = await RunChecksDetailedAsync(
+                            new List<IRequirementCheck> { metricsCheck }, config, logger, ct);
+                        MapResultsToTiers(metricsResults, report);
+                        results.AddRange(metricsResults);
+                    }
+                    else
+                    {
+                        report.Tiers.AgentMetrics = TierResult.CreateSkipped<AgentMetricsTierResult>("use --instance-name");
+                    }
                 }
                 else if (!withTenant && requirementChecksOverride is null)
                 {
                     report.Tiers.Blueprint = TierResult.CreateSkipped<BlueprintTierResult>("use --with-tenant");
-                    report.Tiers.AgentMetrics = TierResult.CreateSkipped("use --with-tenant");
+                    report.Tiers.AgentMetrics = TierResult.CreateSkipped<AgentMetricsTierResult>("use --with-tenant");
                     report.Tiers.M365 = TierResult.CreateSkipped("use --with-tenant");
                 }
 
@@ -483,12 +504,31 @@ public sealed class ValidateCommand
                                     ActualScopes = rp.ActualScopes,
                                     MissingScopes = rp.MissingScopes.Count > 0 ? rp.MissingScopes : null,
                                     ConsentGranted = rp.ConsentGranted,
-                                    InheritablePermissionsConfigured = rp.InheritablePermissionsConfigured
+                                    InheritablePermissionsConfigured = rp.InheritablePermissionsConfigured,
+                                    ScopesAllAllowed = rp.ScopesAllAllowed,
+                                    RolesAllAllowed = rp.RolesAllAllowed,
+                                    ActualAppRoles = rp.ActualAppRoles.Count > 0 ? rp.ActualAppRoles : null,
+                                    EffectiveInheritance = rp.EffectiveInheritance
                                 }).ToList();
                         }
                     }
 
                     report.Tiers.Blueprint = blueprintTier;
+                    break;
+
+                case AgentMetricsRequirementCheck:
+                    var metricsTier = new AgentMetricsTierResult();
+                    if (result.IsWarning)
+                    {
+                        metricsTier.Ok = true;
+                        metricsTier.Warning = result.ErrorMessage;
+                    }
+                    else
+                    {
+                        metricsTier.Ok = result.Passed;
+                        metricsTier.Reason = result.Passed ? null : result.ErrorMessage;
+                    }
+                    report.Tiers.AgentMetrics = metricsTier;
                     break;
             }
         }
