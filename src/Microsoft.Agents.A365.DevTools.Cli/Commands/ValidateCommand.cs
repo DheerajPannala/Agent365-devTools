@@ -42,6 +42,7 @@ public sealed class ValidateCommand
         CommandExecutor? commandExecutor = null,
         IProcessService? processService = null,
         GraphApiService? graphApiService = null,
+        AgentBlueprintService? agentBlueprintService = null,
         IEnumerable<IRequirementCheck>? requirementChecksOverride = null)
     {
         var command = new Command(CommandNames.Validate,
@@ -96,7 +97,7 @@ public sealed class ValidateCommand
                 // Phase 2a: Run blueprint registration check (independent of build/boot)
                 if (requirementChecksOverride is null && graphApiService is not null)
                 {
-                    var registrationCheck = new BlueprintRegistrationRequirementCheck(graphApiService);
+                    var registrationCheck = new BlueprintRegistrationRequirementCheck(graphApiService, agentBlueprintService);
                     var registrationResults = await RunChecksDetailedAsync(
                         new List<IRequirementCheck> { registrationCheck }, config, logger, ct);
                     MapResultsToTiers(registrationResults, report);

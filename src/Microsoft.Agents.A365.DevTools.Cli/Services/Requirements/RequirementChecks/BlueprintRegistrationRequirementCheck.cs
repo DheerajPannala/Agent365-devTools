@@ -8,17 +8,19 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementCh
 
 /// <summary>
 /// Validates that the agent blueprint is registered in Microsoft Entra ID.
-/// Checks that the blueprint application exists, has a service principal, and
-/// (if configured) has an agent registration in the Microsoft Agent Registry.
+/// Checks that the blueprint application exists, has a service principal,
+/// (if configured) has an agent registration, and has inheritable permissions configured.
 /// Uses the same Graph API methods as <c>query-entra</c>.
 /// </summary>
 public class BlueprintRegistrationRequirementCheck : RequirementCheck
 {
     private readonly GraphApiService _graphApiService;
+    private readonly AgentBlueprintService? _blueprintService;
 
-    public BlueprintRegistrationRequirementCheck(GraphApiService graphApiService)
+    public BlueprintRegistrationRequirementCheck(GraphApiService graphApiService, AgentBlueprintService? blueprintService = null)
     {
         _graphApiService = graphApiService ?? throw new ArgumentNullException(nameof(graphApiService));
+        _blueprintService = blueprintService;
     }
 
     /// <inheritdoc />
@@ -141,11 +143,95 @@ public class BlueprintRegistrationRequirementCheck : RequirementCheck
                         "could not be confirmed (insufficient permissions or transient error).");
             }
 
-            return RequirementCheckResult.Success(
-                details: $"Blueprint '{blueprintId}' registered with service principal and agent registration '{config.AgentRegistrationId}'.");
+            return await BuildSuccessResult(config, blueprintId, tenantId, logger,
+                $"Blueprint '{blueprintId}' registered with service principal and agent registration '{config.AgentRegistrationId}'.",
+                cancellationToken);
         }
 
-        return RequirementCheckResult.Success(
-            details: $"Blueprint '{blueprintId}' registered with service principal '{servicePrincipalId}'.");
+            return await BuildSuccessResult(config, blueprintId, tenantId, logger,
+            $"Blueprint '{blueprintId}' registered with service principal '{servicePrincipalId}'.",
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// After core registration checks pass, verify inheritable permissions and consent status
+    /// by comparing config.ResourceConsents (expected) against what is actually in Entra.
+    /// Missing or mismatched permissions produce a warning (not a failure).
+    /// </summary>
+    private async Task<RequirementCheckResult> BuildSuccessResult(
+            Agent365Config config,
+            string blueprintId,
+            string tenantId,
+            ILogger logger,
+            string baseDetails,
+            CancellationToken cancellationToken)
+    {
+            if (_blueprintService is null || config.ResourceConsents.Count == 0)
+            {
+                return RequirementCheckResult.Success(details: baseDetails);
+            }
+
+            List<(string ResourceAppId, List<string> Scopes)> actualPermissions;
+            try
+            {
+                actualPermissions = await _blueprintService.ListInheritablePermissionsAsync(
+                    tenantId, blueprintId, ct: cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogDebug(ex, "Failed to query inheritable permissions");
+                return RequirementCheckResult.Warning(
+                    "Blueprint registered but could not verify inheritable permissions",
+                    details: $"{baseDetails} Permissions query failed: {ex.Message}");
+            }
+
+            var actualByResource = actualPermissions.ToDictionary(
+                p => p.ResourceAppId,
+                p => new HashSet<string>(p.Scopes, StringComparer.OrdinalIgnoreCase),
+                StringComparer.OrdinalIgnoreCase);
+
+            var warnings = new List<string>();
+
+            foreach (var expected in config.ResourceConsents)
+            {
+                var resourceLabel = !string.IsNullOrWhiteSpace(expected.ResourceName)
+                    ? expected.ResourceName
+                    : expected.ResourceAppId;
+
+                if (!actualByResource.TryGetValue(expected.ResourceAppId, out var actualScopes))
+                {
+                    warnings.Add($"{resourceLabel}: no inheritable permissions configured in Entra");
+                    continue;
+                }
+
+                var missingScopes = expected.Scopes
+                    .Where(s => !actualScopes.Contains(s))
+                    .ToList();
+
+                if (missingScopes.Count > 0)
+                {
+                    warnings.Add($"{resourceLabel}: missing scopes: {string.Join(", ", missingScopes)}");
+                }
+
+                if (expected.ConsentGranted is false)
+                {
+                    warnings.Add($"{resourceLabel}: admin consent not granted");
+                }
+            }
+
+            if (warnings.Count > 0)
+            {
+                return RequirementCheckResult.Warning(
+                    "Blueprint registered but permissions/consent gaps detected",
+                    details: $"{baseDetails} {string.Join(". ", warnings)}. " +
+                        "Run 'a365 setup all' or grant consent in the Azure portal.");
+            }
+
+            var scopeSummary = string.Join("; ", config.ResourceConsents.Select(r =>
+                $"{(string.IsNullOrWhiteSpace(r.ResourceName) ? r.ResourceAppId : r.ResourceName)}: " +
+                $"{string.Join(", ", r.Scopes)}"));
+
+            return RequirementCheckResult.Success(
+                details: $"{baseDetails} Permissions verified: {scopeSummary}");
     }
 }

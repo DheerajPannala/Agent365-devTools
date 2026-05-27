@@ -73,23 +73,11 @@ public class TelemetryRequirementCheckTests : IDisposable
     };
 
     /// <summary>
-    /// Helper to build a span block with a non-Agent365 scope (but not the ignored scope).
-    /// These spans SHOULD be accepted by the check.
+    /// Helper to build a span block from the @microsoft/agents-telemetry scope.
+    /// With the operation-name-based filtering, these spans are now included
+    /// if they have a recognized gen_ai.operation.name.
     /// </summary>
-    private static string[] MakeOtherSpan(string operationName) => new[]
-    {
-        "  traceId: 'aaaa028f0ee6a6cbb3b0e3c96ee96fa7',",
-        "  instrumentationScope: {",
-        "    name: 'microsoft-otel-langchain',",
-        "  },",
-        $"    'gen_ai.operation.name': '{operationName}',"
-    };
-
-    /// <summary>
-    /// Helper to build a span block from the ignored @microsoft/agents-telemetry scope.
-    /// These spans should be EXCLUDED from validation.
-    /// </summary>
-    private static string[] MakeIgnoredScopeSpan(string operationName) => new[]
+    private static string[] MakeAgentsTelemetrySpan(string operationName) => new[]
     {
         "  traceId: 'bbbb028f0ee6a6cbb3b0e3c96ee96fa7',",
         "  instrumentationScope: {",
@@ -165,24 +153,43 @@ public class TelemetryRequirementCheckTests : IDisposable
         result.ErrorMessage.Should().Contain("No console exporter span output detected");
     }
 
-    // --- Ignored scope exclusion ---
+    // --- Operation-name-based filtering ---
 
     [Fact]
-    public async Task CheckAsync_SpansOnlyFromIgnoredScope_ReturnsFail()
+    public async Task CheckAsync_SpansWithNoRecognizedOperations_ReturnsFail()
+    {
+        var logPath = CreateTempLogFile(new[]
+        {
+            "  traceId: 'abc',",
+            "  instrumentationScope: {",
+            "    name: 'SomeSdk',",
+            "  },",
+            "    'gen_ai.operation.name': 'unknown_op',"
+        });
+
+        var check = new TelemetryRequirementCheck(logPath);
+
+        var result = await check.CheckAsync(_config, _logger);
+
+        result.Passed.Should().BeFalse(because: "no spans have a recognized gen_ai.operation.name");
+        result.ErrorMessage.Should().Contain("No GenAI operation spans found");
+    }
+
+    [Fact]
+    public async Task CheckAsync_AgentsTelemetryScope_IncludedWhenHasRecognizedOp()
     {
         var lines = new List<string>();
-        lines.AddRange(MakeIgnoredScopeSpan("invoke_agent"));
-        lines.AddRange(MakeIgnoredScopeSpan("chat"));
-        lines.AddRange(MakeIgnoredScopeSpan("execute_tool"));
+        lines.AddRange(MakeAgentsTelemetrySpan("invoke_agent"));
+        lines.AddRange(MakeAgentsTelemetrySpan("chat"));
+        lines.AddRange(MakeAgentsTelemetrySpan("execute_tool"));
         var logPath = CreateTempLogFile(lines.ToArray());
 
         var check = new TelemetryRequirementCheck(logPath);
 
         var result = await check.CheckAsync(_config, _logger);
 
-        result.Passed.Should().BeFalse(because: "spans from @microsoft/agents-telemetry scope should be excluded");
-        result.Details.Should().Contain("@microsoft/agents-telemetry",
-            because: "details should indicate the ignored scope that caused all spans to be filtered out");
+        result.Passed.Should().BeTrue(
+            because: "spans from any scope are accepted if they have recognized gen_ai.operation.name values");
     }
 
     // --- All 3 GenAI spans from Agent365Sdk ---
@@ -205,26 +212,7 @@ public class TelemetryRequirementCheckTests : IDisposable
     }
 
     [Fact]
-    public async Task CheckAsync_MixedScopes_ExcludesIgnoredScope()
-    {
-        var lines = new List<string>();
-        // Other scope has invoke_agent and chat — should count
-        lines.AddRange(MakeOtherSpan("invoke_agent"));
-        lines.AddRange(MakeOtherSpan("chat"));
-        // Ignored scope has execute_tool — should NOT count
-        lines.AddRange(MakeIgnoredScopeSpan("execute_tool"));
-        var logPath = CreateTempLogFile(lines.ToArray());
-
-        var check = new TelemetryRequirementCheck(logPath);
-
-        var result = await check.CheckAsync(_config, _logger);
-
-        result.Passed.Should().BeFalse(because: "execute_tool from @microsoft/agents-telemetry scope should not count");
-        result.ErrorMessage.Should().Contain("execute_tool");
-    }
-
-    [Fact]
-    public async Task CheckAsync_OtherScopes_AllAccepted()
+    public async Task CheckAsync_MixedScopes_AllAccepted()
     {
         var logPath = CreateTempLogFile(new[]
         {
@@ -249,36 +237,7 @@ public class TelemetryRequirementCheckTests : IDisposable
 
         var result = await check.CheckAsync(_config, _logger);
 
-        result.Passed.Should().BeTrue(because: "all scopes except @microsoft/agents-telemetry should be accepted");
-    }
-
-    [Fact]
-    public async Task CheckAsync_IgnoredScope_CaseInsensitiveExclusion()
-    {
-        var lines = new List<string>();
-        // Ignored scope with different casing — should still be excluded
-        lines.Add("  traceId: 'abc',");
-        lines.Add("  instrumentationScope: {");
-        lines.Add("    name: '@Microsoft/Agents-Telemetry',");
-        lines.Add("  },");
-        lines.Add("    'gen_ai.operation.name': 'invoke_agent',");
-        lines.Add("  traceId: 'def',");
-        lines.Add("  instrumentationScope: {");
-        lines.Add("    name: '@MICROSOFT/AGENTS-TELEMETRY',");
-        lines.Add("  },");
-        lines.Add("    'gen_ai.operation.name': 'chat',");
-        lines.Add("  traceId: 'ghi',");
-        lines.Add("  instrumentationScope: {");
-        lines.Add("    name: '@microsoft/agents-telemetry',");
-        lines.Add("  },");
-        lines.Add("    'gen_ai.operation.name': 'execute_tool',");
-        var logPath = CreateTempLogFile(lines.ToArray());
-
-        var check = new TelemetryRequirementCheck(logPath);
-
-        var result = await check.CheckAsync(_config, _logger);
-
-        result.Passed.Should().BeFalse(because: "ignored scope exclusion should be case-insensitive");
+        result.Passed.Should().BeTrue(because: "spans from any scope are accepted when they have recognized operations");
     }
 
     // --- Missing spans ---
@@ -477,46 +436,6 @@ public class TelemetryRequirementCheckTests : IDisposable
         result.Details.Should().Contain("execute_tool");
     }
 
-    // --- Scope version checks ---
-
-    [Fact]
-    public void HasInstrumentationScopeVersion_WithVersion_ReturnsTrue()
-    {
-        var block = new List<string>
-        {
-            "  instrumentationScope: {",
-            "    name: 'Agent365Sdk',",
-            "    version: '1.0.0',",
-            "  },"
-        };
-
-        TelemetryRequirementCheck.HasInstrumentationScopeVersion(block).Should().BeTrue();
-    }
-
-    [Fact]
-    public void HasInstrumentationScopeVersion_SameLine_ReturnsTrue()
-    {
-        var block = new List<string>
-        {
-            "  instrumentationScope: { name: 'Agent365Sdk', version: '1.0.0' },"
-        };
-
-        TelemetryRequirementCheck.HasInstrumentationScopeVersion(block).Should().BeTrue();
-    }
-
-    [Fact]
-    public void HasInstrumentationScopeVersion_NoVersion_ReturnsFalse()
-    {
-        var block = new List<string>
-        {
-            "  instrumentationScope: {",
-            "    name: 'Agent365Sdk',",
-            "  },"
-        };
-
-        TelemetryRequirementCheck.HasInstrumentationScopeVersion(block).Should().BeFalse();
-    }
-
     // --- Parent link checks ---
 
     [Fact]
@@ -641,32 +560,6 @@ public class TelemetryRequirementCheckTests : IDisposable
     }
 
     [Fact]
-    public async Task CheckAsync_MissingScopeVersion_ReturnsWarning()
-    {
-        var lines = new List<string>();
-        lines.AddRange(ResourceLines);
-        lines.Add("{");
-        lines.AddRange(MakeAgent365Span("invoke_agent"));
-        lines.Add("}");
-        lines.Add("{");
-        // chat span without parent or version
-        lines.AddRange(MakeAgent365Span("chat"));
-        lines.Add("}");
-        lines.Add("{");
-        lines.AddRange(MakeAgent365Span("execute_tool"));
-        lines.Add("}");
-
-        var logPath = CreateTempLogFile(lines.ToArray());
-        var check = new TelemetryRequirementCheck(logPath);
-
-        var result = await check.CheckAsync(_config, _logger);
-
-        result.Passed.Should().BeTrue(because: "scope version missing is a warning not a failure");
-        result.IsWarning.Should().BeTrue();
-        result.Details.Should().Contain("version", because: "warning should mention missing scope version");
-    }
-
-    [Fact]
     public async Task CheckAsync_ChildSpansMissingParent_ReturnsWarning()
     {
         var lines = new List<string>();
@@ -716,5 +609,137 @@ public class TelemetryRequirementCheckTests : IDisposable
         result.Passed.Should().BeTrue(because: "missing resource attributes is a warning not a failure");
         result.IsWarning.Should().BeTrue();
         result.Details.Should().Contain("service.name", because: "warning should list missing resource attributes");
+    }
+
+    // ── Python console exporter format tests ──
+
+    /// <summary>
+    /// Helper to build a Python console exporter span block (JSON with snake_case keys).
+    /// </summary>
+    private static string[] MakePythonSpan(string operationName, bool withParent = false) => withParent
+        ? new[]
+        {
+            $"    \"name\": \"{operationName} gpt-5.4-mini\",",
+            "    \"context\": {",
+            $"        \"trace_id\": \"0xdd1ed405c6970ac9a12f716d10348920\",",
+            "        \"span_id\": \"0xfb587c5909a6c691\",",
+            "        \"trace_state\": \"[]\"",
+            "    },",
+            "    \"kind\": \"SpanKind.INTERNAL\",",
+            $"    \"parent_id\": \"0x9534d47ca25deef6\",",
+            "    \"attributes\": {",
+            $"        \"gen_ai.operation.name\": \"{operationName}\",",
+            "        \"gen_ai.request.model\": \"gpt-5.4-mini\"",
+            "    },",
+        }
+        : new[]
+        {
+            $"    \"name\": \"{operationName} gpt-5.4-mini\",",
+            "    \"context\": {",
+            $"        \"trace_id\": \"0xdd1ed405c6970ac9a12f716d10348920\",",
+            "        \"span_id\": \"0xfb587c5909a6c691\",",
+            "        \"trace_state\": \"[]\"",
+            "    },",
+            "    \"kind\": \"SpanKind.INTERNAL\",",
+            "    \"parent_id\": null,",
+            "    \"attributes\": {",
+            $"        \"gen_ai.operation.name\": \"{operationName}\",",
+            "        \"gen_ai.request.model\": \"gpt-5.4-mini\"",
+            "    },",
+        };
+
+    private static readonly string[] PythonResourceLines = new[]
+    {
+        "    \"resource\": {",
+        "        \"attributes\": {",
+        "            \"telemetry.sdk.language\": \"python\",",
+        "            \"telemetry.sdk.name\": \"opentelemetry\",",
+        "            \"telemetry.sdk.version\": \"1.40.0\",",
+        "            \"service.name\": \"pirate-agent\"",
+        "        }",
+        "    }"
+    };
+
+    [Fact]
+    public async Task Python_ConsoleExporter_AllOpsPresent_Passes()
+    {
+        var lines = new List<string>();
+        lines.AddRange(PythonResourceLines);
+        lines.Add("{");
+        lines.AddRange(MakePythonSpan("invoke_agent"));
+        lines.Add("}");
+        lines.Add("{");
+        lines.AddRange(MakePythonSpan("chat", withParent: true));
+        lines.Add("}");
+        lines.Add("{");
+        lines.AddRange(MakePythonSpan("execute_tool", withParent: true));
+        lines.Add("}");
+
+        var logPath = CreateTempLogFile(lines.ToArray());
+        var check = new TelemetryRequirementCheck(logPath);
+
+        var result = await check.CheckAsync(_config, _logger);
+
+        result.Passed.Should().BeTrue(because: "all three required GenAI operations are present in Python format");
+    }
+
+    [Fact]
+    public async Task Python_ConsoleExporter_MissingOps_Fails()
+    {
+        var lines = new List<string>();
+        lines.Add("{");
+        lines.AddRange(MakePythonSpan("chat", withParent: true));
+        lines.Add("}");
+
+        var logPath = CreateTempLogFile(lines.ToArray());
+        var check = new TelemetryRequirementCheck(logPath);
+
+        var result = await check.CheckAsync(_config, _logger);
+
+        result.Passed.Should().BeFalse(because: "invoke_agent and execute_tool operations are missing");
+        result.ErrorMessage.Should().Contain("invoke_agent");
+        result.ErrorMessage.Should().Contain("execute_tool");
+    }
+
+    [Fact]
+    public async Task Python_ConsoleExporter_ChildSpan_WithoutParent_WarnsAboutMissingParent()
+    {
+        var lines = new List<string>();
+        lines.AddRange(PythonResourceLines);
+        lines.Add("{");
+        lines.AddRange(MakePythonSpan("invoke_agent"));
+        lines.Add("}");
+        lines.Add("{");
+        // chat span without parent_id (null)
+        lines.AddRange(MakePythonSpan("chat"));
+        lines.Add("}");
+        lines.Add("{");
+        lines.AddRange(MakePythonSpan("execute_tool", withParent: true));
+        lines.Add("}");
+
+        var logPath = CreateTempLogFile(lines.ToArray());
+        var check = new TelemetryRequirementCheck(logPath);
+
+        var result = await check.CheckAsync(_config, _logger);
+
+        result.Passed.Should().BeTrue(because: "missing parent is a warning not a failure");
+        result.IsWarning.Should().BeTrue(because: "chat span has null parent_id");
+        result.Details.Should().Contain("chat", because: "chat span is missing parent link");
+    }
+
+    [Fact]
+    public void SplitIntoSpanBlocks_PythonFormat_SplitsCorrectly()
+    {
+        var lines = new List<string>();
+        lines.Add("{");
+        lines.AddRange(MakePythonSpan("invoke_agent"));
+        lines.Add("}");
+        lines.Add("{");
+        lines.AddRange(MakePythonSpan("chat", withParent: true));
+        lines.Add("}");
+
+        var blocks = TelemetryRequirementCheck.SplitIntoSpanBlocks(lines.ToArray());
+
+        blocks.Should().HaveCount(2, because: "two Python span JSON blocks were provided");
     }
 }
