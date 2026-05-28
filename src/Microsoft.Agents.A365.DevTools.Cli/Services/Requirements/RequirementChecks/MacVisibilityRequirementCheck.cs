@@ -243,14 +243,23 @@ public sealed class MacVisibilityRequirementCheck : RequirementCheck
 
     private string ResolveEndpoint(Agent365Config config)
     {
+        return ResolveEndpointForObservability(config, _environment, _baseUrlOverride, _tenantIdOverride);
+    }
+
+    internal static string ResolveEndpointForObservability(
+        Agent365Config config,
+        string environment,
+        string? baseUrlOverride = null,
+        string? tenantIdOverride = null)
+    {
         var baseUrl = FirstNonEmpty(
-            _baseUrlOverride,
+            baseUrlOverride,
             config.Agent365ObservabilityMcpOptions?.BaseUrl,
             Environment.GetEnvironmentVariable("A365_OBSERVABILITY_BASE_URL"))
-            ?? new Uri(ConfigConstants.GetDiscoverEndpointUrl(_environment)).GetLeftPart(UriPartial.Authority);
+            ?? new Uri(ConfigConstants.GetDiscoverEndpointUrl(environment)).GetLeftPart(UriPartial.Authority);
 
         var tenantId = FirstNonEmpty(
-            _tenantIdOverride,
+            tenantIdOverride,
             config.Agent365ObservabilityMcpOptions?.TenantId,
             Environment.GetEnvironmentVariable("A365_OBSERVABILITY_TENANT_ID"),
             config.TenantId);
@@ -265,6 +274,13 @@ public sealed class MacVisibilityRequirementCheck : RequirementCheck
 
     private KeyValuePair<string, string> ResolveMetricsArgument(Agent365Config config)
     {
+        return ResolveMetricsArgumentForObservability(config, _agentNameOverride);
+    }
+
+    internal static KeyValuePair<string, string> ResolveMetricsArgumentForObservability(
+        Agent365Config config,
+        string? agentNameOverride = null)
+    {
         var agentObservabilityId = FirstNonEmpty(
             config.Agent365ObservabilityMcpOptions?.AgentObservabilityId,
             Environment.GetEnvironmentVariable("A365_OBSERVABILITY_AGENT_OBSERVABILITY_ID"));
@@ -275,7 +291,7 @@ public sealed class MacVisibilityRequirementCheck : RequirementCheck
         }
 
         var agentName = FirstNonEmpty(
-            _agentNameOverride,
+            agentNameOverride,
             config.Agent365ObservabilityMcpOptions?.AgentName,
             Environment.GetEnvironmentVariable("A365_OBSERVABILITY_AGENT_NAME"),
             config.AgentIdentityDisplayName,
@@ -396,7 +412,7 @@ public sealed class MacVisibilityRequirementCheck : RequirementCheck
         return ExtractToolText(content);
     }
 
-    private static async Task<bool> ProbeToolsListAsync(
+    internal static async Task<bool> ProbeToolsListAsync(
         HttpClient httpClient,
         string endpoint,
         string correlationId,

@@ -3,7 +3,12 @@
 
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Microsoft.Extensions.Logging;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 
@@ -15,6 +20,8 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementCh
 /// </summary>
 public class AgentMetricsRequirementCheck : RequirementCheck
 {
+    private const string GetAgentMetricsToolName = "getAgentMetrics";
+
     private readonly CopilotChatPlaywrightService? _playwrightService;
     private readonly string? _instanceName;
 
@@ -146,19 +153,150 @@ public class AgentMetricsRequirementCheck : RequirementCheck
 
     /// <summary>
     /// Queries agent metrics via MCP tool call.
-    /// This is a placeholder — the actual implementation will call an MCP server tool
-    /// to retrieve agent telemetry/metrics from the observability backend.
     /// </summary>
     protected internal virtual Task<AgentMetricsSnapshot?> GetAgentMetricsAsync(
         Agent365Config config,
         ILogger logger,
         CancellationToken cancellationToken)
     {
-        // TODO: Replace with actual MCP tool call to retrieve agent metrics
-        // Expected call: invoke MCP tool "get_agent_metrics" with agent app ID
-        // Returns: invocation count, error count, latency percentiles, etc.
-        logger.LogDebug("Agent metrics MCP tool call not yet implemented — returning null placeholder");
-        return Task.FromResult<AgentMetricsSnapshot?>(null);
+        return GetAgentMetricsInternalAsync(config, logger, cancellationToken);
+    }
+
+    private static async Task<AgentMetricsSnapshot?> GetAgentMetricsInternalAsync(
+        Agent365Config config,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        var token = Environment.GetEnvironmentVariable("A365_OBSERVABILITY_MCP_BEARER_TOKEN");
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            logger.LogWarning("Observability MCP bearer token is not set. Configure A365_OBSERVABILITY_MCP_BEARER_TOKEN.");
+            return null;
+        }
+
+        var endpoint = MacVisibilityRequirementCheck.ResolveEndpointForObservability(config, config.Environment);
+        var metricArgument = MacVisibilityRequirementCheck.ResolveMetricsArgumentForObservability(config);
+        var correlationId = HttpClientFactory.GenerateCorrelationId();
+
+        using var httpClient = HttpClientFactory.CreateAuthenticatedClient(token, correlationId: correlationId);
+
+        var toolIsAdvertised = await MacVisibilityRequirementCheck.ProbeToolsListAsync(
+            httpClient,
+            endpoint,
+            correlationId,
+            logger,
+            cancellationToken);
+        if (!toolIsAdvertised)
+        {
+            logger.LogWarning("MCP tools/list did not advertise required tool '{ToolName}'.", GetAgentMetricsToolName);
+            return null;
+        }
+
+        var requestPayload = new
+        {
+            jsonrpc = McpConstants.JsonRpcVersion,
+            id = "agent-metrics",
+            method = McpConstants.ToolsCallMethod,
+            @params = new
+            {
+                name = GetAgentMetricsToolName,
+                arguments = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    [metricArgument.Key] = metricArgument.Value
+                }
+            }
+        };
+
+        var payloadJson = JsonSerializer.Serialize(requestPayload);
+        using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
+        {
+            Content = new StringContent(payloadJson, Encoding.UTF8, McpConstants.MediaTypes.ApplicationJson)
+        };
+
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(McpConstants.MediaTypes.ApplicationJson));
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(McpConstants.MediaTypes.TextEventStream));
+
+        using var response = await httpClient.SendAsync(
+            request,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken);
+
+        var content = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            logger.LogWarning(
+                "getAgentMetrics returned non-success status {StatusCode} from {Endpoint} (CorrelationId: {CorrelationId})",
+                (int)response.StatusCode,
+                endpoint,
+                correlationId);
+            return null;
+        }
+
+        var toolText = MacVisibilityRequirementCheck.ExtractToolText(content);
+        var metrics = MacVisibilityRequirementCheck.ParseNumericMetrics(toolText);
+        if (metrics.Count == 0)
+        {
+            logger.LogWarning("getAgentMetrics response did not contain numeric metrics.");
+            return null;
+        }
+
+        return new AgentMetricsSnapshot
+        {
+            InvocationCount = ConvertToLong(SumByMetricPrefix(metrics, "kpi.invocations.")),
+            ErrorCount = ConvertToLong(SumByMetricPrefix(metrics, "kpi.errors.")),
+            AverageLatencyMs = GetFirstMetricValue(metrics,
+                "kpi.latency.avg",
+                "kpi.latency.average",
+                "kpi.avgLatencyMs",
+                "kpi.averageLatencyMs")
+        };
+    }
+
+    private static double SumByMetricPrefix(IReadOnlyDictionary<string, double> metrics, string prefix)
+    {
+        double sum = 0;
+        foreach (var pair in metrics)
+        {
+            if (pair.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                sum += pair.Value;
+            }
+        }
+
+        return sum;
+    }
+
+    private static double? GetFirstMetricValue(IReadOnlyDictionary<string, double> metrics, params string[] metricKeys)
+    {
+        foreach (var metricKey in metricKeys)
+        {
+            if (metrics.TryGetValue(metricKey, out var value))
+            {
+                return value;
+            }
+        }
+
+        return null;
+    }
+
+    private static long ConvertToLong(double value)
+    {
+        if (double.IsNaN(value) || double.IsInfinity(value))
+        {
+            return 0;
+        }
+
+        if (value > long.MaxValue)
+        {
+            return long.MaxValue;
+        }
+
+        if (value < long.MinValue)
+        {
+            return long.MinValue;
+        }
+
+        return (long)Math.Round(value, MidpointRounding.AwayFromZero);
     }
 
     /// <summary>
