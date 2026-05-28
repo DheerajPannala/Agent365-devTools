@@ -183,6 +183,5 @@ public class ValidateCommandTests : IDisposable
         report.Tiers.Telemetry.Skipped.Should().BeTrue();
         report.Tiers.Blueprint.Skipped.Should().BeTrue();
         report.Tiers.AgentMetrics.Skipped.Should().BeTrue();
-        report.Tiers.M365.Skipped.Should().BeTrue();
     }
 }

@@ -1064,7 +1064,7 @@ public class ConversationRequirementCheck : RequirementCheck
     /// <summary>
     /// Returns deploymentProjectPath if configured, otherwise falls back to the current directory.
     /// </summary>
-    private static string ResolveProjectPath(Agent365Config config)
+    internal static string ResolveProjectPath(Agent365Config config)
     {
         return string.IsNullOrWhiteSpace(config.DeploymentProjectPath)
             ? Directory.GetCurrentDirectory()

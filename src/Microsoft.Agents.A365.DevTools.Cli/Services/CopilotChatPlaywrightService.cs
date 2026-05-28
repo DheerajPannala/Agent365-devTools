@@ -7,28 +7,28 @@ using Microsoft.Playwright;
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
 /// <summary>
-/// Automates a Copilot Chat conversation using Playwright.
-/// Opens the M365 Chat page, selects an agent by name, sends a test message,
-/// and waits for the agent to respond.
+/// Automates a conversation with an agent in Microsoft Teams using Playwright.
+/// Opens Teams web, searches for the agent by name in a new chat, sends a test
+/// message, and waits for the agent to respond.
 ///
 /// Auth strategy:
 /// - Reuses the CLI's existing MSAL browser session. On Windows, WAM (Windows
-///   Authentication Manager) automatically provides SSO for the M365 domain, so
+///   Authentication Manager) automatically provides SSO for the Teams domain, so
 ///   the browser launched by Playwright inherits the user's session without any
 ///   manual login.
 /// - On non-Windows platforms (or if SSO is not available), a headed browser
 ///   opens and waits for the user to log in manually.
 /// - Saves browser storage state to a local file for reuse across validate runs.
-///
-/// The flow mirrors the Camp-AIR A365ObservabilityTests pattern:
-///   auth/setup.ts for login, pages/chat-page.ts for interaction.
 /// </summary>
 public class CopilotChatPlaywrightService
 {
     private readonly ILogger _logger;
 
-    /// <summary>Base URL for M365 Chat.</summary>
-    internal const string ChatBaseUrl = "https://m365.cloud.microsoft/chat";
+    /// <summary>Base URL for Microsoft Teams web.</summary>
+    internal const string ChatBaseUrl = "https://teams.microsoft.com";
+
+    /// <summary>URL pattern indicating the user has successfully authenticated into Teams.</summary>
+    internal const string AuthenticatedUrlPattern = "**/teams.microsoft.com/**";
 
     /// <summary>Timeout for agent response in milliseconds (2 minutes).</summary>
     internal const int AgentResponseTimeoutMs = 120_000;
@@ -50,25 +50,16 @@ public class CopilotChatPlaywrightService
     /// <summary>Auth state is reused if it is less than this many minutes old.</summary>
     private const int AuthStateTtlMinutes = 30;
 
-    /// <summary>Streaming indicator phrases that signal the agent is still generating.</summary>
-    private static readonly string[] StreamingPatterns = new[]
-    {
-        "Generating response",
-        "Lining things up",
-        "Working on it",
-        "Thinking"
-    };
-
     public CopilotChatPlaywrightService(ILogger logger)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
     /// <summary>
-    /// Sends a test message to the specified agent in Copilot Chat and returns the
+    /// Sends a test message to the specified agent in Teams web and returns the
     /// agent's response text, or null if the conversation could not be completed.
     /// </summary>
-    /// <param name="agentName">Display name of the agent in M365 Chat.</param>
+    /// <param name="agentName">Display name of the agent (bot) in Teams.</param>
     /// <param name="testMessage">Message to send to the agent.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The agent's response text, or null if the conversation failed.</returns>
@@ -82,7 +73,6 @@ public class CopilotChatPlaywrightService
 
         var authStatePath = GetAuthStatePath();
 
-        // Install Playwright browsers if needed (first-run only)
         _logger.LogDebug("Ensuring Playwright browsers are installed...");
         var installExitCode = Microsoft.Playwright.Program.Main(new[] { "install", "chromium" });
         if (installExitCode != 0)
@@ -92,21 +82,17 @@ public class CopilotChatPlaywrightService
 
         using var playwright = await Microsoft.Playwright.Playwright.CreateAsync();
 
-        // Determine if we can reuse saved auth state
         var hasFreshAuthState = HasFreshAuthState(authStatePath);
 
-        // Launch browser: headed if no saved state (user needs to log in), headless if reusing state
         var launchOptions = new BrowserTypeLaunchOptions
         {
-            Headless = hasFreshAuthState,
-            // Slow down actions slightly for stability with M365 UI
-            SlowMo = hasFreshAuthState ? 0 : 100
+            Headless = false,
+            SlowMo = 100
         };
 
-        _logger.LogDebug("Launching Chromium (headless: {Headless})...", launchOptions.Headless);
+        _logger.LogDebug("Launching Chromium (headed)...");
         await using var browser = await playwright.Chromium.LaunchAsync(launchOptions);
 
-        // Create context with saved state if available
         var contextOptions = new BrowserNewContextOptions
         {
             ViewportSize = new ViewportSize { Width = 1280, Height = 720 }
@@ -122,24 +108,21 @@ public class CopilotChatPlaywrightService
 
         var page = await context.NewPageAsync();
 
-        // Step 1: Navigate and authenticate
-        _logger.LogDebug("Navigating to M365 Chat...");
+        _logger.LogInformation("Navigating to Teams web...");
         await page.GotoAsync(ChatBaseUrl, new PageGotoOptions
         {
-            WaitUntil = WaitUntilState.NetworkIdle,
+            WaitUntil = WaitUntilState.DOMContentLoaded,
             Timeout = NavigationTimeoutMs
         });
 
-        // Check if we landed on the chat page or need to authenticate
-        var chatInput = page.GetByRole(AriaRole.Textbox, new PageGetByRoleOptions { Name = "Message Copilot" });
-        var isAuthenticated = await chatInput.IsVisibleAsync().ConfigureAwait(false);
+        // Check if we landed on Teams or need to authenticate
+        var isAuthenticated = await IsTeamsLoadedAsync(page);
 
         if (!isAuthenticated)
         {
             if (hasFreshAuthState)
             {
                 _logger.LogDebug("Saved auth state did not work. Re-launching as headed for login...");
-                // Close headless browser, reopen headed
                 await page.CloseAsync();
                 await context.CloseAsync();
                 await browser.CloseAsync();
@@ -147,35 +130,20 @@ public class CopilotChatPlaywrightService
                 return await RunWithInteractiveLoginAsync(playwright, agentName, testMessage, authStatePath, cancellationToken);
             }
 
-            // Wait for the user to log in manually
-            _logger.LogInformation("Please log in to M365 in the browser window.");
+            _logger.LogInformation("Please log in to Teams in the browser window.");
             _logger.LogInformation("The CLI will continue automatically once login completes.");
 
-            // Wait for redirect to M365 chat (user completes login)
-            await page.WaitForURLAsync("**/m365.cloud.microsoft/**",
+            await page.WaitForURLAsync(AuthenticatedUrlPattern,
                 new PageWaitForURLOptions { Timeout = 300_000 });
 
-            // Navigate to chat page to ensure all cookies are set
-            await page.GotoAsync(ChatBaseUrl, new PageGotoOptions
-            {
-                WaitUntil = WaitUntilState.NetworkIdle,
-                Timeout = NavigationTimeoutMs
-            });
-
-            // Wait for chat input to appear
-            await chatInput.WaitForAsync(new LocatorWaitForOptions
-            {
-                State = WaitForSelectorState.Visible,
-                Timeout = 30_000
-            });
+            // Wait for Teams to fully load after redirect
+            await WaitForTeamsReadyAsync(page);
 
             _logger.LogInformation("Login successful.");
         }
 
-        // Save auth state for next time
         await SaveAuthStateAsync(context, authStatePath);
 
-        // Step 2: Open agent chat and send message
         var responseText = await OpenAgentChatAndSendMessageAsync(page, agentName, testMessage, cancellationToken);
 
         return responseText;
@@ -210,29 +178,17 @@ public class CopilotChatPlaywrightService
 
         await page.GotoAsync(ChatBaseUrl, new PageGotoOptions
         {
-            WaitUntil = WaitUntilState.NetworkIdle,
+            WaitUntil = WaitUntilState.DOMContentLoaded,
             Timeout = NavigationTimeoutMs
         });
 
-        _logger.LogInformation("Please log in to M365 in the browser window.");
+        _logger.LogInformation("Please log in to Teams in the browser window.");
         _logger.LogInformation("The CLI will continue automatically once login completes.");
 
-        // Wait for redirect to M365
-        await page.WaitForURLAsync("**/m365.cloud.microsoft/**",
+        await page.WaitForURLAsync(AuthenticatedUrlPattern,
             new PageWaitForURLOptions { Timeout = 300_000 });
 
-        await page.GotoAsync(ChatBaseUrl, new PageGotoOptions
-        {
-            WaitUntil = WaitUntilState.NetworkIdle,
-            Timeout = NavigationTimeoutMs
-        });
-
-        var chatInput = page.GetByRole(AriaRole.Textbox, new PageGetByRoleOptions { Name = "Message Copilot" });
-        await chatInput.WaitForAsync(new LocatorWaitForOptions
-        {
-            State = WaitForSelectorState.Visible,
-            Timeout = 30_000
-        });
+        await WaitForTeamsReadyAsync(page);
 
         _logger.LogInformation("Login successful.");
 
@@ -242,8 +198,51 @@ public class CopilotChatPlaywrightService
     }
 
     /// <summary>
-    /// Opens a new chat with the specified agent and sends a test message.
-    /// Returns the agent's response text, or null if the response could not be extracted.
+    /// Checks if the Teams web app has loaded by looking for the left rail or chat UI.
+    /// </summary>
+    private async Task<bool> IsTeamsLoadedAsync(IPage page)
+    {
+        try
+        {
+            // Teams v2 uses a left app bar with Chat, Activity, etc.
+            var chatNavItem = page.Locator("[data-tid='app-bar-86fcd49b-61a2-4701-b771-54728cd291fb']")
+                .Or(page.GetByRole(AriaRole.Tab, new PageGetByRoleOptions { Name = "Chat" }))
+                .Or(page.Locator("[data-tid='app-bar-chat']"));
+
+            // Wait briefly for the chat nav to appear, then check visibility
+            await chatNavItem.First.WaitForAsync(new LocatorWaitForOptions
+            {
+                State = WaitForSelectorState.Visible,
+                Timeout = 10_000
+            });
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Waits for the Teams web UI to become ready after authentication.
+    /// </summary>
+    private async Task WaitForTeamsReadyAsync(IPage page)
+    {
+        // Wait for the app bar or chat section to appear, indicating Teams has loaded
+        var chatNavItem = page.Locator("[data-tid='app-bar-86fcd49b-61a2-4701-b771-54728cd291fb']")
+            .Or(page.GetByRole(AriaRole.Tab, new PageGetByRoleOptions { Name = "Chat" }))
+            .Or(page.Locator("[data-tid='app-bar-chat']"));
+
+        await chatNavItem.First.WaitForAsync(new LocatorWaitForOptions
+        {
+            State = WaitForSelectorState.Visible,
+            Timeout = 60_000
+        });
+    }
+
+    /// <summary>
+    /// Opens a chat with the agent in Teams using the top search bar, sends a test
+    /// message, and returns the agent's response text.
     /// </summary>
     private async Task<string?> OpenAgentChatAndSendMessageAsync(
         IPage page,
@@ -251,196 +250,351 @@ public class CopilotChatPlaywrightService
         string testMessage,
         CancellationToken cancellationToken)
     {
-        // Click the agent button in the sidebar
-        _logger.LogDebug("Opening agent chat for '{AgentName}'...", agentName);
-        var agentButton = page.GetByRole(AriaRole.Button, new PageGetByRoleOptions { Name = agentName });
-        await agentButton.First.WaitForAsync(new LocatorWaitForOptions
-        {
-            State = WaitForSelectorState.Visible,
-            Timeout = 15_000
-        });
-        await agentButton.First.ClickAsync();
-        await page.WaitForTimeoutAsync(2000);
+        // Step 1: Use the top search bar to find the agent
+        _logger.LogInformation("Searching for agent '{AgentName}' via search bar...", agentName);
+        var searchBox = page.Locator("[data-tid='searchbox']")
+            .Or(page.GetByRole(AriaRole.Search))
+            .Or(page.GetByPlaceholder("Search"));
 
-        // Wait for the chat input to be ready
-        var chatInput = page.GetByRole(AriaRole.Textbox, new PageGetByRoleOptions { Name = "Message Copilot" });
-        await chatInput.WaitForAsync(new LocatorWaitForOptions
-        {
-            State = WaitForSelectorState.Visible,
-            Timeout = 30_000
-        });
-
-        // Click "New chat" to start a fresh conversation
-        // The header button is typically the second "New chat" button (first is sidebar menuitem)
-        var newChatButtons = page.GetByRole(AriaRole.Button, new PageGetByRoleOptions { Name = "New chat" });
-        var buttonCount = await newChatButtons.CountAsync();
-        if (buttonCount > 1)
-        {
-            await newChatButtons.Nth(1).ClickAsync();
-        }
-        else if (buttonCount == 1)
-        {
-            await newChatButtons.First.ClickAsync();
-        }
-        await page.WaitForTimeoutAsync(2000);
-
-        // Re-focus the chat input
-        await chatInput.WaitForAsync(new LocatorWaitForOptions
-        {
-            State = WaitForSelectorState.Visible,
-            Timeout = 15_000
-        });
-        await chatInput.ClickAsync();
-        await page.WaitForTimeoutAsync(500);
-
-        // Type and send message
-        _logger.LogDebug("Sending test message to agent...");
-
-        // Click the paragraph inside the textbox to ensure focus (M365 Chat pattern)
-        var paragraph = chatInput.Locator("p, [role='paragraph']");
         try
         {
-            await paragraph.First.ClickAsync(new LocatorClickOptions { Timeout = 5000 });
+            await searchBox.First.WaitForAsync(new LocatorWaitForOptions
+            {
+                State = WaitForSelectorState.Visible,
+                Timeout = 15_000
+            });
+            await searchBox.First.ClickAsync();
+            await page.WaitForTimeoutAsync(500);
+            await page.Keyboard.TypeAsync(agentName, new KeyboardTypeOptions { Delay = 50 });
+            await page.WaitForTimeoutAsync(3000);
         }
-        catch
+        catch (Exception ex)
         {
-            await chatInput.ClickAsync();
+            _logger.LogWarning("Could not use the search bar: {Message}", ex.Message);
+            await CaptureScreenshotAsync(page, "teams-no-search-bar");
+            return null;
         }
 
-        await chatInput.FillAsync(testMessage);
-        await page.WaitForTimeoutAsync(500);
-        await chatInput.PressAsync("Enter");
+        // Step 2: Click the matching result from the search dropdown
+        _logger.LogInformation("Selecting agent from search results...");
+        var searchResult = page.GetByRole(AriaRole.Option).Filter(new LocatorFilterOptions { HasText = agentName })
+            .Or(page.GetByRole(AriaRole.Listitem).Filter(new LocatorFilterOptions { HasText = agentName }));
 
-        // Wait for agent response
-        _logger.LogDebug("Waiting for agent response...");
-        var responseText = await WaitForAgentResponseAsync(page, cancellationToken);
+        try
+        {
+            await searchResult.First.WaitForAsync(new LocatorWaitForOptions
+            {
+                State = WaitForSelectorState.Visible,
+                Timeout = 10_000
+            });
+            await searchResult.First.ClickAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("Agent '{AgentName}' was not found in search results: {Message}", agentName, ex.Message);
+            await CaptureScreenshotAsync(page, "teams-agent-not-found");
+            return null;
+        }
+
+        await page.WaitForTimeoutAsync(3000);
+
+        // Step 3: Type and send the message in the compose box
+        _logger.LogInformation("Sending test message to agent...");
+        var composeBox = page.GetByRole(AriaRole.Textbox, new PageGetByRoleOptions { Name = "Type a message" })
+            .Or(page.Locator("[data-tid='ckeditor-replyConversation']"))
+            .Or(page.GetByRole(AriaRole.Textbox, new PageGetByRoleOptions { Name = "Type a new message" }));
+
+        try
+        {
+            await composeBox.First.WaitForAsync(new LocatorWaitForOptions
+            {
+                State = WaitForSelectorState.Visible,
+                Timeout = 15_000
+            });
+            await composeBox.First.ClickAsync();
+            await page.WaitForTimeoutAsync(500);
+
+            await composeBox.First.FillAsync(testMessage);
+            await page.WaitForTimeoutAsync(500);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("Could not find or fill the compose box: {Message}", ex.Message);
+            await CaptureScreenshotAsync(page, "teams-no-compose-box");
+            return null;
+        }
+
+        // Record message count before sending so we can detect new messages
+        var messagesBefore = await CountVisibleMessagesAsync(page);
+        _logger.LogDebug("Messages visible before sending: {Count}", messagesBefore);
+
+        // Click the send button or press Enter
+        var sendButton = page.Locator("[data-tid='newMessageCommands-send']")
+            .Or(page.GetByRole(AriaRole.Button, new PageGetByRoleOptions { Name = "Send" }));
+
+        if (await sendButton.First.IsVisibleAsync().ConfigureAwait(false))
+        {
+            await sendButton.First.ClickAsync();
+        }
+        else
+        {
+            await composeBox.First.PressAsync("Enter");
+        }
+
+        _logger.LogInformation("Message sent, waiting for agent response...");
+
+        // Step 4: Wait for agent response (new message must appear)
+        var responseText = await WaitForNewMessageAsync(page, messagesBefore, cancellationToken);
 
         if (string.IsNullOrWhiteSpace(responseText))
         {
             _logger.LogWarning("Agent response was empty.");
+            await CaptureScreenshotAsync(page, "teams-empty-response");
             return null;
         }
 
-        _logger.LogDebug("Agent responded with {Length} characters.", responseText.Length);
+        _logger.LogInformation("Agent responded with {Length} characters.", responseText.Length);
         return responseText;
     }
 
     /// <summary>
-    /// Waits for the agent to finish responding and extracts the response text.
-    /// Strategy (from Camp-AIR):
-    ///   1. Wait for "Copy Response" button or feedback group (response has started)
-    ///   2. Poll until streaming indicators ("Generating response", etc.) clear
-    ///   3. Stabilize: wait for text to stop changing
-    ///   4. Extract final text from the last non-user article element
+    /// Captures a screenshot for debugging when a step fails.
+    /// Saved to the CLI's local data directory.
     /// </summary>
-    private async Task<string?> WaitForAgentResponseAsync(IPage page, CancellationToken cancellationToken)
+    private async Task CaptureScreenshotAsync(IPage page, string stepName)
     {
-        var timeout = AgentResponseTimeoutMs;
-
-        // Step 1: Wait for response to start
-        var copyResponseButton = page.GetByRole(AriaRole.Button, new PageGetByRoleOptions { Name = "Copy Response" });
-        var feedbackGroup = page.GetByRole(AriaRole.Group, new PageGetByRoleOptions { NameRegex = new System.Text.RegularExpressions.Regex("feedback", System.Text.RegularExpressions.RegexOptions.IgnoreCase) });
-        var completionIndicator = copyResponseButton.Or(feedbackGroup);
-
-        await completionIndicator.First.WaitForAsync(new LocatorWaitForOptions
+        try
         {
-            State = WaitForSelectorState.Visible,
-            Timeout = timeout
-        });
+            var screenshotDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                Constants.AuthenticationConstants.ApplicationName,
+                "screenshots");
+            Directory.CreateDirectory(screenshotDir);
 
-        // Step 2: Poll until streaming indicators clear
-        var pollStart = Environment.TickCount64;
-        while (Environment.TickCount64 - pollStart < timeout)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            await page.WaitForTimeoutAsync(3000);
+            var fileName = $"{stepName}-{DateTime.UtcNow:yyyyMMdd-HHmmss}.png";
+            var filePath = Path.Combine(screenshotDir, fileName);
 
-            var allArticles = page.GetByRole(AriaRole.Article);
-            var count = await allArticles.CountAsync();
-            var stillStreaming = false;
-
-            for (var i = 0; i < count; i++)
-            {
-                string text;
-                try
-                {
-                    text = await allArticles.Nth(i).InnerTextAsync() ?? string.Empty;
-                }
-                catch
-                {
-                    text = string.Empty;
-                }
-
-                if (StreamingPatterns.Any(p => text.Contains(p, StringComparison.Ordinal)))
-                {
-                    stillStreaming = true;
-                    break;
-                }
-            }
-
-            if (!stillStreaming)
-            {
-                break;
-            }
-
-            _logger.LogDebug("Agent still streaming, waiting...");
+            await page.ScreenshotAsync(new PageScreenshotOptions { Path = filePath, FullPage = true });
+            _logger.LogInformation("Screenshot saved: {Path}", filePath);
         }
-
-        // Step 3: Stabilize -- wait for text to stop changing
-        var previousText = string.Empty;
-        for (var i = 0; i < 3; i++)
+        catch (Exception ex)
         {
-            await page.WaitForTimeoutAsync(2000);
-            var currentText = await ExtractLastAgentResponseAsync(page);
-            if (currentText == previousText && !string.IsNullOrEmpty(currentText))
-            {
-                break;
-            }
-            previousText = currentText;
+            _logger.LogDebug(ex, "Failed to capture screenshot for step '{Step}'.", stepName);
         }
-
-        // Step 4: Extract final response
-        return await ExtractLastAgentResponseAsync(page);
     }
 
     /// <summary>
-    /// Extracts the text from the last non-user article element on the page.
-    /// User messages start with "You said:"; agent responses do not.
+    /// Counts visible message elements in the chat pane.
+    /// Uses multiple selector strategies to find message containers in Teams.
     /// </summary>
-    private static async Task<string> ExtractLastAgentResponseAsync(IPage page)
+    private static async Task<int> CountVisibleMessagesAsync(IPage page)
     {
-        var allArticles = page.GetByRole(AriaRole.Article);
-        var count = await allArticles.CountAsync();
-
-        for (var i = count - 1; i >= 0; i--)
+        // Teams renders messages in divs with data-tid="chat-pane-message" or similar
+        var selectors = new[]
         {
-            string text;
+            "[data-tid='chat-pane-message']",
+            "[data-tid='messageListItem']",
+            ".message-body-content",
+        };
+
+        foreach (var selector in selectors)
+        {
+            var count = await page.Locator(selector).CountAsync();
+            if (count > 0)
+            {
+                return count;
+            }
+        }
+
+        return 0;
+    }
+
+    /// <summary>
+    /// Waits for a new message to appear after the user's message was sent.
+    /// Polls the page for new message elements and waits for the response text to stabilize.
+    /// Returns null if no new message appears within the timeout.
+    /// </summary>
+    /// <summary>
+    /// Common placeholder patterns that agents send before the real response.
+    /// These are short acknowledgements that should be ignored.
+    /// </summary>
+    private static readonly string[] PlaceholderPatterns = new[]
+    {
+        "got it", "working on it", "let me", "thinking", "one moment",
+        "just a moment", "hold on", "processing", "looking into",
+        "give me a moment", "i'm on it", "sure thing"
+    };
+
+    private async Task<string?> WaitForNewMessageAsync(
+        IPage page,
+        int messageCountBefore,
+        CancellationToken cancellationToken)
+    {
+        var timeout = AgentResponseTimeoutMs;
+        var pollStart = Environment.TickCount64;
+        var pollIntervalMs = 3000;
+
+        // Phase 1: Wait for any new message to appear beyond our sent message
+        _logger.LogDebug("Waiting for new messages (had {Before} before)...", messageCountBefore);
+
+        var newMessageDetected = false;
+        while (Environment.TickCount64 - pollStart < timeout)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var currentCount = await CountVisibleMessagesAsync(page);
+            if (currentCount >= messageCountBefore + 2)
+            {
+                newMessageDetected = true;
+                _logger.LogDebug("New message detected (count: {Before} -> {Current}).", messageCountBefore, currentCount);
+                break;
+            }
+
+            var elapsed = (Environment.TickCount64 - pollStart) / 1000;
+            _logger.LogInformation("Waiting for agent response... ({Elapsed}s)", elapsed);
+            await page.WaitForTimeoutAsync(pollIntervalMs);
+        }
+
+        if (!newMessageDetected)
+        {
+            _logger.LogWarning("No new message appeared within {Timeout}s timeout.", timeout / 1000);
+            await CaptureScreenshotAsync(page, "teams-no-response");
+            return null;
+        }
+
+        // Phase 2: Wait for agent to finish responding.
+        // The agent may send a placeholder first (e.g. "Got it...working on it"),
+        // then replace or follow up with the actual response. We need to wait for:
+        // (a) typing indicator to clear, (b) text to not be a placeholder,
+        // (c) text to stabilize.
+        var previousText = string.Empty;
+        var stableCount = 0;
+        var phase2Start = Environment.TickCount64;
+        var phase2TimeoutMs = 120_000; // 2 minutes for the real response
+
+        while (Environment.TickCount64 - phase2Start < phase2TimeoutMs)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // Check typing indicator
+            var isTyping = false;
             try
             {
-                text = await allArticles.Nth(i).InnerTextAsync() ?? string.Empty;
+                var typingIndicator = page.Locator("[data-tid='chat-typing-indicator']")
+                    .Or(page.Locator(".typing-indicator"));
+                isTyping = await typingIndicator.First.IsVisibleAsync().ConfigureAwait(false);
+            }
+            catch
+            {
+                // No typing indicator found
+            }
+
+            if (isTyping)
+            {
+                _logger.LogDebug("Agent still typing...");
+                stableCount = 0;
+                await page.WaitForTimeoutAsync(2000);
+                continue;
+            }
+
+            var currentText = await ExtractLatestMessageTextAsync(page);
+
+            // Check if current text looks like a placeholder
+            if (IsPlaceholderResponse(currentText))
+            {
+                var elapsed = (Environment.TickCount64 - phase2Start) / 1000;
+                _logger.LogDebug("Detected placeholder response, waiting for real response... ({Elapsed}s)", elapsed);
+                stableCount = 0;
+                await page.WaitForTimeoutAsync(3000);
+                continue;
+            }
+
+            // Check if text has stabilized (same non-placeholder text 3 times in a row)
+            if (!string.IsNullOrEmpty(currentText) && currentText == previousText)
+            {
+                stableCount++;
+                if (stableCount >= 3)
+                {
+                    _logger.LogDebug("Response text stabilized ({Length} chars).", currentText.Length);
+                    return currentText;
+                }
+            }
+            else
+            {
+                stableCount = 0;
+            }
+
+            previousText = currentText;
+            await page.WaitForTimeoutAsync(2000);
+        }
+
+        // Return whatever we have after timeout
+        if (!string.IsNullOrEmpty(previousText) && !IsPlaceholderResponse(previousText))
+        {
+            return previousText;
+        }
+
+        _logger.LogWarning("Agent response did not stabilize within timeout.");
+        await CaptureScreenshotAsync(page, "teams-response-timeout");
+        return null;
+    }
+
+    /// <summary>
+    /// Checks if a response looks like a short placeholder/acknowledgement
+    /// that the agent sends before the real answer.
+    /// </summary>
+    private static bool IsPlaceholderResponse(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return true;
+        }
+
+        // Very short responses (under 30 chars) that match placeholder patterns
+        var trimmed = text.Trim();
+        if (trimmed.Length > 80)
+        {
+            return false;
+        }
+
+        var lower = trimmed.ToLowerInvariant();
+        return PlaceholderPatterns.Any(p => lower.Contains(p, StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Extracts the text content from the last message element in the chat pane.
+    /// </summary>
+    private static async Task<string> ExtractLatestMessageTextAsync(IPage page)
+    {
+        var selectors = new[]
+        {
+            "[data-tid='chat-pane-message']",
+            "[data-tid='messageListItem']",
+            ".message-body-content",
+        };
+
+        foreach (var selector in selectors)
+        {
+            var messages = page.Locator(selector);
+            var count = await messages.CountAsync();
+            if (count == 0)
+            {
+                continue;
+            }
+
+            // Get the last message's text
+            try
+            {
+                var text = await messages.Nth(count - 1).InnerTextAsync() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    return text.Trim();
+                }
             }
             catch
             {
                 continue;
             }
-
-            if (text.StartsWith("You said:", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            // Extract text after "said:" heading if present
-            var saidIndex = text.IndexOf("said:", StringComparison.OrdinalIgnoreCase);
-            if (saidIndex >= 0)
-            {
-                var afterSaid = text[(saidIndex + 5)..].Trim();
-                if (!string.IsNullOrEmpty(afterSaid))
-                {
-                    return afterSaid;
-                }
-            }
-
-            return text.Trim();
         }
 
         return string.Empty;

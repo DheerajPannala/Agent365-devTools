@@ -62,7 +62,7 @@ public sealed class ValidateCommand
 
         var instanceNameOption = new Option<string?>(
             "--instance-name",
-            "Agent instance display name in Copilot Chat (used for agent metrics conversation test)");
+            "Agent instance display name (reserved for future agent metrics validation)");
         command.AddOption(instanceNameOption);
 
         command.SetHandler(async (InvocationContext context) =>
@@ -73,9 +73,6 @@ public sealed class ValidateCommand
             var report = new ValidateReport();
             var launchPlayground = context.ParseResult.GetValueForOption(playgroundOption);
             var withTenant = context.ParseResult.GetValueForOption(withTenantOption);
-            var instanceName = context.ParseResult.GetValueForOption(instanceNameOption);
-            var macBaselineFilePath = Path.Combine(cwd, MacVisibilityRequirementCheck.BaselineFileName);
-            var macBaselineCaptureFailed = false;
 
             try
             {
@@ -102,6 +99,56 @@ public sealed class ValidateCommand
                         : null
                 };
 
+                if (withTenant)
+                {
+                    // --with-tenant: load previous report, run only tenant checks, merge
+                    var existingReport = await LoadExistingReportAsync(cwd, logger);
+                    if (existingReport is not null)
+                    {
+                        // Carry forward all local tiers from previous run
+                        report.Tiers.Structural = existingReport.Tiers.Structural;
+                        report.Tiers.Build = existingReport.Tiers.Build;
+                        report.Tiers.Boot = existingReport.Tiers.Boot;
+                        report.Tiers.Conversation = existingReport.Tiers.Conversation;
+                        report.Tiers.Telemetry = existingReport.Tiers.Telemetry;
+                        report.Agent = existingReport.Agent ?? report.Agent;
+                        report.AgentConsoleLogFile = existingReport.AgentConsoleLogFile;
+                    }
+                    else
+                    {
+                        logger.LogWarning("No previous {ReportFile} found. Run 'a365 validate' first, then 'a365 validate --with-tenant'.", ReportFileName);
+                        context.ExitCode = 1;
+                        return;
+                    }
+
+                    var tenantResults = new List<(IRequirementCheck Check, RequirementCheckResult Result)>();
+
+                    // Blueprint registration check
+                    if (requirementChecksOverride is null && graphApiService is not null)
+                    {
+                        var registrationCheck = new BlueprintRegistrationRequirementCheck(graphApiService, agentBlueprintService);
+                        var registrationResults = await RunChecksDetailedAsync(
+                            new List<IRequirementCheck> { registrationCheck }, config, logger, ct);
+                        MapResultsToTiers(registrationResults, report);
+                        tenantResults.AddRange(registrationResults);
+                    }
+
+                    // Summary based on all tiers (existing + new tenant)
+                    var tenantAnyFailed = tenantResults.Any(r => !r.Result.Passed);
+                    var tenantBlocker = FindBlocker(report.Tiers);
+                    report.Summary = new SummaryResult
+                    {
+                        Ok = !tenantAnyFailed && tenantBlocker is null,
+                        Blocker = tenantBlocker
+                    };
+
+                    context.ExitCode = report.Summary.Ok ? 0 : 1;
+                    PrintSummary(report, logger);
+                    return;
+                }
+
+                // --- Non-tenant flow: run all local checks ---
+
                 // Phase 2: Run structural checks (manifest + build)
                 var structuralChecks = requirementChecksOverride?.ToList()
                     ?? BuildStructuralChecks(platformDetector, commandExecutor);
@@ -109,36 +156,8 @@ public sealed class ValidateCommand
                 var results = await RunChecksDetailedAsync(structuralChecks, config, logger, ct);
                 MapResultsToTiers(results, report);
 
-                // Phase 2a: Run blueprint registration check (requires --with-tenant)
-                if (withTenant && requirementChecksOverride is null && graphApiService is not null)
-                {
-                    var registrationCheck = new BlueprintRegistrationRequirementCheck(graphApiService, agentBlueprintService);
-                    var registrationResults = await RunChecksDetailedAsync(
-                        new List<IRequirementCheck> { registrationCheck }, config, logger, ct);
-                    MapResultsToTiers(registrationResults, report);
-                    results.AddRange(registrationResults);
-
-                    // Phase 2a-ii: Run agent metrics check (after blueprint, requires --with-tenant + --instance-name)
-                    if (!string.IsNullOrWhiteSpace(instanceName))
-                    {
-                        var playwrightService = new CopilotChatPlaywrightService(logger);
-                        var metricsCheck = new AgentMetricsRequirementCheck(playwrightService, instanceName);
-                        var metricsResults = await RunChecksDetailedAsync(
-                            new List<IRequirementCheck> { metricsCheck }, config, logger, ct);
-                        MapResultsToTiers(metricsResults, report);
-                        results.AddRange(metricsResults);
-                    }
-                    else
-                    {
-                        report.Tiers.AgentMetrics = TierResult.CreateSkipped<AgentMetricsTierResult>("use --instance-name");
-                    }
-                }
-                else if (!withTenant && requirementChecksOverride is null)
-                {
-                    report.Tiers.Blueprint = TierResult.CreateSkipped<BlueprintTierResult>("use --with-tenant");
-                    report.Tiers.AgentMetrics = TierResult.CreateSkipped<AgentMetricsTierResult>("use --with-tenant");
-                    report.Tiers.M365 = TierResult.CreateSkipped("use --with-tenant");
-                }
+                // Mark tenant-dependent tiers as skipped
+                report.Tiers.Blueprint = TierResult.CreateSkipped<BlueprintTierResult>("use --with-tenant");
 
                 // Extract resolved uv command from build step for boot and conversation steps
                 var buildResultEntry = results
@@ -170,30 +189,6 @@ public sealed class ValidateCommand
                 var bootPassed = report.Tiers.Boot is { Skipped: false, Ok: true };
                 if (bootPassed && requirementChecksOverride is null)
                 {
-                    // Capture baseline metrics before conversation for MAC visibility comparison.
-                    if (authService is not null)
-                    {
-                        var baselineCapture = await MacVisibilityRequirementCheck.CaptureInitialMetricsAsync(
-                            config,
-                            logger,
-                            authService,
-                            baselineFilePath: macBaselineFilePath,
-                            cancellationToken: ct);
-
-                        if (!baselineCapture.Passed)
-                        {
-                            macBaselineCaptureFailed = true;
-                            report.Tiers.Mac = new MacTierResult
-                            {
-                                Ok = false,
-                                Reason = baselineCapture.ErrorMessage,
-                                BaselineFile = macBaselineFilePath,
-                                BaselineMetrics = baselineCapture.Metadata?.MacBaselineMetrics,
-                                ConversationVerified = false
-                            };
-                        }
-                    }
-
                     var conversationChecks = BuildConversationChecks(platformDetector, processService, launchPlayground, resolvedUvCommand);
                     if (conversationChecks.Count > 0)
                     {
@@ -201,7 +196,7 @@ public sealed class ValidateCommand
                         MapResultsToTiers(conversationResults, report);
                         results.AddRange(conversationResults);
 
-                        // Phase 2c: Run telemetry check using agent's console log file
+                        // Run telemetry check using agent's console log file
                         var conversationResult = conversationResults
                             .FirstOrDefault(r => r.Check is ConversationRequirementCheck);
                         var agentLogPath = conversationResult.Result?.Metadata?.AgentConsoleLogPath;
@@ -211,29 +206,6 @@ public sealed class ValidateCommand
                             new List<IRequirementCheck> { telemetryCheck }, config, logger, ct);
                         MapResultsToTiers(telemetryResults, report);
                         results.AddRange(telemetryResults);
-
-                        // Phase 2d: Run MAC visibility check by comparing post-conversation metrics
-                        // to pre-conversation baseline captured earlier.
-                        if (authService is not null && !macBaselineCaptureFailed)
-                        {
-                            var conversationVerified = report.Tiers.Conversation is { Skipped: false, Ok: true };
-                            var macCheck = new MacVisibilityRequirementCheck(
-                                authService,
-                                macBaselineFilePath,
-                                conversationVerified);
-                            var macResults = await RunChecksDetailedAsync(
-                                new List<IRequirementCheck> { macCheck }, config, logger, ct);
-                            MapResultsToTiers(macResults, report);
-                            results.AddRange(macResults);
-                        }
-                        else if (authService is null)
-                        {
-                            report.Tiers.Mac = new MacTierResult
-                            {
-                                Skipped = true,
-                                Reason = "authentication service unavailable"
-                            };
-                        }
                     }
                 }
                 else if (!bootPassed)
@@ -245,11 +217,6 @@ public sealed class ValidateCommand
                         Reason = skipReason
                     };
                     report.Tiers.Telemetry = new TelemetryTierResult
-                    {
-                        Skipped = true,
-                        Reason = skipReason
-                    };
-                    report.Tiers.Mac = new MacTierResult
                     {
                         Skipped = true,
                         Reason = skipReason
@@ -570,45 +537,6 @@ public sealed class ValidateCommand
 
                     report.Tiers.Blueprint = blueprintTier;
                     break;
-
-                case AgentMetricsRequirementCheck:
-                    var metricsTier = new AgentMetricsTierResult();
-                    if (result.IsWarning)
-                    {
-                        metricsTier.Ok = true;
-                        metricsTier.Warning = result.ErrorMessage;
-                    }
-                    else
-                    {
-                        metricsTier.Ok = result.Passed;
-                        metricsTier.Reason = result.Passed ? null : result.ErrorMessage;
-                    }
-                    report.Tiers.AgentMetrics = metricsTier;
-                    break;
-
-                case MacVisibilityRequirementCheck:
-                    report.Tiers.Mac = new MacTierResult
-                    {
-                        Ok = result.Passed,
-                        Reason = result.Passed ? null : result.ErrorMessage,
-                        Warning = result.IsWarning ? result.ErrorMessage : null,
-                        BaselineFile = result.Metadata?.MacMetricsBaselineFile,
-                        BaselineMetrics = result.Metadata?.MacBaselineMetrics,
-                        CurrentMetrics = result.Metadata?.MacCurrentMetrics,
-                        ConversationVerified = result.Metadata?.ConversationStepVerified,
-                        Comparisons = result.Metadata?.MacMetricComparisons?.Select(c => new MacMetricComparisonResult
-                        {
-                            MetricKey = c.MetricKey,
-                            Before = c.Before,
-                            After = c.After,
-                            Delta = c.Delta,
-                            Increased = c.Increased,
-                            IsExceptionRate = c.IsExceptionRate,
-                            Passed = c.Passed,
-                            Reason = c.Reason
-                        }).ToList()
-                    };
-                    break;
             }
         }
     }
@@ -650,8 +578,6 @@ public sealed class ValidateCommand
         if (tiers.Conversation is { Skipped: false, Ok: false }) return "conversation";
         if (tiers.Telemetry is { Skipped: false, Ok: false }) return "telemetry";
         if (tiers.Blueprint is { Skipped: false, Ok: false }) return "blueprint";
-        if (tiers.AgentMetrics is { Skipped: false, Ok: false }) return "agentMetrics";
-        if (tiers.M365 is { Skipped: false, Ok: false }) return "m365";
         return null;
     }
 
@@ -860,12 +786,6 @@ public sealed class ValidateCommand
             tiers.Blueprint.Reason?.Contains("permissions/consent", StringComparison.OrdinalIgnoreCase) == true
                 ? "run 'a365 setup permissions' to configure inheritable permissions"
                 : "run 'a365 setup blueprint' to register the blueprint"));
-        rows.Add(CreateTierRow("Agent Metrics Visible", tiers.AgentMetrics,
-            "app compliance checks",
-            null));
-        rows.Add(CreateTierRow("Visible in M365", tiers.M365,
-            "Teams/M365 visibility",
-            null));
 
         return rows;
     }
@@ -909,6 +829,28 @@ public sealed class ValidateCommand
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Failed to write validation report");
+        }
+    }
+
+    private static async Task<ValidateReport?> LoadExistingReportAsync(string directory, ILogger logger)
+    {
+        var reportPath = Path.Combine(directory, ReportFileName);
+        if (!File.Exists(reportPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var json = await File.ReadAllTextAsync(reportPath);
+            var report = JsonSerializer.Deserialize<ValidateReport>(json, ReportSerializerOptions);
+            logger.LogDebug("Loaded existing report from {ReportPath}", reportPath);
+            return report;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to load existing report from {ReportPath}", reportPath);
+            return null;
         }
     }
 

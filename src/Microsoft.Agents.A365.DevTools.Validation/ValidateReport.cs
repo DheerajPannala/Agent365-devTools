@@ -67,15 +67,6 @@ public sealed class ValidationTiers
     [JsonPropertyName("blueprint")]
     public BlueprintTierResult Blueprint { get; set; } = TierResult.CreateSkipped<BlueprintTierResult>("not yet implemented");
 
-    [JsonPropertyName("agentMetrics")]
-    public AgentMetricsTierResult AgentMetrics { get; set; } = TierResult.CreateSkipped<AgentMetricsTierResult>("not yet implemented");
-
-    [JsonPropertyName("mac")]
-    public MacTierResult Mac { get; set; } = TierResult.CreateSkipped<MacTierResult>("not yet implemented");
-
-    [JsonPropertyName("m365")]
-    public TierResult M365 { get; set; } = TierResult.CreateSkipped("not yet implemented");
-
 }
 
 /// <summary>

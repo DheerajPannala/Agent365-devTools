@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using System.Diagnostics;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
@@ -14,9 +15,11 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementCh
 
 /// <summary>
 /// Validates that agent metrics are visible and incrementing by:
-/// 1. Querying baseline metrics via MCP tool call
-/// 2. Generating a conversation with the agent in Copilot Chat (via Playwright)
-/// 3. Re-querying metrics to verify they incremented
+/// 1. Starting the agent locally
+/// 2. Querying baseline metrics via MCP tool call
+/// 3. Generating a conversation with the agent in Teams Chat (via Playwright)
+/// 4. Re-querying metrics to verify they incremented
+/// 5. Stopping the agent
 /// </summary>
 public class AgentMetricsRequirementCheck : RequirementCheck
 {
@@ -24,22 +27,37 @@ public class AgentMetricsRequirementCheck : RequirementCheck
 
     private readonly CopilotChatPlaywrightService? _playwrightService;
     private readonly string? _instanceName;
+    private readonly PlatformDetector? _platformDetector;
+    private readonly IProcessService? _processService;
+    private readonly string? _resolvedUvCommand;
 
     /// <summary>Default test message sent to the agent during the metrics check.</summary>
     internal const string DefaultTestMessage = ConversationRequirementCheck.FallbackToolPrompt;
 
+    /// <summary>Maximum time to wait for the agent to start and respond on the health endpoint.</summary>
+    private static readonly TimeSpan AgentStartupTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>Interval between health endpoint polls during startup.</summary>
+    private static readonly TimeSpan HealthPollInterval = TimeSpan.FromMilliseconds(500);
+
     public AgentMetricsRequirementCheck(
         CopilotChatPlaywrightService? playwrightService = null,
-        string? instanceName = null)
+        string? instanceName = null,
+        PlatformDetector? platformDetector = null,
+        IProcessService? processService = null,
+        string? resolvedUvCommand = null)
     {
         _playwrightService = playwrightService;
         _instanceName = instanceName;
+        _platformDetector = platformDetector;
+        _processService = processService;
+        _resolvedUvCommand = resolvedUvCommand;
     }
     /// <inheritdoc />
     public override string Name => "AgentMetrics";
 
     /// <inheritdoc />
-    public override string Description => "Verifies agent metrics are visible and incrementing after a Copilot Chat conversation";
+    public override string Description => "Verifies agent metrics are visible and incrementing after a Teams Chat conversation";
 
     /// <inheritdoc />
     public override string Category => "Observability";
@@ -59,96 +77,276 @@ public class AgentMetricsRequirementCheck : RequirementCheck
         CancellationToken cancellationToken)
     {
         var metadata = new AgentMetricsMetadata();
+        Process? agentProcess = null;
 
-        // Step 1: Get baseline metrics via MCP tool call (best-effort, does not block step 2)
-        logger.LogDebug("Step 1: Querying baseline agent metrics...");
-        AgentMetricsSnapshot? baselineMetrics = null;
         try
         {
-            baselineMetrics = await GetAgentMetricsAsync(config, logger, cancellationToken);
+            // Step 0: Start the agent locally
+            logger.LogInformation("Starting agent locally for metrics validation...");
+            agentProcess = await StartAgentLocallyAsync(config, logger, cancellationToken);
+            if (agentProcess is null)
+            {
+                return RequirementCheckResult.Warning(
+                    "Could not start the agent locally for metrics validation",
+                    details: "Ensure the project builds and runs successfully. Run 'a365 validate' without --with-tenant first.");
+            }
+
+            // Step 1: Get baseline metrics via MCP tool call (best-effort, does not block step 2)
+            logger.LogInformation("Step 1: Querying baseline agent metrics...");
+            AgentMetricsSnapshot? baselineMetrics = null;
+            try
+            {
+                baselineMetrics = await GetAgentMetricsAsync(config, logger, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogDebug(ex, "Failed to query baseline agent metrics: {Message}", ex.Message);
+            }
+
+            metadata.BaselineMetrics = baselineMetrics;
+            if (baselineMetrics is null)
+            {
+                logger.LogDebug("Baseline metrics not available -- will still attempt conversation.");
+            }
+
+            // Step 2: Generate a conversation with the agent in Teams Chat (via Playwright)
+            logger.LogInformation("Step 2: Generating conversation with agent in Teams Chat...");
+            bool conversationGenerated;
+            try
+            {
+                conversationGenerated = await GenerateCopilotChatConversationAsync(config, logger, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "Failed to generate Teams Chat conversation: {Message}", ex.Message);
+                return RequirementCheckResult.Warning(
+                    "Could not generate Teams Chat conversation for metrics validation",
+                    details: $"Playwright test failed: {ex.Message}");
+            }
+
+            metadata.ConversationGenerated = conversationGenerated;
+
+            if (!conversationGenerated)
+            {
+                return RequirementCheckResult.Warning(
+                    "Teams Chat conversation could not be generated",
+                    details: "Playwright was unable to complete a conversation with the agent. Metrics increment check skipped.");
+            }
+
+            if (baselineMetrics is null)
+            {
+                return RequirementCheckResult.Failure(
+                    "Agent metrics endpoint not available",
+                    "Ensure the agent is deployed and metrics are configured. The MCP metrics tool must be reachable.",
+                    details: "Teams Chat conversation completed successfully but baseline metrics could not be retrieved.");
+            }
+
+            // Step 3: Re-query metrics and verify they incremented
+            logger.LogInformation("Step 3: Re-querying agent metrics to verify increment...");
+            AgentMetricsSnapshot? postConversationMetrics = null;
+            try
+            {
+                postConversationMetrics = await GetAgentMetricsAsync(config, logger, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogDebug(ex, "Failed to query post-conversation agent metrics: {Message}", ex.Message);
+            }
+
+            metadata.PostConversationMetrics = postConversationMetrics;
+
+            if (postConversationMetrics is null)
+            {
+                return RequirementCheckResult.Failure(
+                    "Agent metrics endpoint not available after conversation",
+                    "Ensure the metrics endpoint remains reachable. The MCP metrics tool must return data.",
+                    details: "Teams Chat conversation completed successfully but post-conversation metrics could not be retrieved.");
+            }
+
+            var incremented = postConversationMetrics.InvocationCount > baselineMetrics.InvocationCount;
+            metadata.MetricsIncremented = incremented;
+
+            if (!incremented)
+            {
+                return RequirementCheckResult.Failure(
+                    "Agent metrics did not increment after Teams Chat conversation",
+                    "Verify that the agent is instrumented with Agent365 observability and that metrics are flowing to the backend.",
+                    details: $"Baseline invocations: {baselineMetrics.InvocationCount}, " +
+                        $"Post-conversation invocations: {postConversationMetrics.InvocationCount}");
+            }
+
+            return RequirementCheckResult.Success(
+                details: $"Agent metrics incremented from {baselineMetrics.InvocationCount} to " +
+                    $"{postConversationMetrics.InvocationCount} after Teams Chat conversation.");
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        finally
         {
-            logger.LogDebug(ex, "Failed to query baseline agent metrics: {Message}", ex.Message);
+            if (agentProcess is not null && !agentProcess.HasExited)
+            {
+                logger.LogDebug("Stopping local agent process...");
+                try
+                {
+                    agentProcess.Kill(entireProcessTree: true);
+                    await agentProcess.WaitForExitAsync(cancellationToken).WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
+                }
+                catch
+                {
+                    // Best-effort cleanup
+                }
+                finally
+                {
+                    agentProcess.Dispose();
+                }
+            }
         }
+    }
 
-        metadata.BaselineMetrics = baselineMetrics;
-        if (baselineMetrics is null)
+    /// <summary>
+    /// Starts the agent locally and waits for the health endpoint to respond.
+    /// Returns the agent process, or null if the agent could not be started.
+    /// </summary>
+    protected internal virtual async Task<Process?> StartAgentLocallyAsync(
+        Agent365Config config,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        if (_platformDetector is null || _processService is null)
         {
-            logger.LogDebug("Baseline metrics not available -- will still attempt conversation.");
+            logger.LogWarning("Platform detector or process service not available. Cannot start agent locally.");
+            return null;
         }
 
-        // Step 2: Generate a conversation with the agent in Copilot Chat (via Playwright)
-        logger.LogDebug("Step 2: Generating conversation with agent in Copilot Chat...");
-        bool conversationGenerated;
-        try
+        var projectPath = ConversationRequirementCheck.ResolveProjectPath(config);
+        if (!Directory.Exists(projectPath))
         {
-            conversationGenerated = await GenerateCopilotChatConversationAsync(config, logger, cancellationToken);
+            logger.LogWarning("Project path does not exist: {Path}", projectPath);
+            return null;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+
+        var platform = _platformDetector.Detect(projectPath);
+        if (platform == ProjectPlatform.Unknown)
         {
-            logger.LogDebug(ex, "Failed to generate Copilot Chat conversation");
-            return RequirementCheckResult.Warning(
-                "Could not generate Copilot Chat conversation for metrics validation",
-                details: $"Playwright test failed: {ex.Message}");
+            logger.LogWarning("Could not detect project platform in {Path}", projectPath);
+            return null;
         }
 
-        metadata.ConversationGenerated = conversationGenerated;
+        var port = LocalRuntimeRequirementCheck.ResolvePort(config.MessagingEndpoint);
+        var healthUrl = $"http://localhost:{port}{LocalRuntimeRequirementCheck.DefaultHealthPath}";
 
-        if (!conversationGenerated)
+        logger.LogInformation("Starting agent locally ({Platform} on port {Port})...", platform, port);
+
+        var startInfo = BuildProcessStartInfo(platform, projectPath, port);
+        var process = _processService.Start(startInfo);
+        if (process is null)
         {
-            return RequirementCheckResult.Warning(
-                "Copilot Chat conversation could not be generated",
-                details: "Playwright was unable to complete a conversation with the agent. Metrics increment check skipped.");
+            logger.LogWarning("Failed to start {Platform} process.", platform);
+            return null;
         }
 
-        // If baseline metrics were not available, fail — metrics must be reachable
-        if (baselineMetrics is null)
+        var healthResult = await WaitForHealthAsync(process, healthUrl, logger, cancellationToken);
+        if (!healthResult)
         {
-            return RequirementCheckResult.Failure(
-                "Agent metrics endpoint not available",
-                "Ensure the agent is deployed and metrics are configured. The MCP metrics tool must be reachable.",
-                details: "Copilot Chat conversation completed successfully but baseline metrics could not be retrieved.");
+            logger.LogWarning("Agent did not respond on health endpoint within timeout.");
+            try { process.Kill(entireProcessTree: true); } catch { }
+            process.Dispose();
+            return null;
         }
 
-        // Step 3: Re-query metrics and verify they incremented
-        logger.LogDebug("Step 3: Re-querying agent metrics to verify increment...");
-        AgentMetricsSnapshot? postConversationMetrics = null;
-        try
+        logger.LogInformation("Agent is running and healthy on port {Port}.", port);
+        return process;
+    }
+
+    private ProcessStartInfo BuildProcessStartInfo(ProjectPlatform platform, string projectPath, int port)
+    {
+        var startInfo = new ProcessStartInfo
         {
-            postConversationMetrics = await GetAgentMetricsAsync(config, logger, cancellationToken);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+            WorkingDirectory = projectPath,
+            RedirectStandardOutput = false,
+            RedirectStandardError = false,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        switch (platform)
         {
-            logger.LogDebug(ex, "Failed to query post-conversation agent metrics: {Message}", ex.Message);
+            case ProjectPlatform.DotNet:
+                startInfo.FileName = "dotnet";
+                startInfo.Arguments = "run --no-build";
+                startInfo.EnvironmentVariables["ASPNETCORE_URLS"] = $"http://localhost:{port}";
+                break;
+
+            case ProjectPlatform.NodeJs:
+                LocalRuntimeRequirementCheck.WrapForWindows(startInfo, "npm", "start");
+                startInfo.EnvironmentVariables["PORT"] = port.ToString();
+                break;
+
+            case ProjectPlatform.Python:
+                var entryPoint = LocalRuntimeRequirementCheck.ResolvePythonEntryPoint(projectPath);
+                var usesUv = ProjectBuildRequirementCheck.DetectPythonInstallCommand(projectPath) is ("uv", _);
+                if (usesUv)
+                {
+                    startInfo.FileName = _resolvedUvCommand ?? "uv";
+                    startInfo.Arguments = $"run python {entryPoint}";
+                }
+                else
+                {
+                    startInfo.FileName = "python";
+                    startInfo.Arguments = entryPoint;
+                }
+                startInfo.EnvironmentVariables["PORT"] = port.ToString();
+                break;
+
+            default:
+                throw new ArgumentOutOfRangeException(nameof(platform), platform, "Unsupported platform");
         }
 
-        metadata.PostConversationMetrics = postConversationMetrics;
+        return startInfo;
+    }
 
-        if (postConversationMetrics is null)
+    private static async Task<bool> WaitForHealthAsync(
+        Process process,
+        string healthUrl,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        using var httpClient = new HttpClient();
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(AgentStartupTimeout);
+
+        while (!timeoutCts.Token.IsCancellationRequested)
         {
-            return RequirementCheckResult.Failure(
-                "Agent metrics endpoint not available after conversation",
-                "Ensure the metrics endpoint remains reachable. The MCP metrics tool must return data.",
-                details: "Copilot Chat conversation completed successfully but post-conversation metrics could not be retrieved.");
+            if (process.HasExited)
+            {
+                logger.LogWarning("Agent exited with code {ExitCode} before health endpoint responded.", process.ExitCode);
+                return false;
+            }
+
+            try
+            {
+                using var response = await httpClient.GetAsync(healthUrl, timeoutCts.Token);
+                if (response.IsSuccessStatusCode)
+                {
+                    return true;
+                }
+            }
+            catch (HttpRequestException) { }
+            catch (TaskCanceledException) when (timeoutCts.Token.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            {
+                break;
+            }
+
+            try
+            {
+                await Task.Delay(HealthPollInterval, timeoutCts.Token);
+            }
+            catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                break;
+            }
         }
 
-        // Compare baseline vs post-conversation
-        var incremented = postConversationMetrics.InvocationCount > baselineMetrics.InvocationCount;
-        metadata.MetricsIncremented = incremented;
-
-        if (!incremented)
-        {
-            return RequirementCheckResult.Failure(
-                "Agent metrics did not increment after Copilot Chat conversation",
-                "Verify that the agent is instrumented with Agent365 observability and that metrics are flowing to the backend.",
-                details: $"Baseline invocations: {baselineMetrics.InvocationCount}, " +
-                    $"Post-conversation invocations: {postConversationMetrics.InvocationCount}");
-        }
-
-        return RequirementCheckResult.Success(
-            details: $"Agent metrics incremented from {baselineMetrics.InvocationCount} to " +
-                $"{postConversationMetrics.InvocationCount} after Copilot Chat conversation.");
+        cancellationToken.ThrowIfCancellationRequested();
+        return false;
     }
 
     /// <summary>
@@ -300,13 +498,13 @@ public class AgentMetricsRequirementCheck : RequirementCheck
     }
 
     /// <summary>
-    /// Generates a conversation with the agent in Copilot Chat using Playwright.
+    /// Generates a conversation with the agent in Microsoft Teams using Playwright.
     /// Reuses the CLI's existing MSAL authentication context (WAM on Windows,
     /// browser auth on other platforms) so the user is not prompted to log in again.
     ///
     /// Uses <see cref="CopilotChatPlaywrightService"/> to:
     /// 1. Launch a Chromium browser (headless if saved auth state is fresh, headed otherwise)
-    /// 2. Navigate to M365 Chat, select the agent, send a test message
+    /// 2. Navigate to Teams web, search for the agent by name, send a test message
     /// 3. Wait for the agent to respond
     /// 4. Save browser auth state for future runs
     /// </summary>
@@ -321,17 +519,15 @@ public class AgentMetricsRequirementCheck : RequirementCheck
             return false;
         }
 
-        // Instance name is required (provided via --instance-name)
         var agentName = _instanceName;
         if (string.IsNullOrWhiteSpace(agentName))
         {
-            logger.LogWarning("Instance name not provided. Use --instance-name to specify the agent name in Copilot Chat.");
+            logger.LogWarning("Instance name not provided. Use --instance-name to specify the agent name in Teams.");
             return false;
         }
 
-        logger.LogInformation("Opening Copilot Chat conversation with agent '{AgentName}'...", agentName);
+        logger.LogInformation("Opening Teams chat conversation with agent '{AgentName}'...", agentName);
 
-        // Use the same tool-specific prompt as the conversation check
         var projectPath = Directory.GetCurrentDirectory();
         var testMessage = ConversationRequirementCheck.BuildToolInvocationPrompt(projectPath, logger);
         logger.LogDebug("Using test message: {Message}", testMessage);
@@ -343,7 +539,7 @@ public class AgentMetricsRequirementCheck : RequirementCheck
 
         if (string.IsNullOrWhiteSpace(response))
         {
-            logger.LogWarning("Agent did not respond to the test message.");
+            logger.LogWarning("Agent did not respond to the test message in Teams.");
             return false;
         }
 
