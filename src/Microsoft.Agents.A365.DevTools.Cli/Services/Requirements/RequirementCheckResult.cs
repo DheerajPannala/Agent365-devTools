@@ -146,6 +146,61 @@ public sealed class RequirementCheckMetadata
 
     /// <summary>Resource permission results from comparing config vs Entra.</summary>
     public List<BlueprintResourcePermission>? ResourcePermissions { get; set; }
+
+    /// <summary>
+    /// Path to the persisted pre-conversation MAC metrics baseline file.
+    /// </summary>
+    public string? MacMetricsBaselineFile { get; init; }
+
+    /// <summary>
+    /// Flattened numeric metrics captured before conversation.
+    /// </summary>
+    public Dictionary<string, double>? MacBaselineMetrics { get; init; }
+
+    /// <summary>
+    /// Flattened numeric metrics captured after conversation.
+    /// </summary>
+    public Dictionary<string, double>? MacCurrentMetrics { get; init; }
+
+    /// <summary>
+    /// Per-metric comparison outcome between baseline and post-conversation snapshots.
+    /// </summary>
+    public List<MacMetricComparisonMetadata>? MacMetricComparisons { get; init; }
+
+    /// <summary>
+    /// Whether conversation simulation completion was verified before MAC comparison.
+    /// </summary>
+    public bool? ConversationStepVerified { get; init; }
+}
+
+/// <summary>
+/// Comparison details for a single MAC metric.
+/// </summary>
+public sealed class MacMetricComparisonMetadata
+{
+    /// <summary>Canonical metric key (e.g., kpi.invocations.rl7).</summary>
+    public string MetricKey { get; init; } = string.Empty;
+
+    /// <summary>Baseline value.</summary>
+    public double Before { get; init; }
+
+    /// <summary>Post-conversation value.</summary>
+    public double After { get; init; }
+
+    /// <summary>After - Before.</summary>
+    public double Delta { get; init; }
+
+    /// <summary>True when delta is positive.</summary>
+    public bool Increased { get; init; }
+
+    /// <summary>True when this metric is the exception-rate metric.</summary>
+    public bool IsExceptionRate { get; init; }
+
+    /// <summary>Final pass/fail for this metric after applying rule exceptions.</summary>
+    public bool Passed { get; init; }
+
+    /// <summary>Human-readable reason for this comparison result.</summary>
+    public string? Reason { get; init; }
 }
 
 /// <summary>

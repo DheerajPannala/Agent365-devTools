@@ -41,6 +41,7 @@ public sealed class ValidateCommand
         PlatformDetector? platformDetector = null,
         CommandExecutor? commandExecutor = null,
         IProcessService? processService = null,
+        AuthenticationService? authService = null,
         GraphApiService? graphApiService = null,
         AgentBlueprintService? agentBlueprintService = null,
         IEnumerable<IRequirementCheck>? requirementChecksOverride = null)
@@ -73,6 +74,8 @@ public sealed class ValidateCommand
             var launchPlayground = context.ParseResult.GetValueForOption(playgroundOption);
             var withTenant = context.ParseResult.GetValueForOption(withTenantOption);
             var instanceName = context.ParseResult.GetValueForOption(instanceNameOption);
+            var macBaselineFilePath = Path.Combine(cwd, MacVisibilityRequirementCheck.BaselineFileName);
+            var macBaselineCaptureFailed = false;
 
             try
             {
@@ -167,6 +170,30 @@ public sealed class ValidateCommand
                 var bootPassed = report.Tiers.Boot is { Skipped: false, Ok: true };
                 if (bootPassed && requirementChecksOverride is null)
                 {
+                    // Capture baseline metrics before conversation for MAC visibility comparison.
+                    if (authService is not null)
+                    {
+                        var baselineCapture = await MacVisibilityRequirementCheck.CaptureInitialMetricsAsync(
+                            config,
+                            logger,
+                            authService,
+                            baselineFilePath: macBaselineFilePath,
+                            cancellationToken: ct);
+
+                        if (!baselineCapture.Passed)
+                        {
+                            macBaselineCaptureFailed = true;
+                            report.Tiers.Mac = new MacTierResult
+                            {
+                                Ok = false,
+                                Reason = baselineCapture.ErrorMessage,
+                                BaselineFile = macBaselineFilePath,
+                                BaselineMetrics = baselineCapture.Metadata?.MacBaselineMetrics,
+                                ConversationVerified = false
+                            };
+                        }
+                    }
+
                     var conversationChecks = BuildConversationChecks(platformDetector, processService, launchPlayground, resolvedUvCommand);
                     if (conversationChecks.Count > 0)
                     {
@@ -184,6 +211,29 @@ public sealed class ValidateCommand
                             new List<IRequirementCheck> { telemetryCheck }, config, logger, ct);
                         MapResultsToTiers(telemetryResults, report);
                         results.AddRange(telemetryResults);
+
+                        // Phase 2d: Run MAC visibility check by comparing post-conversation metrics
+                        // to pre-conversation baseline captured earlier.
+                        if (authService is not null && !macBaselineCaptureFailed)
+                        {
+                            var conversationVerified = report.Tiers.Conversation is { Skipped: false, Ok: true };
+                            var macCheck = new MacVisibilityRequirementCheck(
+                                authService,
+                                macBaselineFilePath,
+                                conversationVerified);
+                            var macResults = await RunChecksDetailedAsync(
+                                new List<IRequirementCheck> { macCheck }, config, logger, ct);
+                            MapResultsToTiers(macResults, report);
+                            results.AddRange(macResults);
+                        }
+                        else if (authService is null)
+                        {
+                            report.Tiers.Mac = new MacTierResult
+                            {
+                                Skipped = true,
+                                Reason = "authentication service unavailable"
+                            };
+                        }
                     }
                 }
                 else if (!bootPassed)
@@ -195,6 +245,11 @@ public sealed class ValidateCommand
                         Reason = skipReason
                     };
                     report.Tiers.Telemetry = new TelemetryTierResult
+                    {
+                        Skipped = true,
+                        Reason = skipReason
+                    };
+                    report.Tiers.Mac = new MacTierResult
                     {
                         Skipped = true,
                         Reason = skipReason
@@ -529,6 +584,30 @@ public sealed class ValidateCommand
                         metricsTier.Reason = result.Passed ? null : result.ErrorMessage;
                     }
                     report.Tiers.AgentMetrics = metricsTier;
+                    break;
+
+                case MacVisibilityRequirementCheck:
+                    report.Tiers.Mac = new MacTierResult
+                    {
+                        Ok = result.Passed,
+                        Reason = result.Passed ? null : result.ErrorMessage,
+                        Warning = result.IsWarning ? result.ErrorMessage : null,
+                        BaselineFile = result.Metadata?.MacMetricsBaselineFile,
+                        BaselineMetrics = result.Metadata?.MacBaselineMetrics,
+                        CurrentMetrics = result.Metadata?.MacCurrentMetrics,
+                        ConversationVerified = result.Metadata?.ConversationStepVerified,
+                        Comparisons = result.Metadata?.MacMetricComparisons?.Select(c => new MacMetricComparisonResult
+                        {
+                            MetricKey = c.MetricKey,
+                            Before = c.Before,
+                            After = c.After,
+                            Delta = c.Delta,
+                            Increased = c.Increased,
+                            IsExceptionRate = c.IsExceptionRate,
+                            Passed = c.Passed,
+                            Reason = c.Reason
+                        }).ToList()
+                    };
                     break;
             }
         }

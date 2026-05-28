@@ -70,6 +70,9 @@ public sealed class ValidationTiers
     [JsonPropertyName("agentMetrics")]
     public AgentMetricsTierResult AgentMetrics { get; set; } = TierResult.CreateSkipped<AgentMetricsTierResult>("not yet implemented");
 
+    [JsonPropertyName("mac")]
+    public MacTierResult Mac { get; set; } = TierResult.CreateSkipped<MacTierResult>("not yet implemented");
+
     [JsonPropertyName("m365")]
     public TierResult M365 { get; set; } = TierResult.CreateSkipped("not yet implemented");
 
@@ -335,6 +338,63 @@ public sealed class AgentMetricsSnapshotResult
     [JsonPropertyName("averageLatencyMs")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public double? AverageLatencyMs { get; set; }
+}
+
+/// <summary>
+/// MAC visibility tier: compares getAgentMetrics snapshots before and after conversation.
+/// </summary>
+public sealed class MacTierResult : TierResult
+{
+    [JsonPropertyName("baselineFile")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? BaselineFile { get; set; }
+
+    [JsonPropertyName("conversationVerified")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? ConversationVerified { get; set; }
+
+    [JsonPropertyName("baselineMetrics")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Dictionary<string, double>? BaselineMetrics { get; set; }
+
+    [JsonPropertyName("currentMetrics")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Dictionary<string, double>? CurrentMetrics { get; set; }
+
+    [JsonPropertyName("comparisons")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<MacMetricComparisonResult>? Comparisons { get; set; }
+}
+
+/// <summary>
+/// Result of comparing a single MAC metric between baseline and post-conversation snapshots.
+/// </summary>
+public sealed class MacMetricComparisonResult
+{
+    [JsonPropertyName("metricKey")]
+    public string MetricKey { get; set; } = string.Empty;
+
+    [JsonPropertyName("before")]
+    public double Before { get; set; }
+
+    [JsonPropertyName("after")]
+    public double After { get; set; }
+
+    [JsonPropertyName("delta")]
+    public double Delta { get; set; }
+
+    [JsonPropertyName("increased")]
+    public bool Increased { get; set; }
+
+    [JsonPropertyName("isExceptionRate")]
+    public bool IsExceptionRate { get; set; }
+
+    [JsonPropertyName("passed")]
+    public bool Passed { get; set; }
+
+    [JsonPropertyName("reason")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Reason { get; set; }
 }
 
 /// <summary>
