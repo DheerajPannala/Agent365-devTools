@@ -115,29 +115,44 @@ public class DevelopMcpCommandTests
         var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
         var subcommand = command.Subcommands.First(sc => sc.Name == "publish");
 
-        // Assert
-        subcommand.Description.Should().Be("Publish an MCP server to a Dataverse environment");
-        
+        // Assert — exact match. The description is intentionally terse (no internal-implementation
+        // details exposed to end users); a regression that re-adds back-fill / orchestration prose
+        // should fail this test until the user-facing copy is reviewed.
+        subcommand.Description.Should().Be(
+            "Publish an MCP server to a Dataverse environment.",
+            because: "publish description is user-facing and must stay terse; do not leak internal " +
+                     "orchestration details (Entra apps, back-fill, etc.) into the help output.");
+
         var options = subcommand.Options.ToList();
-        
-        // Verify all expected options exist
+
+        // Verify all expected options exist. Tenant ID is auto-detected from the current az login
+        // session, so publish does not expose --tenant-id; ServiceTree tagging is not required for
+        // publish since it targets Dataverse environments rather than Microsoft corp tenants.
         var optionNames = options.Select(o => o.Name).ToList();
         optionNames.Should().Contain("environment-id");
         optionNames.Should().Contain("server-name");
         optionNames.Should().Contain("alias");
         optionNames.Should().Contain("display-name");
+        optionNames.Should().NotContain(
+            "tenant-id",
+            because: "tenant id is auto-detected from the current 'az login' session; exposing " +
+                     "--tenant-id would imply per-publish tenant targeting that the executor does not support.");
+        optionNames.Should().NotContain(
+            "service-tree-id",
+            because: "publish targets a customer's Dataverse env, not a Microsoft corp tenant — " +
+                     "the ServiceTree tagging that --service-tree-id provides is not applicable here.");
         optionNames.Should().Contain("dry-run");
 
         // Verify critical aliases for Azure CLI compliance
         var envOption = options.FirstOrDefault(o => o.Name == "environment-id");
         envOption!.Aliases.Should().Contain("-e");
-        
+
         var serverOption = options.FirstOrDefault(o => o.Name == "server-name");
         serverOption!.Aliases.Should().Contain("-s");
-        
+
         var aliasOption = options.FirstOrDefault(o => o.Name == "alias");
         aliasOption!.Aliases.Should().Contain("-a");
-        
+
         var displayNameOption = options.FirstOrDefault(o => o.Name == "display-name");
         displayNameOption!.Aliases.Should().Contain("-d");
     }
@@ -275,7 +290,7 @@ public class DevelopMcpCommandTests
         optionNames.Should().Contain("tools");
         optionNames.Should().Contain("input-file");
         optionNames.Should().Contain("remote-scopes");
-        optionNames.Should().Contain("tenant-id");
+        optionNames.Should().NotContain("tenant-id", because: "tenant ID is auto-detected by RegisterCommandExecutor via TenantDetectionHelper");
         optionNames.Should().Contain("service-tree-id");
         optionNames.Should().Contain("secret-lifetime-months");
         optionNames.Should().Contain("publisher");
@@ -298,9 +313,6 @@ public class DevelopMcpCommandTests
         var inputFileOption = options.First(o => o.Name == "input-file");
         inputFileOption.Aliases.Should().Contain("-f");
 
-        var tenantIdOption = options.First(o => o.Name == "tenant-id");
-        tenantIdOption.Aliases.Should().Contain("-t");
-
         var verboseOption = options.First(o => o.Name == "verbose");
         verboseOption.Aliases.Should().Contain("-v");
     }
@@ -318,7 +330,6 @@ public class DevelopMcpCommandTests
     [InlineData("register-external-mcp-server", "server-url", "-u")]
     [InlineData("register-external-mcp-server", "auth-type", "-a")]
     [InlineData("register-external-mcp-server", "input-file", "-f")]
-    [InlineData("register-external-mcp-server", "tenant-id", "-t")]
     [InlineData("register-external-mcp-server", "secret-lifetime-months", "-l")]
     public void CriticalOptions_HaveConsistentAliases(string subcommandName, string optionName, string expectedAlias)
     {

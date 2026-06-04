@@ -251,7 +251,9 @@ public class Agent365ToolingService : IAgent365ToolingService
     }
 
     /// <summary>
-    /// Builds URL for publishing an MCP server to a Dataverse environment
+    /// Builds URL for publishing an MCP server to a Dataverse environment. Hits the platform's v2
+    /// publish endpoint, which performs the full elevation orchestration (PPMI provisioning and MOS
+    /// upload).
     /// </summary>
     /// <param name="environment">Environment name</param>
     /// <param name="environmentId">Dataverse environment ID</param>
@@ -260,7 +262,7 @@ public class Agent365ToolingService : IAgent365ToolingService
     private string BuildPublishMcpServerUrl(string environment, string environmentId, string serverName)
     {
         var baseUrl = BuildAgent365ToolsBaseUrl(environment);
-        return $"{baseUrl}/agents/dataverse/environments/{environmentId}/mcpServers/{serverName}/publish";
+        return $"{baseUrl}/agents/dataverse/environments/{environmentId}/mcpServers/{serverName}/publish/v2";
     }
 
     /// <summary>
