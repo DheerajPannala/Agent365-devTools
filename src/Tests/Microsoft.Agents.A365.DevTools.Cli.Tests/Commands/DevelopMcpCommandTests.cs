@@ -4,6 +4,7 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Evaluate;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using NSubstitute;
 using FluentAssertions;
@@ -272,7 +273,7 @@ public class DevelopMcpCommandTests
             $"Option '{optionName}' in '{subcommandName}' should have alias '{expectedAlias}'");
     }
 
-    [Fact] 
+    [Fact]
     public void NoSubcommands_UsePositionalArguments_OnlyOptions()
     {
         // This is a regression test to ensure we don't accidentally revert to positional arguments
@@ -285,5 +286,32 @@ public class DevelopMcpCommandTests
             subcommand.Arguments.Should().BeEmpty(
                 $"Subcommand '{subcommand.Name}' should not have positional arguments - use named options for Azure CLI compliance");
         }
+    }
+
+    [Fact]
+    public void CreateCommand_WithPipelineService_IncludesEvaluateSubcommand()
+    {
+        // Arrange
+        var pipelineService = Substitute.For<IEvaluationPipelineService>();
+
+        // Act
+        var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService, pipelineService);
+
+        // Assert - assert presence, not total count (total may change as other subcommands are added)
+        command.Subcommands.Select(sc => sc.Name).Should().Contain(
+            "evaluate",
+            because: "providing the pipeline service should register the evaluate subcommand");
+    }
+
+    [Fact]
+    public void CreateCommand_WithNullPipelineService_DoesNotIncludeEvaluate()
+    {
+        // Act
+        var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService, null);
+
+        // Assert - assert absence, not total count
+        command.Subcommands.Select(sc => sc.Name).Should().NotContain(
+            "evaluate",
+            because: "evaluate must not be registered when no pipeline service is supplied");
     }
 }
