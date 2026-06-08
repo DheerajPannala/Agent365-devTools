@@ -22,6 +22,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
     private readonly ILogger<ITeamsGraphBackendConfigurator> _logger;
     private readonly IConfigService _configService;
     private readonly AuthenticationService _authService;
+    private readonly RetryHelper _retryHelper;
 
     public TeamsGraphBackendConfigurator(
         ILogger<ITeamsGraphBackendConfigurator> logger,
@@ -31,13 +32,16 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
         _logger = logger;
         _configService = configService ?? throw new ArgumentNullException(nameof(configService));
         _authService = authService ?? throw new ArgumentNullException(nameof(authService));
+        // Retries transient transport failures (DNS/socket) the per-attempt auth loop does not catch.
+        _retryHelper = new RetryHelper(logger);
     }
 
     /// <inheritdoc />
     public async Task<(EndpointRegistrationResult Result, string? FailureReason)> SetBackendConfigurationAsync(
         string agentBlueprintId,
         string messagingEndpoint,
-        string? correlationId = null)
+        string? correlationId = null,
+        CancellationToken ct = default)
     {
         // Debug only — the caller's "Configuring messaging endpoint..." header already frames this,
         // and "backend configuration" is internal MCP Platform terminology, not user-facing.
@@ -75,7 +79,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
             {
                 bool forceRefresh = attempt > 0;
 
-                var authToken = await _authService.GetAccessTokenAsync(audience, tenantId, forceRefresh: forceRefresh, userId: currentUser);
+                var authToken = await _authService.GetAccessTokenAsync(audience, tenantId, forceRefresh: forceRefresh, userId: currentUser, ct: ct);
                 if (string.IsNullOrWhiteSpace(authToken))
                 {
                     _logger.LogError("Failed to acquire authentication token");
@@ -84,9 +88,13 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
 
                 using var httpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
 
-                using var response = await httpClient.PostAsync(
-                    createEndpointUrl,
-                    new StringContent(requestBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"));
+                // Retry transient transport errors; content is rebuilt per attempt (HttpContent is single-use).
+                using var response = await _retryHelper.ExecuteWithRetryAsync(
+                    sendCt => httpClient.PostAsync(
+                        createEndpointUrl,
+                        new StringContent(requestBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
+                        sendCt),
+                    cancellationToken: ct);
 
                 if (response.IsSuccessStatusCode)
                 {
@@ -94,7 +102,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
                     return (EndpointRegistrationResult.Created, null);
                 }
 
-                var errorContent = await response.Content.ReadAsStringAsync();
+                var errorContent = await response.Content.ReadAsStringAsync(ct);
 
                 if (response.StatusCode == HttpStatusCode.Conflict)
                 {
@@ -141,6 +149,12 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
             _logger.LogError("Failed to parse tenant information: {Message}", ex.Message);
             return (EndpointRegistrationResult.Failed, ClassifyFailureReason(ex.Message));
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // User Ctrl+C — propagate for a silent abort. A non-user cancellation (e.g. HttpClient
+            // timeout after retries) falls through to the general handler and surfaces as a failure.
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unexpected error registering the messaging endpoint: {Message}", ex.Message);
@@ -151,7 +165,8 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
     /// <inheritdoc />
     public async Task<bool> ClearBackendConfigurationAsync(
         string agentBlueprintId,
-        string? correlationId = null)
+        string? correlationId = null,
+        CancellationToken ct = default)
     {
         // Debug only — the caller's "Removing messaging endpoint..." header already frames this.
         _logger.LogDebug("Clearing backend configuration for Agent Blueprint...");
@@ -186,7 +201,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
             {
                 bool forceRefresh = attempt > 0;
 
-                var authToken = await _authService.GetAccessTokenAsync(audience, tenantId, forceRefresh: forceRefresh, userId: currentUser);
+                var authToken = await _authService.GetAccessTokenAsync(audience, tenantId, forceRefresh: forceRefresh, userId: currentUser, ct: ct);
                 if (string.IsNullOrWhiteSpace(authToken))
                 {
                     _logger.LogError("Failed to acquire authentication token");
@@ -195,12 +210,17 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
 
                 using var httpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
 
-                using var request = new HttpRequestMessage(HttpMethod.Delete, deleteEndpointUrl)
-                {
-                    Content = new StringContent(requestBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
-                };
-
-                using var response = await httpClient.SendAsync(request);
+                // Retry transient transport errors; the request is rebuilt per attempt (HttpRequestMessage is single-use).
+                using var response = await _retryHelper.ExecuteWithRetryAsync(
+                    async sendCt =>
+                    {
+                        using var request = new HttpRequestMessage(HttpMethod.Delete, deleteEndpointUrl)
+                        {
+                            Content = new StringContent(requestBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
+                        };
+                        return await httpClient.SendAsync(request, sendCt);
+                    },
+                    cancellationToken: ct);
 
                 if (response.IsSuccessStatusCode)
                 {
@@ -208,7 +228,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
                     return true;
                 }
 
-                var errorContent = await response.Content.ReadAsStringAsync();
+                var errorContent = await response.Content.ReadAsStringAsync(ct);
 
                 // Treat NotFound as idempotent success — nothing to clear.
                 if (response.StatusCode == HttpStatusCode.NotFound)
@@ -264,6 +284,12 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
         {
             _logger.LogError("Failed to parse tenant information: {Message}", ex.Message);
             return false;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // User Ctrl+C — propagate for a silent abort. A non-user cancellation (e.g. HttpClient
+            // timeout after retries) falls through to the general handler and surfaces as a failure.
+            throw;
         }
         catch (Exception ex)
         {
