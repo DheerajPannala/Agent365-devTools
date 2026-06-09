@@ -22,6 +22,27 @@ internal class EntraAppProvisioner
         "http://localhost",
     ];
 
+    private static readonly string[] ProdConsentRedirectUris =
+    [
+        "https://admin.cloud.microsoft/?ref=tools/consent",
+    ];
+
+    internal static string[] GetConsentRedirectUris(string? environment = null)
+    {
+        var trimmed = environment?.Trim();
+        var resolved = string.IsNullOrEmpty(trimmed)
+            ? Environment.GetEnvironmentVariable("A365_ENVIRONMENT")?.Trim() ?? "prod"
+            : trimmed;
+        var envKey = resolved.ToUpperInvariant();
+        var customUris = Environment.GetEnvironmentVariable($"A365_CONSENT_REDIRECT_URIS_{envKey}");
+        if (!string.IsNullOrWhiteSpace(customUris))
+        {
+            return customUris.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        }
+
+        return [.. ProdConsentRedirectUris];
+    }
+
     private readonly ILogger _logger;
     private readonly GraphApiService _graphApiService;
     private readonly RetryHelper _retryHelper;
@@ -95,6 +116,30 @@ internal class EntraAppProvisioner
         return new ProxyAppResult(app.Value.ClientId, secret, app.Value.ObjectId, appName);
     }
 
+    private async Task SetWebConsentRedirectUrisAsync(
+        string tenantId, string objectId, string appName, string roleDisplay,
+        string? environment, CancellationToken ct, List<string>? warnings = null)
+    {
+        var consentUris = GetConsentRedirectUris(environment);
+
+        var success = await _retryHelper.ExecuteWithRetryAsync(
+            async retryCt => await _graphApiService.UpdateAppRedirectUrisAsync(tenantId, objectId, consentUris, retryCt),
+            result => !result,
+            cancellationToken: ct);
+        if (success)
+        {
+            _logger.LogDebug(
+                "Set {RedirectUriCount} web redirect URIs on '{AppName}' ({ObjectId}): {RedirectUris}",
+                consentUris.Length, appName, objectId, string.Join(", ", consentUris));
+        }
+        else
+        {
+            var msg = $"Failed to set web redirect URIs on {roleDisplay} app '{appName}' after retries.";
+            _logger.LogWarning(msg);
+            warnings?.Add(msg);
+        }
+    }
+
     /// <summary>
     /// Best-effort compensating delete for an Entra app that was successfully created but failed
     /// a follow-up step (secret creation, post-create validation). Without this, partial failures
@@ -147,6 +192,7 @@ internal class EntraAppProvisioner
         string tenantId,
         string? serviceTreeId,
         List<string> warnings,
+        string? environment = null,
         CancellationToken ct = default)
     {
         var appName = $"{serverName}-PublicClients";
@@ -176,19 +222,21 @@ internal class EntraAppProvisioner
                 cancellationToken: ct);
             if (!success)
             {
-                var msg = $"Failed to set redirect URIs on Public Clients app '{appName}' after retries.";
+                var msg = $"Failed to set publicClient redirect URIs on Public Clients app '{appName}' after retries.";
                 _logger.LogError(msg);
                 warnings.Add(msg);
             }
             else
             {
                 _logger.LogDebug(
-                    "Set {RedirectUriCount} redirect URIs on '{AppName}' ({ObjectId}): {RedirectUris}",
+                    "Set {RedirectUriCount} publicClient redirect URIs on '{AppName}' ({ObjectId}): {RedirectUris}",
                     publicClientUris.Length,
                     appName,
                     objectId,
                     string.Join(", ", publicClientUris));
             }
+
+            await SetWebConsentRedirectUrisAsync(tenantId, objectId, appName, "Public Clients", environment, ct, warnings);
         }
         catch (Exception ex)
         {
