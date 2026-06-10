@@ -32,35 +32,36 @@ public class AuthenticationServiceTests : IDisposable
         _mockLogger = Substitute.For<ILogger<AuthenticationService>>();
         _authService = new AuthenticationService(_mockLogger);
         
-        // Get the actual cache path that the service uses
+        // The constructor best-effort deletes any legacy plaintext auth-token.json (migration cleanup).
+        // These tests pin that behavior against the same legacy path the service computes internally.
         var appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         _testCachePath = Path.Combine(appDataPath, "Microsoft.Agents.A365.DevTools.Cli", "auth-token.json");
     }
 
     public void Dispose()
     {
-        // Clean up test cache
-        _authService.ClearCache();
+        // Best-effort cleanup of any legacy file a test created (service no longer exposes ClearCache).
+        try { if (File.Exists(_testCachePath)) File.Delete(_testCachePath); } catch (Exception) { /* best-effort */ }
         GC.SuppressFinalize(this);
     }
 
     [Fact]
-    public void ClearCache_WhenCacheExists_RemovesFile()
+    public void Constructor_WhenLegacyPlaintextCacheExists_RemovesIt()
     {
-        // Arrange
+        // Arrange — simulate a plaintext auth-token.json left by an older CLI version
         var cacheDir = Path.GetDirectoryName(_testCachePath)!;
         Directory.CreateDirectory(cacheDir);
         File.WriteAllText(_testCachePath, "test content");
 
-        // Act
-        _authService.ClearCache();
+        // Act — constructing the service runs the one-time migration cleanup
+        _ = new AuthenticationService(_mockLogger);
 
         // Assert
         File.Exists(_testCachePath).Should().BeFalse();
     }
 
     [Fact]
-    public void ClearCache_WhenCacheDoesNotExist_DoesNotThrow()
+    public void Constructor_WhenNoLegacyCache_DoesNotThrow()
     {
         // Arrange
         if (File.Exists(_testCachePath))
@@ -69,7 +70,7 @@ public class AuthenticationServiceTests : IDisposable
         }
 
         // Act
-        Action act = () => _authService.ClearCache();
+        Action act = () => new AuthenticationService(_mockLogger);
 
         // Assert
         act.Should().NotThrow();
@@ -801,11 +802,57 @@ public class AuthenticationServiceTests : IDisposable
             _deviceCodeCredential = deviceCodeCredential;
         }
 
-        protected override TokenCredential CreateBrowserCredential(string clientId, string tenantId, string? loginHint = null)
+        protected override TokenCredential CreateBrowserCredential(string clientId, string tenantId, string? loginHint = null, bool forceRefresh = false)
             => _browserCredential;
 
         protected override TokenCredential CreateDeviceCodeCredential(string clientId, string tenantId)
             => _deviceCodeCredential;
+    }
+
+    [Fact]
+    public async Task GetAccessTokenAsync_OnSuccess_DoesNotWritePlaintextTokenFile()
+    {
+        // Regression guard for the Safe-Secrets fix: the service must NOT persist access tokens to
+        // a plaintext file (the removed auth-token.json). Token persistence is delegated entirely
+        // to the OS-protected MSAL persistent cache. We drive a successful acquisition through the
+        // browser-credential seam (no real auth) and assert no plaintext token file appears in the
+        // cache directory.
+        var expectedToken = "stub-access-token";
+        var browserCredential = new StubTokenCredential(expectedToken, DateTimeOffset.UtcNow.AddHours(1));
+        var deviceCodeCredential = new StubTokenCredential("unused", DateTimeOffset.UtcNow.AddHours(1));
+
+        var logger = Substitute.For<ILogger<AuthenticationService>>();
+        var sut = new TestableAuthenticationService(logger, browserCredential, deviceCodeCredential);
+
+        var cacheDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            AuthenticationConstants.ApplicationName);
+        var legacyPlaintextPath = Path.Combine(cacheDir, "auth-token.json");
+
+        // Ensure no stale legacy file is present before the act.
+        if (File.Exists(legacyPlaintextPath))
+        {
+            File.Delete(legacyPlaintextPath);
+        }
+
+        try
+        {
+            // Act
+            var result = await sut.GetAccessTokenAsync(
+                "https://agent365.svc.cloud.microsoft",
+                forceRefresh: true,
+                useInteractiveBrowser: true);
+
+            // Assert — token returned, but nothing written to the plaintext cache path.
+            result.Should().Be(expectedToken);
+            File.Exists(legacyPlaintextPath).Should().BeFalse(
+                because: "the Safe-Secrets fix removed the plaintext access-token cache; only the " +
+                         "OS-protected MSAL cache may persist tokens");
+        }
+        finally
+        {
+            sut.ClearCache();
+        }
     }
 
     [Fact]
@@ -992,70 +1039,31 @@ public class AuthenticationServiceTests : IDisposable
         return $"header.{payloadB64Url}.signature";
     }
 
-    private void WriteTokenCache(string accessToken)
-    {
-        var cacheDir = Path.GetDirectoryName(_testCachePath)!;
-        Directory.CreateDirectory(cacheDir);
-        var cache = new
-        {
-            Tokens = new Dictionary<string, object>
-            {
-                ["key"] = new { AccessToken = accessToken, ExpiresOn = DateTime.UtcNow.AddHours(1), TenantId = "tid" }
-            }
-        };
-        File.WriteAllText(_testCachePath, System.Text.Json.JsonSerializer.Serialize(cache));
-    }
+    // NOTE: ResolveLoginHintFromCacheAsync now reads the first account's UPN from the OS-protected
+    // MSAL persistent cache (DPAPI/Keychain/0600 file) via
+    // MsalBrowserCredential.TryGetCachedAccountUsernameAsync, rather than decoding a JWT from the
+    // removed plaintext auth-token.json. Populating that cache requires a real MSAL token exchange,
+    // which cannot run in a unit test without interactive auth. The contract verified here is the
+    // safe-degradation path: when no account is cached, the method must return null (a fallback
+    // behind az CLI) and never throw. End-to-end UPN resolution is covered by manual/integration runs.
 
     [Fact]
-    public async Task ResolveLoginHintFromCacheAsync_WhenCacheHasUpnClaim_ReturnsUpn()
+    public async Task ResolveLoginHintFromCacheAsync_WhenNoAccountCached_ReturnsNullAndDoesNotThrow()
     {
-        WriteTokenCache(BuildJwt(new { upn = "user@test.com" }));
-
-        var result = await _authService.ResolveLoginHintFromCacheAsync();
-
-        result.Should().Be("user@test.com",
-            because: "the upn claim in the cached JWT should be returned as the login hint");
-    }
-
-    [Fact]
-    public async Task ResolveLoginHintFromCacheAsync_WhenCacheHasPreferredUsernameClaim_ReturnsIt()
-    {
-        WriteTokenCache(BuildJwt(new { preferred_username = "user@contoso.com" }));
-
-        var result = await _authService.ResolveLoginHintFromCacheAsync();
-
-        result.Should().Be("user@contoso.com",
-            because: "preferred_username is the fallback claim when upn is absent");
-    }
-
-    [Fact]
-    public async Task ResolveLoginHintFromCacheAsync_WhenCacheFileDoesNotExist_ReturnsNull()
-    {
+        // Arrange — ensure no legacy plaintext cache lingers (the method no longer reads it anyway).
         _authService.ClearCache();
 
-        var result = await _authService.ResolveLoginHintFromCacheAsync();
+        // Act
+        Func<Task<string?>> act = async () => await _authService.ResolveLoginHintFromCacheAsync();
 
-        result.Should().BeNull(because: "no cache file means no login hint can be resolved");
-    }
-
-    [Fact]
-    public async Task ResolveLoginHintFromCacheAsync_WhenJwtHasNoUpnClaims_ReturnsNull()
-    {
-        WriteTokenCache(BuildJwt(new { sub = "some-subject", oid = "some-oid" }));
-
-        var result = await _authService.ResolveLoginHintFromCacheAsync();
-
-        result.Should().BeNull(because: "a JWT without upn or preferred_username cannot provide a login hint");
-    }
-
-    [Fact]
-    public async Task ResolveLoginHintFromCacheAsync_WhenJwtIsMalformed_ReturnsNull()
-    {
-        WriteTokenCache("not-a-valid-jwt");
-
-        var result = await _authService.ResolveLoginHintFromCacheAsync();
-
-        result.Should().BeNull(because: "a malformed JWT should be swallowed and null returned");
+        // Assert — best-effort fallback: empty MSAL cache resolves to no hint, never an exception.
+        string? result = null;
+        await act.Should().NotThrowAsync(
+            because: "login-hint resolution is a fallback behind az CLI; an empty or unreadable MSAL " +
+                     "cache must yield null rather than surfacing an error to the caller");
+        result = await _authService.ResolveLoginHintFromCacheAsync();
+        result.Should().BeNull(
+            because: "no cached MSAL account means no login hint can be resolved");
     }
 
     #endregion
@@ -1081,8 +1089,8 @@ public class AuthenticationServiceTests : IDisposable
             : base(logger)
             => _credentials = new Queue<TokenCredential>(credentials);
 
-        protected override TokenCredential CreateBrowserCredential(string clientId, string tenantId, string? loginHint = null)
-            => _credentials.Count > 0 ? _credentials.Dequeue() : base.CreateBrowserCredential(clientId, tenantId, loginHint);
+        protected override TokenCredential CreateBrowserCredential(string clientId, string tenantId, string? loginHint = null, bool forceRefresh = false)
+            => _credentials.Count > 0 ? _credentials.Dequeue() : base.CreateBrowserCredential(clientId, tenantId, loginHint, forceRefresh);
     }
 
     // Computes the MSAL cache path so tests can back it up and restore it.
