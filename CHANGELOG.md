@@ -23,6 +23,8 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 **Option B — CLI** (`a365 setup admin`) has been removed in this release. Use Option A above, or copy the PowerShell instructions printed in the `a365 setup all` summary output.
 
 ### Added
+- Log separator written at the start of each CLI invocation now redacts values for secret-bearing options (e.g. `--idp-client-secret`) so they are not written to the log file in plain text.
+- Authentication context (tenant and user) is now logged at the `Information` level whenever the resolved sign-in identity changes, giving operators a clear audit trail in the log file of who the CLI is acting as, without exposing credentials.
 - `a365 develop-mcp evaluate` command for evaluating MCP server tool schema quality — runs deterministic and semantic checks (via GitHub Copilot or Claude Code CLIs), computes maturity scoring, and generates an interactive HTML report
 - `--skip-sp-provisioning` option on `setup all` — skips the interactive in-line provisioning of missing resource service principals (issue #429). Default: setup prompts per-resource and runs `az ad sp create --id <appId>` using the operator's `az login`. With this flag, missing SPs are excluded from the consent URL and listed in the Action Required block with the `az` command and a per-SP consent URL. Implicitly enabled when stdin is redirected (CI / pipe scenarios).
 - Action Required block in the `setup all` summary now lists missing service principals — each entry shows the resource, pending scopes, the `az ad sp create` command, and the per-SP consent URL needed to complete provisioning.

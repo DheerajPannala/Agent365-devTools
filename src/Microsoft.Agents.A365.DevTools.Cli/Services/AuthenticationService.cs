@@ -74,6 +74,12 @@ public class AuthenticationService : IAuthenticationService
     /// </summary>
     private const string LegacyTokenCacheFileName = "auth-token.json";
 
+    // Deduplicates the "Authentication context" audit line so it only logs when the
+    // resolved user or tenant changes between token acquisitions.
+    private readonly object _authContextLogLock = new();
+    private string? _lastLoggedUser;
+    private string? _lastLoggedTenant;
+
     public AuthenticationService(ILogger<AuthenticationService> logger)
     {
         _logger = logger;
@@ -169,6 +175,7 @@ public class AuthenticationService : IAuthenticationService
             }
         }
 
+        LogAuthenticationContext(token.AccessToken, token.TenantId, userId, resourceUrl);
         return token.AccessToken;
     }
 
@@ -614,6 +621,51 @@ public class AuthenticationService : IAuthenticationService
 
 
         return Task.CompletedTask;
+    }
+
+    private void LogAuthenticationContext(
+        string accessToken,
+        string? fallbackTenantId,
+        string? fallbackUserId,
+        string resourceUrl)
+    {
+        var user = TryExtractUpnFromJwt(accessToken) ?? fallbackUserId ?? "(unknown)";
+        var tenant = JwtHelper.TryDecodeClaim(accessToken, "tid") ?? fallbackTenantId ?? "(unknown)";
+
+        if (TryClaimContextChange(user, tenant))
+        {
+            _logger.LogInformation(
+                "Authentication context: API calls will use user {User} in tenant {TenantId}",
+                user,
+                tenant);
+        }
+
+        _logger.LogDebug(
+            "Resolved access token for {ResourceUrl} using user {User} in tenant {TenantId}",
+            resourceUrl,
+            user,
+            tenant);
+    }
+
+    /// <summary>
+    /// Records the current authentication user/tenant and returns whether it changed
+    /// since the last logged context. Thread-safe.
+    /// </summary>
+    private bool TryClaimContextChange(string user, string tenant)
+    {
+        lock (_authContextLogLock)
+        {
+            var changed = !string.Equals(_lastLoggedUser, user, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(_lastLoggedTenant, tenant, StringComparison.OrdinalIgnoreCase);
+
+            if (changed)
+            {
+                _lastLoggedUser = user;
+                _lastLoggedTenant = tenant;
+            }
+
+            return changed;
+        }
     }
 
     /// <summary>

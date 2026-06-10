@@ -3,6 +3,7 @@
 
 using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Evaluate;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
@@ -34,8 +35,7 @@ class Program
         {
             try
             {
-                // args are CLI arguments only — no secrets are passed as args (API keys, passwords are read from config/env).
-                var commandLine = "a365 " + string.Join(" ", args);
+                var commandLine = CommandStringHelper.FormatForDisplay("a365", args);
                 var separator =
                     Environment.NewLine +
                     "============================================================" + Environment.NewLine +
@@ -332,30 +332,22 @@ class Program
             var authService = provider.GetRequiredService<AuthenticationService>();
             var logger = provider.GetRequiredService<ILogger<Agent365ToolingService>>();
 
-            // Default to "prod". Override with A365_ENVIRONMENT env var or --config file.
+            // Default to "prod". Override with A365_ENVIRONMENT env var or a365.config.json.
             string environment = Environment.GetEnvironmentVariable("A365_ENVIRONMENT") ?? "prod";
 
-            var args = Environment.GetCommandLineArgs();
-            var configIndex = Array.FindIndex(args, arg => arg == "--config" || arg == "-c");
-            if (configIndex >= 0 && configIndex < args.Length - 1)
+            var configFilePath = ConfigService.GetConfigFilePath();
+            if (configFilePath != null)
             {
                 try
                 {
-                    var configFilePath = args[configIndex + 1];
-                    if (!Path.IsPathRooted(configFilePath))
-                        configFilePath = Path.Combine(System.Environment.CurrentDirectory, configFilePath);
-
-                    if (File.Exists(configFilePath))
+                    var json = File.ReadAllText(configFilePath);
+                    using var doc = System.Text.Json.JsonDocument.Parse(json);
+                    if (doc.RootElement.TryGetProperty("environment", out var envProp))
                     {
-                        var json = File.ReadAllText(configFilePath);
-                        using var doc = System.Text.Json.JsonDocument.Parse(json);
-                        if (doc.RootElement.TryGetProperty("environment", out var envProp))
+                        var envValue = envProp.GetString();
+                        if (!string.IsNullOrWhiteSpace(envValue))
                         {
-                            var envValue = envProp.GetString();
-                            if (!string.IsNullOrWhiteSpace(envValue))
-                            {
-                                environment = envValue;
-                            }
+                            environment = envValue;
                         }
                     }
 
@@ -397,7 +389,7 @@ class Program
 
         // Register Azure CLI service
         services.AddSingleton<IAzureCliService, AzureCliService>();
-        
+
         // Register confirmation provider for user prompts
         services.AddSingleton<IConfirmationProvider, ConsoleConfirmationProvider>();
 
