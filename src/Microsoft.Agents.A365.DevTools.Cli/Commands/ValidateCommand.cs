@@ -100,7 +100,7 @@ public sealed class ValidateCommand
                 // Extract resolved uv command from build step for boot and conversation steps
                 var buildResultEntry = results
                     .FirstOrDefault(r => r.Check is ProjectBuildRequirementCheck);
-                var resolvedUvCommand = buildResultEntry.Result?.Metadata?.ResolvedUvCommand;
+                var resolvedUvCommand = (buildResultEntry.Result?.Metadata as RequirementCheckMetadata)?.ResolvedUvCommand;
 
                 // Phase 2b: Run boot check only if build passed
                 var buildPassed = report.Tiers.Build is { Skipped: true } or { Ok: true };
@@ -137,7 +137,7 @@ public sealed class ValidateCommand
                         // Run telemetry check using agent's console log file
                         var conversationResult = conversationResults
                             .FirstOrDefault(r => r.Check is ConversationRequirementCheck);
-                        var agentLogPath = conversationResult.Result?.Metadata?.AgentConsoleLogPath;
+                        var agentLogPath = (conversationResult.Result?.Metadata as RequirementCheckMetadata)?.AgentConsoleLogPath;
                         report.AgentConsoleLogFile = agentLogPath;
                         var telemetryCheck = new TelemetryRequirementCheck(agentLogPath);
                         var telemetryResults = await RunChecksDetailedAsync(
@@ -352,12 +352,13 @@ public sealed class ValidateCommand
                     }
                     else
                     {
+                        var buildMeta = result.Metadata as RequirementCheckMetadata;
                         report.Tiers.Build = new BuildTierResult
                         {
                             Ok = result.Passed,
-                            ExitCode = result.Metadata?.ExitCode,
+                            ExitCode = buildMeta?.ExitCode,
                             ErrorSummary = result.Passed ? null : result.ErrorMessage,
-                            BuildLogFile = result.Metadata?.BuildLogFile
+                            BuildLogFile = buildMeta?.BuildLogFile
                         };
                     }
                     break;
@@ -373,12 +374,13 @@ public sealed class ValidateCommand
                     }
                     else
                     {
+                        var bootMeta = result.Metadata as RequirementCheckMetadata;
                         report.Tiers.Boot = new BootTierResult
                         {
                             Ok = result.Passed,
-                            Port = result.Metadata?.Port,
-                            BootMs = result.Metadata?.BootMs,
-                            BootLogFile = result.Metadata?.BootLogFile
+                            Port = bootMeta?.Port,
+                            BootMs = bootMeta?.BootMs,
+                            BootLogFile = bootMeta?.BootLogFile
                         };
                     }
                     break;
@@ -394,12 +396,13 @@ public sealed class ValidateCommand
                     }
                     else
                     {
+                        var convMeta = result.Metadata as RequirementCheckMetadata;
                         report.Tiers.Conversation = new ConversationTierResult
                         {
                             Ok = result.Passed,
-                            PlaygroundLaunched = result.Metadata?.PlaygroundLaunched,
-                            ConversationLogFile = result.Metadata?.ConversationLogFile,
-                            Turns = result.Metadata?.Turns?.Select(t => new ConversationTurnResult
+                            PlaygroundLaunched = convMeta?.PlaygroundLaunched,
+                            ConversationLogFile = convMeta?.ConversationLogFile,
+                            Turns = convMeta?.Turns?.Select(t => new ConversationTurnResult
                             {
                                 Input = t.Input,
                                 StatusCode = t.StatusCode,
@@ -457,15 +460,15 @@ public sealed class ValidateCommand
                         blueprintTier.Reason = result.Passed ? null : result.ErrorMessage;
                     }
 
-                    if (result.Metadata is not null)
+                    if (result.Metadata is RequirementCheckMetadata bpMeta)
                     {
-                        blueprintTier.AppExists = result.Metadata.AppExists;
-                        blueprintTier.ServicePrincipalExists = result.Metadata.ServicePrincipalExists;
-                        blueprintTier.RegistrationExists = result.Metadata.RegistrationExists;
+                        blueprintTier.AppExists = bpMeta.AppExists;
+                        blueprintTier.ServicePrincipalExists = bpMeta.ServicePrincipalExists;
+                        blueprintTier.RegistrationExists = bpMeta.RegistrationExists;
 
-                        if (result.Metadata.ResourcePermissions is { Count: > 0 })
+                        if (bpMeta.ResourcePermissions is { Count: > 0 })
                         {
-                            blueprintTier.Resources = result.Metadata.ResourcePermissions.Select(rp =>
+                            blueprintTier.Resources = bpMeta.ResourcePermissions.Select(rp =>
                                 new BlueprintResourceResult
                                 {
                                     ResourceName = rp.ResourceName,

@@ -6,6 +6,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
+using Microsoft.Agents.A365.DevTools.Validation;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -449,7 +450,8 @@ public class BlueprintRegistrationRequirementCheckTests
         var result = await check.CheckAsync(config, _logger);
 
         result.Metadata.Should().NotBeNull(because: "metadata should be set on failure results");
-        result.Metadata!.AppExists.Should().BeFalse(because: "app does not exist in Entra");
+        var meta = (RequirementCheckMetadata)result.Metadata!;
+        meta.AppExists.Should().BeFalse(because: "app does not exist in Entra");
     }
 
     [Fact]
@@ -470,8 +472,9 @@ public class BlueprintRegistrationRequirementCheckTests
         var result = await check.CheckAsync(config, _logger);
 
         result.Metadata.Should().NotBeNull();
-        result.Metadata!.AppExists.Should().BeTrue(because: "app exists");
-        result.Metadata.ServicePrincipalExists.Should().BeFalse(because: "SP does not exist");
+        var meta = (RequirementCheckMetadata)result.Metadata!;
+        meta.AppExists.Should().BeTrue(because: "app exists");
+        meta.ServicePrincipalExists.Should().BeFalse(because: "SP does not exist");
     }
 
     [Fact]
@@ -492,9 +495,10 @@ public class BlueprintRegistrationRequirementCheckTests
         var result = await check.CheckAsync(config, _logger);
 
         result.Metadata.Should().NotBeNull();
-        result.Metadata!.AppExists.Should().BeTrue();
-        result.Metadata.ServicePrincipalExists.Should().BeTrue();
-        result.Metadata.RegistrationExists.Should().BeFalse(because: "registration was not found");
+        var meta = (RequirementCheckMetadata)result.Metadata!;
+        meta.AppExists.Should().BeTrue();
+        meta.ServicePrincipalExists.Should().BeTrue();
+        meta.RegistrationExists.Should().BeFalse(because: "registration was not found");
     }
 
     [Fact]
@@ -512,9 +516,10 @@ public class BlueprintRegistrationRequirementCheckTests
         var result = await check.CheckAsync(config, _logger);
 
         result.Metadata.Should().NotBeNull(because: "metadata should be set on success results");
-        result.Metadata!.AppExists.Should().BeTrue();
-        result.Metadata.ServicePrincipalExists.Should().BeTrue();
-        result.Metadata.RegistrationExists.Should().BeNull(
+        var meta = (RequirementCheckMetadata)result.Metadata!;
+        meta.AppExists.Should().BeTrue();
+        meta.ServicePrincipalExists.Should().BeTrue();
+        meta.RegistrationExists.Should().BeNull(
             because: "no registration ID was configured, so registration check was skipped");
     }
 
@@ -535,9 +540,10 @@ public class BlueprintRegistrationRequirementCheckTests
         var result = await check.CheckAsync(config, _logger);
 
         result.Metadata.Should().NotBeNull();
-        result.Metadata!.ResourcePermissions.Should().NotBeNull();
+        var meta = (RequirementCheckMetadata)result.Metadata!;
+        meta.ResourcePermissions.Should().NotBeNull();
 
-        var graphResource = result.Metadata.ResourcePermissions!
+        var graphResource = meta.ResourcePermissions!
             .FirstOrDefault(r => r.ResourceAppId == AuthenticationConstants.MicrosoftGraphResourceAppId);
         graphResource.Should().NotBeNull(because: "Microsoft Graph is a baseline resource");
         graphResource!.ResourceName.Should().Be("Microsoft Graph");
@@ -572,7 +578,8 @@ public class BlueprintRegistrationRequirementCheckTests
         var result = await check.CheckAsync(config, _logger);
 
         result.Metadata.Should().NotBeNull();
-        var graphResource = result.Metadata!.ResourcePermissions!
+        var meta = (RequirementCheckMetadata)result.Metadata!;
+        var graphResource = meta.ResourcePermissions!
             .First(r => r.ResourceAppId == AuthenticationConstants.MicrosoftGraphResourceAppId);
         graphResource.MissingScopes.Should().Contain("Mail.ReadWrite",
             because: "Mail.ReadWrite is a baseline Graph scope not returned by Entra");
@@ -601,11 +608,12 @@ public class BlueprintRegistrationRequirementCheckTests
         var result = await check.CheckAsync(config, _logger);
 
         result.Metadata.Should().NotBeNull();
-        result.Metadata!.ResourcePermissions.Should().NotBeNull()
+        var meta = (RequirementCheckMetadata)result.Metadata!;
+        meta.ResourcePermissions.Should().NotBeNull()
             .And.HaveCountGreaterOrEqualTo(BlueprintRegistrationRequirementCheck.BaselinePermissions.Count,
                 because: "all baseline resources should appear in metadata even when missing from Entra");
 
-        var graphResource = result.Metadata.ResourcePermissions!
+        var graphResource = meta.ResourcePermissions!
             .First(r => r.ResourceAppId == AuthenticationConstants.MicrosoftGraphResourceAppId);
         graphResource.InheritablePermissionsConfigured.Should().BeFalse(
             because: "the resource was not found in Entra at all");
@@ -688,7 +696,8 @@ public class BlueprintRegistrationRequirementCheckTests
         var result = await check.CheckAsync(config, _logger);
 
         result.Metadata.Should().NotBeNull();
-        var graphResource = result.Metadata!.ResourcePermissions!
+        var meta = (RequirementCheckMetadata)result.Metadata!;
+        var graphResource = meta.ResourcePermissions!
             .First(r => r.ResourceAppId == AuthenticationConstants.MicrosoftGraphResourceAppId);
         graphResource.ScopesAllAllowed.Should().BeTrue(
             because: "scopes kind=allAllowed was configured");

@@ -4,6 +4,7 @@
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
+using System.Text.Json;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 

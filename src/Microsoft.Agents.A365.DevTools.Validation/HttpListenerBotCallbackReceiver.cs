@@ -5,14 +5,14 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
 
-namespace Microsoft.Agents.A365.DevTools.Cli.Services;
+namespace Microsoft.Agents.A365.DevTools.Validation;
 
 /// <summary>
 /// HttpListener-based implementation of <see cref="IBotCallbackReceiver"/>.
 /// Listens on a random available localhost port for Bot Framework callback activities
 /// sent by the agent to POST /v3/conversations/{id}/activities.
 /// </summary>
-internal sealed class HttpListenerBotCallbackReceiver : IBotCallbackReceiver
+public sealed class HttpListenerBotCallbackReceiver : IBotCallbackReceiver
 {
     private readonly HttpListener _listener;
     private readonly int _port;
@@ -69,7 +69,7 @@ internal sealed class HttpListenerBotCallbackReceiver : IBotCallbackReceiver
     /// <summary>
     /// Initializes with a specific port (for testing).
     /// </summary>
-    internal HttpListenerBotCallbackReceiver(int port)
+    public HttpListenerBotCallbackReceiver(int port)
     {
         _port = port;
         _listener = new HttpListener();
@@ -298,7 +298,7 @@ internal sealed class HttpListenerBotCallbackReceiver : IBotCallbackReceiver
     /// <summary>
     /// Determines whether a response is a final (non-interim) message from the agent.
     /// </summary>
-    internal static bool IsFinalMessage(BotCallbackResponse response)
+    public static bool IsFinalMessage(BotCallbackResponse response)
     {
         // Typing activities are never final
         if (string.Equals(response.Type, "typing", StringComparison.OrdinalIgnoreCase))
@@ -320,7 +320,7 @@ internal sealed class HttpListenerBotCallbackReceiver : IBotCallbackReceiver
     /// Only matches short messages (under 60 chars) containing known interim phrases.
     /// Longer messages are assumed to be real responses even if they contain interim-like words.
     /// </summary>
-    internal static bool IsInterimMessage(string? text)
+    public static bool IsInterimMessage(string? text)
     {
         if (string.IsNullOrWhiteSpace(text))
         {

@@ -23,11 +23,10 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 **Option B — CLI** (`a365 setup admin`) has been removed in this release. Use Option A above, or copy the PowerShell instructions printed in the `a365 setup all` summary output.
 
 ### Added
-- `a365 validate` — validates the local `a365.config.json` plus prerequisite checks without making changes. Reports missing or invalid config, then runs the existing setup prerequisite checks so users can catch problems before starting a setup workflow.
+- `a365 validate` — validates the local `a365.config.json` plus prerequisite checks without making changes. Reports missing or invalid config, then runs the existing setup prerequisite checks so users can catch problems before starting a publish workflow.
+- New `Microsoft.Agents.A365.DevTools.Validation` subproject for reusable validation contracts and helpers.
 
 ### Changed
-- `a365 validate` now runs blueprint registration checks (Entra app, service principal, permissions) as part of the normal flow. The `--with-tenant` option has been removed; all checks run in a single invocation.
-- New `Microsoft.Agents.A365.DevTools.Validation` subproject for reusable validation contracts and helpers.
 - `logs export [command] [--output <dir>]` — exports a redacted copy of a CLI diagnostic log safe to share with Microsoft support. Redacts JWT tokens, email addresses, OS-path usernames, and tenant-specific GUIDs; replaces identical values with consistent aliases so log correlation is preserved. Preserves diagnostic IDs that aren't sensitive but are useful for debugging — `TraceId`, `CorrelationId`, Microsoft Graph `request-id` and `client-request-id` values, and well-known public Microsoft / Agent 365 resource appIds (such as the Microsoft Graph appId `00000003-0000-0000-c000-000000000000`). Omit `[command]` to export all available logs at once.
 - `setup blueprint --show-secret` — displays the blueprint client secret stored in `a365.generated.config.json` in plaintext without re-running any setup steps. On Windows, decryption requires the same machine and user account that ran setup (DPAPI). When no secret is found, the command prints instructions to run `a365 setup blueprint --agent-name <name>`.
 - Blueprint client secret is now printed to the terminal at creation time with a "copy this value now" warning. Use `a365 setup blueprint --show-secret` to retrieve it afterwards.

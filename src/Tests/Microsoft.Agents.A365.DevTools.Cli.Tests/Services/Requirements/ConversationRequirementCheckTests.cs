@@ -10,6 +10,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
+using Microsoft.Agents.A365.DevTools.Validation;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Xunit;
@@ -132,8 +133,9 @@ public class ConversationRequirementCheckTests : IDisposable
         result.Passed.Should().BeTrue(because: "all conversation turns returned 200");
         result.Details.Should().Contain("3/3 turns succeeded");
         result.Metadata.Should().NotBeNull();
-        result.Metadata!.Turns.Should().HaveCount(3);
-        result.Metadata.Turns!.Should().OnlyContain(t => t.Ok, because: "every turn should report success");
+        var meta = (RequirementCheckMetadata)result.Metadata!;
+        meta.Turns.Should().HaveCount(3);
+        meta.Turns!.Should().OnlyContain(t => t.Ok, because: "every turn should report success");
     }
 
     [Fact]
@@ -152,7 +154,7 @@ public class ConversationRequirementCheckTests : IDisposable
         var result = await check.CheckAsync(config, _logger);
 
         result.Passed.Should().BeFalse(because: "auth failures should block the conversation tier");
-        result.Metadata!.Turns!.Should().Contain(t => t.Error != null && t.Error.Contains("Auth rejected"),
+        ((RequirementCheckMetadata)result.Metadata!).Turns!.Should().Contain(t => t.Error != null && t.Error.Contains("Auth rejected"),
             because: "auth failures should report targeted guidance");
     }
 
@@ -172,7 +174,7 @@ public class ConversationRequirementCheckTests : IDisposable
         var result = await check.CheckAsync(config, _logger);
 
         result.Passed.Should().BeFalse(because: "server errors should fail the conversation tier");
-        result.Metadata!.Turns!.Should().Contain(t => !t.Ok);
+        ((RequirementCheckMetadata)result.Metadata!).Turns!.Should().Contain(t => !t.Ok);
     }
 
     [Fact]
@@ -235,7 +237,7 @@ public class ConversationRequirementCheckTests : IDisposable
         var result = await check.CheckAsync(config, _logger);
 
         result.Passed.Should().BeTrue();
-        var turn = result.Metadata!.Turns!.First();
+        var turn = ((RequirementCheckMetadata)result.Metadata!).Turns!.First();
         turn.LatencyMs.Should().NotBeNull(because: "latency should always be captured");
         turn.StatusCode.Should().Be(200);
         turn.ResponseSnippet.Should().Contain("I can help you");
@@ -286,7 +288,7 @@ public class ConversationRequirementCheckTests : IDisposable
         var result = await check.CheckAsync(config, _logger);
 
         result.Passed.Should().BeFalse(because: "at least one turn failed");
-        result.Metadata!.Turns.Should().HaveCount(3,
+        ((RequirementCheckMetadata)result.Metadata!).Turns.Should().HaveCount(3,
             because: "all turns should be attempted even if one fails for complete reporting");
     }
 
@@ -309,10 +311,11 @@ public class ConversationRequirementCheckTests : IDisposable
         var result = await check.CheckAsync(config, _logger);
 
         result.Passed.Should().BeTrue(because: "all turns succeeded with agent responses");
-        result.Metadata!.Turns.Should().OnlyContain(
+        var meta = (RequirementCheckMetadata)result.Metadata!;
+        meta.Turns.Should().OnlyContain(
             t => t.AgentResponded == true,
             because: "callback receiver reported agent responses for every turn");
-        result.Metadata.Turns.Should().OnlyContain(
+        meta.Turns.Should().OnlyContain(
             t => t.AgentResponseText == "I can help you with that!",
             because: "agent response text should be captured from callback");
     }
@@ -335,10 +338,11 @@ public class ConversationRequirementCheckTests : IDisposable
 
         result.Passed.Should().BeFalse(
             because: "in non-playground mode, agent must respond for turn to pass");
-        result.Metadata!.Turns.Should().OnlyContain(
+        var meta = (RequirementCheckMetadata)result.Metadata!;
+        meta.Turns.Should().OnlyContain(
             t => t.AgentResponded == false,
             because: "callback receiver returned no response");
-        result.Metadata.Turns.Should().OnlyContain(
+        meta.Turns.Should().OnlyContain(
             t => t.Ok == false && t.Error!.Contains("did not respond"),
             because: "each turn should report agent did not respond");
     }
@@ -362,7 +366,7 @@ public class ConversationRequirementCheckTests : IDisposable
 
         result.Passed.Should().BeFalse(
             because: "auto-created receiver gets no callback from mock handler so turns fail");
-        result.Metadata!.Turns.Should().OnlyContain(
+        ((RequirementCheckMetadata)result.Metadata!).Turns.Should().OnlyContain(
             t => t.AgentResponded == false,
             because: "auto-created receiver gets no callback from mock handler so agentResponded is false");
     }
@@ -386,7 +390,7 @@ public class ConversationRequirementCheckTests : IDisposable
 
         result.Passed.Should().BeFalse(
             because: "agent responded with an error message");
-        result.Metadata!.Turns.Should().OnlyContain(
+        ((RequirementCheckMetadata)result.Metadata!).Turns.Should().OnlyContain(
             t => t.Ok == false && t.Error!.Contains("error response"),
             because: "each turn should report agent returned an error");
     }
@@ -411,7 +415,7 @@ public class ConversationRequirementCheckTests : IDisposable
 
         result.Passed.Should().BeTrue(
             because: "in playground mode, missing agent response does not fail the turn");
-        result.Metadata!.Turns.Should().OnlyContain(
+        ((RequirementCheckMetadata)result.Metadata!).Turns.Should().OnlyContain(
             t => t.Ok == true,
             because: "playground mode is lenient about agent responses");
     }
@@ -455,7 +459,7 @@ public class ConversationRequirementCheckTests : IDisposable
         var result = await check.CheckAsync(config, _logger);
 
         result.Passed.Should().BeFalse();
-        result.Metadata!.Turns.Should().OnlyContain(
+        ((RequirementCheckMetadata)result.Metadata!).Turns.Should().OnlyContain(
             t => t.AgentResponded == false,
             because: "auth failures should report agent did not respond, not attempt callback wait");
     }
@@ -504,7 +508,7 @@ public class ConversationRequirementCheckTests : IDisposable
         var result = await check.CheckAsync(config, _logger);
 
         result.Passed.Should().BeTrue();
-        result.Metadata!.PlaygroundLaunched.Should().BeTrue(
+        ((RequirementCheckMetadata)result.Metadata!).PlaygroundLaunched.Should().BeTrue(
             because: "playground was requested and started successfully");
         _processService.Received(2).Start(Arg.Any<ProcessStartInfo>());
         _processService.Received(1).Start(Arg.Is<ProcessStartInfo>(p =>
@@ -529,7 +533,7 @@ public class ConversationRequirementCheckTests : IDisposable
         var result = await check.CheckAsync(config, _logger);
 
         result.Passed.Should().BeTrue();
-        result.Metadata!.PlaygroundLaunched.Should().BeNull(
+        ((RequirementCheckMetadata)result.Metadata!).PlaygroundLaunched.Should().BeNull(
             because: "playground was not requested");
         // Only one Start call for the agent process
         _processService.Received(1).Start(Arg.Any<ProcessStartInfo>());
@@ -557,7 +561,7 @@ public class ConversationRequirementCheckTests : IDisposable
 
         result.Passed.Should().BeTrue(
             because: "playground failure should not block conversation validation");
-        result.Metadata!.PlaygroundLaunched.Should().BeNull(
+        ((RequirementCheckMetadata)result.Metadata!).PlaygroundLaunched.Should().BeNull(
             because: "playground failed to start so it should not be reported as launched");
     }
 

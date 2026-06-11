@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-namespace Microsoft.Agents.A365.DevTools.Cli.Services;
+namespace Microsoft.Agents.A365.DevTools.Validation;
 
 /// <summary>
 /// Receives Bot Framework callback activities sent by the agent to its serviceUrl.

@@ -2,9 +2,10 @@
 // Licensed under the MIT License.
 
 using FluentAssertions;
-using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Validation;
+using Xunit;
 
-namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
+namespace Microsoft.Agents.A365.DevTools.Validation.Tests;
 
 public class HttpListenerBotCallbackReceiverTests
 {

@@ -62,11 +62,6 @@ public static class McpConstants
     public const string ToolsCallMethod = "tools/call";
 
     /// <summary>
-    /// Method name for listing MCP tools
-    /// </summary>
-    public const string ToolsListMethod = "tools/list";
-
-    /// <summary>
     /// Name of the ListToolServers tool
     /// </summary>
     public const string ListToolServersToolName = "ListToolServers";
