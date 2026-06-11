@@ -58,6 +58,14 @@ internal static class GetTokenSubcommand
             ["--force-refresh"],
             description: "Force token refresh even if cached token is valid");
 
+        var deviceCodeOption = new Option<bool>(
+            ["--device-code"],
+            description: "Use device code authentication instead of the interactive browser flow " +
+                         "(the WAM broker on Windows). Use when interactive authentication is rejected for " +
+                         "the requested Microsoft Graph scopes (commonly Exchange-specific scopes such as " +
+                         "MailboxSettings.ReadWrite, ExchangeMessageTrace.Read.All; this rejection is specific " +
+                         "to the Windows WAM broker). Opens https://microsoft.com/devicelogin in your browser.");
+
         var resourceOption = new Option<string?>(
             ["--resource"],
             description: "Resource keyword to get token for. Available: mcp (default), powerplatform. " +
@@ -80,6 +88,7 @@ internal static class GetTokenSubcommand
         command.AddOption(outputFormatOption);
         command.AddOption(verboseOption);
         command.AddOption(forceRefreshOption);
+        command.AddOption(deviceCodeOption);
         command.AddOption(resourceOption);
         command.AddOption(resourceIdOption);
 
@@ -93,6 +102,7 @@ internal static class GetTokenSubcommand
             var outputFormat = context.ParseResult.GetValueForOption(outputFormatOption)!;
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var forceRefresh = context.ParseResult.GetValueForOption(forceRefreshOption);
+            var deviceCode = context.ParseResult.GetValueForOption(deviceCodeOption);
             var resource = context.ParseResult.GetValueForOption(resourceOption);
             var resourceId = context.ParseResult.GetValueForOption(resourceIdOption);
 
@@ -181,7 +191,7 @@ internal static class GetTokenSubcommand
                     await AcquireAndDisplayTokenAsync(
                         resourceAppId, resourceDisplayName, resourceUrl,
                         scopes, appId, setupConfig,
-                        outputFormat, verbose, forceRefresh, authService, logger);
+                        outputFormat, verbose, forceRefresh, deviceCode, authService, logger);
                 }
                 else if (isCustomResource)
                 {
@@ -216,7 +226,7 @@ internal static class GetTokenSubcommand
 
                     await AcquireAndDisplayManifestTokensAsync(
                         manifestPath, appId, setupConfig,
-                        outputFormat, verbose, forceRefresh, authService, logger);
+                        outputFormat, verbose, forceRefresh, deviceCode, authService, logger);
                 }
             }
             catch (Exceptions.CleanExitException)
@@ -249,6 +259,7 @@ internal static class GetTokenSubcommand
         string? loginHint,
         string clientAppId,
         bool forceRefresh,
+        bool useDeviceCode,
         AuthenticationService authService,
         ILogger logger)
     {
@@ -259,13 +270,19 @@ internal static class GetTokenSubcommand
 
         try
         {
+            // Logged here (not per-branch) so it fires for both explicit-scope and manifest token
+            // acquisition. Platform-neutral wording: device code replaces the interactive
+            // browser flow (and the WAM broker on Windows).
+            if (useDeviceCode)
+                logger.LogInformation("Authentication mode: device code");
+
             var token = await authService.GetAccessTokenWithScopesAsync(
                 resourceAppId,
                 requestedScopes,
                 tenantId,
                 forceRefresh,
                 clientAppId,
-                useInteractiveBrowser: true,
+                useInteractiveBrowser: !useDeviceCode,
                 userId: loginHint);
 
             if (string.IsNullOrWhiteSpace(token))
@@ -327,6 +344,7 @@ internal static class GetTokenSubcommand
         string outputFormat,
         bool verbose,
         bool forceRefresh,
+        bool useDeviceCode,
         AuthenticationService authService,
         ILogger logger)
     {
@@ -341,7 +359,7 @@ internal static class GetTokenSubcommand
         var result = await AcquireTokenAsync(
             resourceAppId, resourceDisplayName, resourceUrl,
             requestedScopes, appId, setupConfig,
-            tenantId, loginHint, clientAppId, forceRefresh, authService, logger);
+            tenantId, loginHint, clientAppId, forceRefresh, useDeviceCode, authService, logger);
 
         if (!result.Success)
         {
@@ -364,6 +382,7 @@ internal static class GetTokenSubcommand
         string outputFormat,
         bool verbose,
         bool forceRefresh,
+        bool useDeviceCode,
         AuthenticationService authService,
         ILogger logger)
     {
@@ -391,7 +410,7 @@ internal static class GetTokenSubcommand
             var result = await AcquireTokenAsync(
                 audience, $"MCP Resource ({audience})", null,
                 scopes, appId, setupConfig,
-                tenantId, loginHint, clientAppId, forceRefresh, authService, logger);
+                tenantId, loginHint, clientAppId, forceRefresh, useDeviceCode, authService, logger);
 
             tokenResults.Add(result);
         }

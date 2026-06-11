@@ -384,4 +384,31 @@ public static class AuthenticationConstants
     /// Instead, print the admin consent URL and exit cleanly.
     /// </summary>
     public const string WamConsentRequiredError = "0xcaa90019";
+
+    /// <summary>
+    /// WAM error string indicating that the WAM broker rejected one or more requested scopes.
+    /// Appears in the WAM error message as "declined scopes are present".
+    ///
+    /// This is a distinct failure mode from <see cref="WamConsentRequiredError"/>:
+    /// - WamConsentRequiredError (0xcaa90019): consent has NOT been granted — admin must grant it.
+    /// - WamDeclinedScopesError: the WAM broker rejects the request with ApiContractViolation,
+    ///   reporting that declined scopes are present. Observed with Exchange-specific delegated Graph
+    ///   scopes (e.g. MailboxSettings.ReadWrite, ExchangeMessageTrace.Read.All). The scopes
+    ///   themselves are valid and grantable; the failure is known broker behavior rather than
+    ///   a consent or scope-validity problem. Device code flow does not go through the WAM broker
+    ///   and succeeds for these scopes. The precise broker-side trigger is not publicly documented;
+    ///   see https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/issues/5232.
+    ///
+    /// The WAM internal error code for this condition is 0x236496A2 (593794722 decimal), which
+    /// does NOT match <see cref="WamErrorPrefix"/> ("0xcaa"), so a separate check is required.
+    /// </summary>
+    public const string WamDeclinedScopesError = "declined scopes are present";
+
+    /// <summary>
+    /// WAM error classification that accompanies <see cref="WamDeclinedScopesError"/>.
+    /// WAM surfaces this as "Error Message: ApiContractViolation" when scope validation fails.
+    /// Used together with <see cref="WamDeclinedScopesError"/> to distinguish this specific
+    /// fallback-eligible failure from other ApiContractViolation variants.
+    /// </summary>
+    public const string WamApiContractViolation = "ApiContractViolation";
 }
