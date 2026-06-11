@@ -23,39 +23,16 @@ public sealed class HttpListenerBotCallbackReceiver : IBotCallbackReceiver
     private Task? _listenTask;
 
     /// <summary>
-    /// After a non-interim callback arrives, continue collecting for this long to capture
-    /// any follow-up responses.
+    /// After each received message, wait this long for another message before settling.
+    /// Each new arrival resets this timer, so fast bursts are collected together.
     /// </summary>
-    internal static readonly TimeSpan GracePeriod = TimeSpan.FromSeconds(5);
+    internal static readonly TimeSpan SettlePeriod = TimeSpan.FromSeconds(5);
 
     /// <summary>
-    /// Extended timeout used when only interim/acknowledgment responses have been received.
-    /// Agents that send "Got it..working on it" often need 10-30s to produce the real response.
+    /// Maximum total time to collect messages after the first one arrives.
+    /// Prevents indefinite waiting when an agent keeps sending messages.
     /// </summary>
-    internal static readonly TimeSpan InterimExtendedTimeout = TimeSpan.FromSeconds(30);
-
-    /// <summary>
-    /// Patterns that indicate an interim/acknowledgment message rather than a real response.
-    /// These are anchored to avoid matching error messages (e.g. "processing failed" is NOT interim).
-    /// </summary>
-    internal static readonly string[] InterimPatterns = new[]
-    {
-        "got it",
-        "working on",
-        "work on it",
-        "processing your",
-        "thinking",
-        "one moment",
-        "please wait",
-        "hold on",
-        "looking into",
-        "let me check",
-        "let me look",
-        "let me find",
-        "let me get",
-        "just a moment",
-        "just a sec",
-    };
+    internal static readonly TimeSpan MaxCollectionWindow = TimeSpan.FromSeconds(30);
 
     public string ServiceUrl => $"http://localhost:{_port}";
 
@@ -91,82 +68,32 @@ public sealed class HttpListenerBotCallbackReceiver : IBotCallbackReceiver
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(timeout);
 
-        bool receivedInterim = false;
-
         try
         {
             // Wait for the first callback activity
             await _responseReceived.WaitAsync(timeoutCts.Token);
 
-            // Check if the first response is an interim message
-            bool firstIsFinal;
-            lock (_lock)
+            // First message received — start the collection window.
+            // Each new message resets the settle timer; collection caps at MaxCollectionWindow.
+            var collectionDeadline = DateTime.UtcNow + MaxCollectionWindow;
+
+            while (DateTime.UtcNow < collectionDeadline && !timeoutCts.Token.IsCancellationRequested)
             {
-                var latest = _responses.Count > 0 ? _responses[^1] : null;
-                firstIsFinal = latest is not null && IsFinalMessage(latest);
-                if (!firstIsFinal)
-                {
-                    receivedInterim = true;
-                }
-            }
+                var untilDeadline = collectionDeadline - DateTime.UtcNow;
+                var settleWait = untilDeadline < SettlePeriod ? untilDeadline : SettlePeriod;
 
-            if (receivedInterim)
-            {
-                // Interim message received — agent is alive but still processing.
-                // Extend the timeout to allow the real response to arrive.
-                var extendedDeadline = DateTime.UtcNow + InterimExtendedTimeout;
-
-                while (DateTime.UtcNow < extendedDeadline && !timeoutCts.Token.IsCancellationRequested)
-                {
-                    var remaining = extendedDeadline - DateTime.UtcNow;
-                    if (remaining <= TimeSpan.Zero)
-                    {
-                        break;
-                    }
-
-                    try
-                    {
-                        if (!await _responseReceived.WaitAsync(remaining, timeoutCts.Token))
-                        {
-                            break;
-                        }
-
-                        // Check if we now have a final response
-                        lock (_lock)
-                        {
-                            var latest = _responses.Count > 0 ? _responses[^1] : null;
-                            if (latest is not null && IsFinalMessage(latest))
-                            {
-                                // Got a real response — start the short grace period for any follow-ups
-                                break;
-                            }
-                        }
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        break;
-                    }
-                }
-            }
-
-            // Grace period: collect any remaining follow-up responses
-            var graceDeadline = DateTime.UtcNow + GracePeriod;
-
-            while (DateTime.UtcNow < graceDeadline && !timeoutCts.Token.IsCancellationRequested)
-            {
-                var remaining = graceDeadline - DateTime.UtcNow;
-                if (remaining <= TimeSpan.Zero)
+                if (settleWait <= TimeSpan.Zero)
                 {
                     break;
                 }
 
                 try
                 {
-                    if (!await _responseReceived.WaitAsync(remaining, timeoutCts.Token))
+                    if (!await _responseReceived.WaitAsync(settleWait, timeoutCts.Token))
                     {
-                        break; // No more responses within grace period
+                        break; // No new message within settle period — done collecting
                     }
-                    // Got another response — continue collecting
+                    // New message arrived — loop resets the settle timer
                 }
                 catch (OperationCanceledException)
                 {
@@ -271,8 +198,8 @@ public sealed class HttpListenerBotCallbackReceiver : IBotCallbackReceiver
 
     /// <summary>
     /// Selects the best response from collected callbacks.
-    /// Returns null if only interim/typing responses were collected (agent did not produce a final answer).
-    /// Prefers the last message-type response with substantive non-interim text.
+    /// Returns the last message-type response with text, skipping typing indicators.
+    /// Returns null if no substantive message was received.
     /// </summary>
     private BotCallbackResponse? SelectBestResponse()
     {
@@ -281,69 +208,20 @@ public sealed class HttpListenerBotCallbackReceiver : IBotCallbackReceiver
             return null;
         }
 
-        // Prefer the last final message (non-interim, non-typing, with substantive text)
-        var bestMessage = _responses
-            .LastOrDefault(r => IsFinalMessage(r));
-
-        if (bestMessage is not null)
-        {
-            return bestMessage;
-        }
-
-        // No final message found — all responses were interim or typing.
-        // Return null so the caller treats this as "agent did not respond with a final answer".
-        return null;
+        return _responses.LastOrDefault(r => IsSubstantiveMessage(r));
     }
 
     /// <summary>
-    /// Determines whether a response is a final (non-interim) message from the agent.
+    /// Determines whether a response is a substantive message (not a typing indicator).
     /// </summary>
-    public static bool IsFinalMessage(BotCallbackResponse response)
+    public static bool IsSubstantiveMessage(BotCallbackResponse response)
     {
-        // Typing activities are never final
         if (string.Equals(response.Type, "typing", StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
 
-        // Must be a message with text
-        if (response.Type != "message" || string.IsNullOrWhiteSpace(response.Text))
-        {
-            return false;
-        }
-
-        return !IsInterimMessage(response.Text);
-    }
-
-    /// <summary>
-    /// Detects interim/acknowledgment messages that agents send while processing.
-    /// Only matches short messages (under 60 chars) containing known interim phrases.
-    /// Longer messages are assumed to be real responses even if they contain interim-like words.
-    /// </summary>
-    public static bool IsInterimMessage(string? text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return false;
-        }
-
-        // Long messages are unlikely to be interim acknowledgments
-        if (text.Length > 60)
-        {
-            return false;
-        }
-
-        var lower = text.ToLowerInvariant();
-
-        foreach (var pattern in InterimPatterns)
-        {
-            if (lower.Contains(pattern, StringComparison.Ordinal))
-            {
-                return true;
-            }
-        }
-
-        return false;
+        return response.Type == "message" && !string.IsNullOrWhiteSpace(response.Text);
     }
 
     public async ValueTask DisposeAsync()
