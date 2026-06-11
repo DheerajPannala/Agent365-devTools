@@ -37,9 +37,9 @@ public class AuthenticationConstantsTests
     }
 
     [Fact]
-    public void TokenCacheFileName_ShouldBeCorrect()
+    public void MsalCacheFileName_ShouldBeCorrect()
     {
-        AuthenticationConstants.TokenCacheFileName.Should().Be("auth-token.json");
+        AuthenticationConstants.MsalCacheFileName.Should().Be("msal-token-cache");
     }
 
     [Fact]
@@ -53,5 +53,46 @@ public class AuthenticationConstantsTests
     {
         // Should be between 1 and 60 minutes
         AuthenticationConstants.TokenExpirationBufferMinutes.Should().BeInRange(1, 60);
+    }
+
+    [Fact]
+    public void WamDeclinedScopesError_ShouldMatchKnownWamErrorSubstring()
+    {
+        // This constant is matched against the WAM error message that reads:
+        // "Token response failed because declined scopes are present:'(pii)'"
+        // Verified against live WAM output when requesting Exchange-specific Graph scopes
+        // (MailboxSettings.ReadWrite, ExchangeMessageTrace.Read.All) through the a365 CLI.
+        AuthenticationConstants.WamDeclinedScopesError.Should().Be("declined scopes are present",
+            because: "this exact substring is matched against the live WAM error message to gate the " +
+                     "device-code fallback; changing it silently disables the fallback");
+    }
+
+    [Fact]
+    public void WamApiContractViolation_ShouldMatchKnownWamErrorClassification()
+    {
+        // WAM surfaces this as "Error Message: ApiContractViolation" in the MSAL exception message
+        // when the broker rejects the request reporting declined scopes (known broker behavior;
+        // the precise root cause is not publicly documented).
+        // Used alongside WamDeclinedScopesError to trigger device code fallback.
+        AuthenticationConstants.WamApiContractViolation.Should().Be("ApiContractViolation",
+            because: "this classification string is matched together with WamDeclinedScopesError to " +
+                     "distinguish the fallback-eligible failure from other WAM errors; it must remain stable");
+    }
+
+    [Fact]
+    public void WamDeclinedScopesError_ShouldBeDifferentFromWamConsentRequiredError()
+    {
+        // These are two distinct failure modes:
+        // - WamConsentRequiredError (0xcaa90019): admin consent NOT granted — do not fall back to device code
+        // - WamDeclinedScopesError (ApiContractViolation + declined scopes): scopes are valid and
+        //   consent is in place, but the broker still refuses — fall back to device code
+        AuthenticationConstants.WamDeclinedScopesError.Should()
+            .NotBe(AuthenticationConstants.WamConsentRequiredError,
+                because: "declined-scopes and consent-required are handled differently — the former " +
+                         "falls back to device code, the latter must not — so the two signatures must stay distinct");
+        AuthenticationConstants.WamDeclinedScopesError.Should()
+            .NotContain("0xcaa",
+                because: "the consent-required path keys on the 0xcaa prefix; the declined-scopes signature " +
+                         "must not overlap with it or the fallback would trigger on consent errors");
     }
 }

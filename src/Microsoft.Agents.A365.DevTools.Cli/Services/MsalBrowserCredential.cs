@@ -24,12 +24,13 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 /// Uses Microsoft.Identity.Client.Extensions.Msal to persist tokens across all CLI instances.
 /// This dramatically reduces authentication prompts during multi-step operations like 'a365 setup all'.
 ///
-/// Cache Location: [LocalApplicationData]/Agent365/msal-token-cache (Windows/macOS)
+/// Cache Location: [LocalApplicationData]/Microsoft.Agents.A365.DevTools.Cli/msal-token-cache (all platforms)
 /// Security: Tokens are stored using platform-appropriate mechanisms:
 ///   - Windows: DPAPI (Data Protection API) - tokens encrypted with user credentials, persisted to disk
 ///   - macOS: Keychain - tokens stored in secure keychain, persisted to disk
-///   - Linux: Shared in-memory cache (static, in-process) - tokens never written to disk, shared
-///            across all MsalBrowserCredential instances in the same CLI process to avoid repeated prompts
+///   - Linux: Unprotected plaintext file (0600 permissions, owner-only), persisted to disk.
+///            Same approach used by Azure CLI (~/.azure/msal_token_cache.json); tokens are protected
+///            by filesystem permissions rather than at-rest encryption.
 ///
 /// See: https://learn.microsoft.com/en-us/entra/msal/dotnet/acquiring-tokens/desktop-mobile/wam
 /// Enhancement: Improves the WAM authentication experience by reducing repeated login prompts.
@@ -50,10 +51,20 @@ public sealed class MsalBrowserCredential : TokenCredential
     private static MsalCacheHelper? _cacheHelper;
     private static readonly object _cacheHelperLock = new();
 
-    private static readonly string CacheFileName = "msal-token-cache";
+    private static readonly string CacheFileName = AuthenticationConstants.MsalCacheFileName;
     private static readonly string CacheDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         AuthenticationConstants.ApplicationName);
+
+    /// <summary>
+    /// Full path to the OS-protected MSAL persistent token cache file — the single source of
+    /// truth for callers that report or clear the cache location. The cache lives under
+    /// LocalApplicationData (%LocalAppData% on Windows, ~/.local/share on Linux,
+    /// ~/Library/Application Support on macOS) + the application name. This is deliberately NOT
+    /// ConfigService.GetGlobalConfigDirectory(), which resolves to the XDG config dir
+    /// (~/.config/a365) on Linux/macOS and would report the wrong location.
+    /// </summary>
+    public static string MsalCacheFilePath => Path.Combine(CacheDirectory, CacheFileName);
 
     // P/Invoke is required for WAM window handle in console applications.
     // There is no managed .NET API for console/desktop window handles - these are Windows-specific.
@@ -267,6 +278,46 @@ public sealed class MsalBrowserCredential : TokenCredential
         }
     }
 
+    /// <summary>
+    /// Reads the username (UPN) of the first account in the MSAL persistent token cache without
+    /// triggering any interactive authentication. Used to resolve a login hint for pre-selecting
+    /// the correct account when the Azure CLI is not available.
+    /// </summary>
+    /// <param name="clientId">The application (client) ID whose cache to inspect — must match the
+    /// client used for interactive acquisition so the same persisted accounts are visible.</param>
+    /// <param name="logger">Optional logger for diagnostic output.</param>
+    /// <returns>The UPN of the first cached account, or <c>null</c> if the cache is empty,
+    /// unreadable, or any error occurs. This is a best-effort fallback and never throws.</returns>
+    public static async Task<string?> TryGetCachedAccountUsernameAsync(string clientId, ILogger? logger)
+    {
+        if (string.IsNullOrWhiteSpace(clientId))
+        {
+            return null;
+        }
+
+        try
+        {
+            // Build a minimal PublicClientApplication on the common authority. We never call any
+            // Acquire* method here — only GetAccountsAsync, which reads the persisted cache and
+            // cannot prompt. The authority/tenant does not affect which accounts are enumerated.
+            var app = PublicClientApplicationBuilder
+                .Create(clientId)
+                .WithAuthority(AzureCloudInstance.AzurePublic, AuthenticationConstants.CommonTenantId)
+                .Build();
+
+            RegisterPersistentCache(app, logger);
+
+            var accounts = await app.GetAccountsAsync();
+            return accounts.FirstOrDefault()?.Username;
+        }
+        catch (Exception ex)
+        {
+            // Best-effort only — login-hint resolution falls back to no hint (account picker).
+            logger?.LogDebug(ex, "Failed to read cached account username from MSAL cache");
+            return null;
+        }
+    }
+
 
     /// <inheritdoc/>
     public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken)
@@ -457,13 +508,33 @@ public sealed class MsalBrowserCredential : TokenCredential
                 aadErrorCode);
             return await AcquireTokenWithDeviceCodeFallbackAsync(scopes, cancellationToken);
         }
-        catch (MsalException ex) when (ex.Message.Contains(AuthenticationConstants.WamErrorPrefix, StringComparison.OrdinalIgnoreCase))
+        catch (MsalException ex) when (
+            ex.Message.Contains(AuthenticationConstants.WamErrorPrefix, StringComparison.OrdinalIgnoreCase)
+            || IsWamDeclinedScopesError(ex))
         {
             // WAM error 0xcaa90019 = "Need admin approval" (admin consent not granted).
             // Do NOT fall back to device code — device code shows the same browser consent page
             // and hangs if the user clicks "Return to application without granting consent".
             if (ex.Message.Contains(AuthenticationConstants.WamConsentRequiredError, StringComparison.OrdinalIgnoreCase))
                 LogConsentRequiredAndThrow(ex);
+
+            // "Declined scopes" (ApiContractViolation): the WAM broker rejects the request, reporting
+            // declined scopes. Observed with Exchange-specific Graph delegated scopes such as
+            // MailboxSettings.ReadWrite or ExchangeMessageTrace.Read.All. The scopes are valid and
+            // grantable, and consent is in place — this is known broker behavior, not a consent
+            // or scope-validity problem. Device code flow does not go through the WAM broker and
+            // succeeds for these scopes.
+            bool isDeclinedScopes = IsWamDeclinedScopesError(ex);
+            if (isDeclinedScopes)
+            {
+                // Informational, not a warning: this is a successful auto-recovery on the
+                // intended fallback path, not a failure the user needs to act on.
+                _logger?.LogInformation(
+                    "WAM could not complete authentication for the requested scopes " +
+                    "(ApiContractViolation: declined scopes are present). Falling back to device code " +
+                    "authentication, which does not use the broker.");
+                return await AcquireTokenWithDeviceCodeFallbackAsync(scopes, cancellationToken);
+            }
 
             // Other WAM errors (e.g. Conditional Access Policy, device compliance policy)
             // are not consent-related — device code flow bypasses the WAM broker and may succeed.
@@ -487,6 +558,17 @@ public sealed class MsalBrowserCredential : TokenCredential
             throw new MsalAuthenticationFailedException($"Failed to acquire token: {ex.Message}", ex);
         }
     }
+
+    /// <summary>
+    /// Returns true when the MSAL exception represents WAM's "declined scopes" failure:
+    /// the WAM broker rejects the request with ApiContractViolation, reporting declined scopes
+    /// (observed with Exchange-specific Graph delegated scopes). This is distinct from a
+    /// consent-not-granted failure (0xcaa90019): the scopes are valid and consent is in place,
+    /// but the broker still refuses. Device code flow does not go through WAM and succeeds.
+    /// </summary>
+    internal static bool IsWamDeclinedScopesError(MsalException ex)
+        => ex.Message.Contains(AuthenticationConstants.WamApiContractViolation, StringComparison.OrdinalIgnoreCase)
+        && ex.Message.Contains(AuthenticationConstants.WamDeclinedScopesError, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Logs a consistent "admin consent required" message with the admin consent URL and throws.
@@ -543,6 +625,15 @@ public sealed class MsalBrowserCredential : TokenCredential
             catch (MsalUiRequiredException)
             {
                 _logger?.LogDebug("Silent acquisition failed, proceeding with device code.");
+            }
+            catch (MsalException ex)
+            {
+                // The pre-device-code silent attempt reuses the broker-enabled client, so it can
+                // re-hit the very failure that triggered this fallback (e.g. WAM ApiContractViolation
+                // / declined scopes). The silent attempt is only an optimization — on ANY MSAL failure
+                // fall through to the device code flow (which does not use the broker) rather than
+                // letting the exception escape and abort the fallback.
+                _logger?.LogDebug(ex, "Silent acquisition failed ({ErrorCode}); proceeding with device code.", ex.ErrorCode);
             }
         }
 

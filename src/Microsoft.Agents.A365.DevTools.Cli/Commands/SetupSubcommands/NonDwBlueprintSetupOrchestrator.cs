@@ -33,9 +33,13 @@ internal static class NonDwBlueprintSetupOrchestrator
     /// Prints a dry-run plan showing all resources that would be created or configured,
     /// using actual names and values from the loaded config. Makes no API calls.
     /// </summary>
-    public static void PrintDryRunPlan(Agent365Config config, ILogger logger, bool isBootstrap = false, string[]? rawArgs = null, bool skipRequirements = false, bool isM365 = false, bool agentRegistrationOnly = false, string? authMode = null)
+    public static void PrintDryRunPlan(Agent365Config config, ILogger logger, bool isBootstrap = false, string[]? rawArgs = null, bool skipRequirements = false, bool isM365 = false, bool agentRegistrationOnly = false, string? authMode = null, string? messagingEndpointOverride = null)
     {
         var sub = new string(' ', SetupHelpers.DryRunValCol);
+        // --messaging-endpoint flag (if supplied) wins over the init-only config value for the plan.
+        var plannedEndpoint = !string.IsNullOrWhiteSpace(messagingEndpointOverride)
+            ? messagingEndpointOverride
+            : config.MessagingEndpoint;
 
         // Use explicitly-passed tokens when available; fall back to a known-correct default.
         // Environment.GetCommandLineArgs() is unreliable in dotnet tool / test hosting scenarios.
@@ -69,9 +73,9 @@ internal static class NonDwBlueprintSetupOrchestrator
 
             if (isM365)
             {
-                var endpointDetail = string.IsNullOrWhiteSpace(config.MessagingEndpoint)
-                    ? "register via Teams Graph (requires 'messagingEndpoint' in config)"
-                    : $"register via Teams Graph: {config.MessagingEndpoint}";
+                var endpointDetail = string.IsNullOrWhiteSpace(plannedEndpoint)
+                    ? "deferred — pass --messaging-endpoint <url> or configure after deploy"
+                    : $"register via Teams Graph: {plannedEndpoint}";
                 logger.LogInformation(SetupHelpers.DryRunRow(7, "Messaging endpoint") + endpointDetail);
             }
             else
@@ -152,10 +156,9 @@ internal static class NonDwBlueprintSetupOrchestrator
         // 7. Messaging endpoint (M365 opt-in)
         if (isM365)
         {
-            var endpointForDisplay = config.MessagingEndpoint;
-            var endpointDetail = string.IsNullOrWhiteSpace(endpointForDisplay)
-                ? "register via Teams Graph (requires 'messagingEndpoint' in config)"
-                : $"register via Teams Graph: {endpointForDisplay}";
+            var endpointDetail = string.IsNullOrWhiteSpace(plannedEndpoint)
+                ? "deferred — pass --messaging-endpoint <url> or configure after deploy"
+                : $"register via Teams Graph: {plannedEndpoint}";
             logger.LogInformation(SetupHelpers.DryRunRow(7, "Messaging endpoint") + endpointDetail);
         }
         else
@@ -200,8 +203,11 @@ internal static class NonDwBlueprintSetupOrchestrator
 
         ctx.Logger.LogInformation("");
         ctx.Logger.LogInformation("The following required permissions are not yet consented for your client app ({ClientAppId}):", clientAppId);
-        foreach (var p in unconsented)
-            ctx.Logger.LogInformation("  - {Permission}", p);
+        using (ctx.Logger.Indent())
+        {
+            foreach (var p in unconsented)
+                ctx.Logger.LogInformation("{Permission}", p);
+        }
         ctx.Logger.LogInformation("");
 
         // OAuth2 grant operations require Global Administrator. Skip the prompt for non-admins
@@ -359,14 +365,21 @@ internal static class NonDwBlueprintSetupOrchestrator
                 // Non-fatal: a failure here (e.g. caller lacks Global Administrator) logs a warning
                 // and continues so the agent-identity grants below still apply.
                 await AllSubcommand.ExecuteBatchPermissionsStepAsync(
-                    ctx, specs,
+                    ctx, specs, buildResult.scopesByAudience,
                     knownBlueprintSpObjectId: ctx.Config.AgentBlueprintServicePrincipalObjectId);
 
                 // If admin consent wasn't granted (non-GA caller), persist per-resource consent URLs
                 // and a combined URL so a Global Administrator can complete the hand-off out-of-band.
                 // Messaging Bot is gated on isM365 to avoid AADSTS650053 in tenants without the Bot SP.
+                // V2 audience routing (issue #429): pass the full scopesByAudience map so per-server
+                // audiences land on the bare appId GUID resource identifier rather than collapsing
+                // onto the WorkIQ Tools URI. api:// is NOT used — per-server SPs have
+                // identifierUris null and the bare GUID is what's in servicePrincipalNames.
                 SetupHelpers.ApplyConsentUrlsIfNeeded(
-                    ctx, buildResult.mcpResourceAppId, ctx.Config.AgentApplicationScopes, buildResult.mcpScopes, isM365: ctx.IsM365);
+                    ctx, buildResult.mcpResourceAppId, ctx.Config.AgentApplicationScopes, buildResult.mcpScopes,
+                    isM365: ctx.IsM365,
+                    mcpScopesByAudience: buildResult.scopesByAudience,
+                    mcpAudienceDisplayNames: buildResult.serverNamesByAudience);
 
                 // Save state before agent identity steps so progress (blueprint stamping outcomes,
                 // consent URLs) is not lost on failure in the steps below.
@@ -622,6 +635,8 @@ internal static class NonDwBlueprintSetupOrchestrator
 
         // Step 6.5: Messaging endpoint registration — --m365 gated; no-op for non-M365 agents.
         // Skipped for --agent-registration-only (skipIdentityAndPermissions) — endpoint is already registered.
+        // Phase separator is emitted inside ExecuteMessagingEndpointStepAsync after the
+        // non-M365 early-return so non-M365 runs don't accumulate a stray blank line.
         if (!skipIdentityAndPermissions)
             await AllSubcommand.ExecuteMessagingEndpointStepAsync(ctx);
 
@@ -629,6 +644,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         // to register the agent, not to regenerate appsettings files.
         if (!skipIdentityAndPermissions)
         {
+            ctx.Logger.LogInformation("");
             ctx.Logger.LogInformation("Updating project settings...");
             using (ctx.Logger.Indent())
             {

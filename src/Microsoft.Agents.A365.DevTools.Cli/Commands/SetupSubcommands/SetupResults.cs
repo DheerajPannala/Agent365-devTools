@@ -187,6 +187,18 @@ public class SetupResults
     public bool IsNonDwBlueprintFlow { get; set; }
 
     /// <summary>
+    /// True for standalone `setup blueprint`: scopes the summary to the rows that command runs,
+    /// suppressing the agent identity / registration / endpoint / project-settings rows.
+    /// </summary>
+    public bool IsBlueprintOnlyFlow { get; set; }
+
+    /// <summary>
+    /// Whether the agent is an M365 AI Teammate. Used only to tailor the "Next steps" wording
+    /// (naming the Bot API explicitly). Does not change which steps run.
+    /// </summary>
+    public bool IsM365 { get; set; }
+
+    /// <summary>
     /// The effective --authmode value used during the non-DW grant step.
     /// Null when the non-DW grant step was not reached (e.g. agent identity creation failed) or
     /// when the run is a DW (AI Teammate) flow — DW does not use --authmode.
@@ -277,6 +289,36 @@ public class SetupResults
     public List<string> Errors { get; } = new();
     public List<string> Warnings { get; } = new();
 
+    /// <summary>
+    /// Resources whose service principal could not be provisioned in-line during setup
+    /// (operator declined the per-SP prompt, az ad sp create failed, or
+    /// <c>--skip-sp-provisioning</c> was set). Each entry is a fully-actionable pair: the
+    /// <c>az ad sp create</c> command to provision the SP plus the per-SP unified-consent
+    /// URL that grants the blueprint consent for this resource's scopes. The setup
+    /// summary's "Action Required" block renders these as numbered items so the operator
+    /// can complete provisioning without re-running setup.
+    /// </summary>
+    public List<MissingSpAction> MissingSpActions { get; } = new();
+
     public bool HasErrors => Errors.Count > 0;
     public bool HasWarnings => Warnings.Count > 0;
 }
+
+/// <summary>
+/// One entry in <see cref="SetupResults.MissingSpActions"/>. Resource identity plus the
+/// two concrete commands/URLs the operator needs to complete provisioning manually:
+/// (1) the <c>az ad sp create</c> command that creates the SP in the tenant, and
+/// (2) the per-SP <c>/v2.0/adminconsent</c> URL that grants the blueprint consent for
+/// this resource's delegated scopes once the SP exists.
+/// </summary>
+/// <param name="ResourceName">Human-readable display name (e.g. "Work IQ Teams MCP").</param>
+/// <param name="ResourceAppId">Application ID of the resource (the GUID).</param>
+/// <param name="Scopes">Delegated scopes the blueprint needs on this resource.</param>
+/// <param name="AzCreateCommand">Copy-paste-able <c>az ad sp create --id ...</c>.</param>
+/// <param name="PerSpConsentUrl">Per-SP unified-consent URL keyed to the blueprint as client and the resource scopes as the request.</param>
+public sealed record MissingSpAction(
+    string ResourceName,
+    string ResourceAppId,
+    string[] Scopes,
+    string AzCreateCommand,
+    string PerSpConsentUrl);
