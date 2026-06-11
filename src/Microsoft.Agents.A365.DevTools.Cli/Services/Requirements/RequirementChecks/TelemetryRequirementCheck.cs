@@ -91,16 +91,6 @@ public class TelemetryRequirementCheck : RequirementCheck
         "execute_tool"
     };
 
-    /// <summary>
-    /// OTel semantic convention resource attributes that should be present in span output.
-    /// </summary>
-    internal static readonly string[] RequiredResourceAttributes = new[]
-    {
-        "telemetry.sdk.name",
-        "telemetry.sdk.version",
-        "service.name"
-    };
-
 
     public TelemetryRequirementCheck(string? agentConsoleLogPath)
     {
@@ -215,14 +205,6 @@ public class TelemetryRequirementCheck : RequirementCheck
         {
             warnings.Add($"child spans missing parentId: {string.Join(", ", childOpsWithoutParent)} — " +
                 "these spans should be children of an invoke_agent span");
-        }
-
-        // Check resource attributes: telemetry.sdk.name, telemetry.sdk.version, service.name
-        var missingResources = GetMissingResourceAttributes(logLines);
-        if (missingResources.Count > 0)
-        {
-            warnings.Add($"missing OTel resource attributes: {string.Join(", ", missingResources)} — " +
-                "ensure your SDK resource is configured per OTel semantic conventions");
         }
 
         var detailsBuilder = $"Console exporter active with {relevantBlocks.Count} relevant span(s). " +
@@ -432,16 +414,4 @@ public class TelemetryRequirementCheck : RequirementCheck
             !value.Equals("null", StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>
-    /// Checks for missing OTel resource semantic convention attributes across all log lines.
-    /// Looks for telemetry.sdk.name, telemetry.sdk.version, and service.name
-    /// which should appear in the resource section of console exporter output.
-    /// </summary>
-    internal static List<string> GetMissingResourceAttributes(string[] logLines)
-    {
-        var allText = string.Join("\n", logLines);
-        return RequiredResourceAttributes
-            .Where(attr => allText.IndexOf(attr, StringComparison.OrdinalIgnoreCase) < 0)
-            .ToList();
-    }
 }

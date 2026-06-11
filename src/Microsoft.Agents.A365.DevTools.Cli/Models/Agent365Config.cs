@@ -166,12 +166,6 @@ public class Agent365Config
     public string ClientAppId { get; init; } = string.Empty;
 
     /// <summary>
-    /// Optional local overrides for observability MCP validation calls.
-    /// </summary>
-    [JsonPropertyName("agent365ObservabilityMcpOptions")]
-    public Agent365ObservabilityMcpOptions? Agent365ObservabilityMcpOptions { get; init; }
-
-    /// <summary>
     /// Authentication pattern for the agent identity (blueprint agents only).
     /// Accepted values: "obo" (default), "s2s", "both".
     ///   obo  — on-behalf-of; principal-scoped delegated grants; no admin consent needed.
@@ -694,7 +688,6 @@ public class Agent365Config
             MessagingEndpoint = this.MessagingEndpoint,
             ClientAppId = this.ClientAppId,
             AuthMode = this.AuthMode,
-            Agent365ObservabilityMcpOptions = this.Agent365ObservabilityMcpOptions,
             AiTeammate = this.AiTeammate,
             UseBlueprint = this.UseBlueprint,
             AzureOpenAIName = this.AzureOpenAIName,
@@ -722,41 +715,4 @@ public class Agent365Config
     {
         return this;
     }
-}
-
-/// <summary>
-/// Optional overrides for observability MCP calls used by local validation.
-/// </summary>
-public sealed class Agent365ObservabilityMcpOptions
-{
-    /// <summary>
-    /// Base URL for the observability service host. The MCP path is appended automatically.
-    /// </summary>
-    [JsonPropertyName("baseUrl")]
-    public string? BaseUrl { get; init; }
-
-    /// <summary>
-    /// Tenant ID used to construct the observability MCP endpoint.
-    /// </summary>
-    [JsonPropertyName("tenantId")]
-    public string? TenantId { get; init; }
-
-    /// <summary>
-    /// Optional observability identifier passed to getAgentMetrics as agentObservabilityId.
-    /// When provided, this takes precedence over AgentName.
-    /// </summary>
-    [JsonPropertyName("agentObservabilityId")]
-    public string? AgentObservabilityId { get; init; }
-
-    /// <summary>
-    /// Agent name passed to getAgentMetrics when validating a specific agent.
-    /// </summary>
-    [JsonPropertyName("agentName")]
-    public string? AgentName { get; init; }
-
-    /// <summary>
-    /// App ID used as token audience when calling observability MCP endpoints.
-    /// </summary>
-    [JsonPropertyName("appId")]
-    public string? AppId { get; init; }
 }

@@ -48,22 +48,12 @@ public sealed class ValidateCommand
     {
         var command = new Command(CommandNames.Validate,
             "Validate the local Agent 365 CLI configuration and prerequisite state\n" +
-            "Checks config validity and code health. Run 'a365 setup all' before using this command.");
+            "Checks config validity, code health, and blueprint registration. Run 'a365 setup all' before using this command.");
 
         var playgroundOption = new Option<bool>(
             "--playground",
             "Launch AgentsPlayground after automated conversation turns for interactive testing");
         command.AddOption(playgroundOption);
-
-        var withTenantOption = new Option<bool>(
-            "--with-tenant",
-            "Run tenant-level checks (blueprint registration, permissions, consent)");
-        command.AddOption(withTenantOption);
-
-        var instanceNameOption = new Option<string?>(
-            "--instance-name",
-            "Agent instance display name (reserved for future agent metrics validation)");
-        command.AddOption(instanceNameOption);
 
         command.SetHandler(async (InvocationContext context) =>
         {
@@ -72,7 +62,6 @@ public sealed class ValidateCommand
             var configPath = Path.Combine(cwd, ConfigConstants.DefaultConfigFileName);
             var report = new ValidateReport();
             var launchPlayground = context.ParseResult.GetValueForOption(playgroundOption);
-            var withTenant = context.ParseResult.GetValueForOption(withTenantOption);
 
             try
             {
@@ -99,55 +88,7 @@ public sealed class ValidateCommand
                         : null
                 };
 
-                if (withTenant)
-                {
-                    // --with-tenant: load previous report, run only tenant checks, merge
-                    var existingReport = await LoadExistingReportAsync(cwd, logger);
-                    if (existingReport is not null)
-                    {
-                        // Carry forward all local tiers from previous run
-                        report.Tiers.Structural = existingReport.Tiers.Structural;
-                        report.Tiers.Build = existingReport.Tiers.Build;
-                        report.Tiers.Boot = existingReport.Tiers.Boot;
-                        report.Tiers.Conversation = existingReport.Tiers.Conversation;
-                        report.Tiers.Telemetry = existingReport.Tiers.Telemetry;
-                        report.Agent = existingReport.Agent ?? report.Agent;
-                        report.AgentConsoleLogFile = existingReport.AgentConsoleLogFile;
-                    }
-                    else
-                    {
-                        logger.LogWarning("No previous {ReportFile} found. Run 'a365 validate' first, then 'a365 validate --with-tenant'.", ReportFileName);
-                        context.ExitCode = 1;
-                        return;
-                    }
-
-                    var tenantResults = new List<(IRequirementCheck Check, RequirementCheckResult Result)>();
-
-                    // Blueprint registration check
-                    if (requirementChecksOverride is null && graphApiService is not null)
-                    {
-                        var registrationCheck = new BlueprintRegistrationRequirementCheck(graphApiService, agentBlueprintService);
-                        var registrationResults = await RunChecksDetailedAsync(
-                            new List<IRequirementCheck> { registrationCheck }, config, logger, ct);
-                        MapResultsToTiers(registrationResults, report);
-                        tenantResults.AddRange(registrationResults);
-                    }
-
-                    // Summary based on all tiers (existing + new tenant)
-                    var tenantAnyFailed = tenantResults.Any(r => !r.Result.Passed);
-                    var tenantBlocker = FindBlocker(report.Tiers);
-                    report.Summary = new SummaryResult
-                    {
-                        Ok = !tenantAnyFailed && tenantBlocker is null,
-                        Blocker = tenantBlocker
-                    };
-
-                    context.ExitCode = report.Summary.Ok ? 0 : 1;
-                    PrintSummary(report, logger);
-                    return;
-                }
-
-                // --- Non-tenant flow: run all local checks ---
+                // --- Run all checks ---
 
                 // Phase 2: Run structural checks (manifest + build)
                 var structuralChecks = requirementChecksOverride?.ToList()
@@ -155,9 +96,6 @@ public sealed class ValidateCommand
 
                 var results = await RunChecksDetailedAsync(structuralChecks, config, logger, ct);
                 MapResultsToTiers(results, report);
-
-                // Mark tenant-dependent tiers as skipped
-                report.Tiers.Blueprint = TierResult.CreateSkipped<BlueprintTierResult>("use --with-tenant");
 
                 // Extract resolved uv command from build step for boot and conversation steps
                 var buildResultEntry = results
@@ -229,7 +167,17 @@ public sealed class ValidateCommand
                     // Conversation checks from override are already in results via MapResultsToTiers
                 }
 
-                // Phase 3: Build summary — any failed check is a blocker
+                // Phase 3: Blueprint registration check (tenant-level)
+                if (requirementChecksOverride is null && graphApiService is not null)
+                {
+                    var registrationCheck = new BlueprintRegistrationRequirementCheck(graphApiService, agentBlueprintService);
+                    var registrationResults = await RunChecksDetailedAsync(
+                        new List<IRequirementCheck> { registrationCheck }, config, logger, ct);
+                    MapResultsToTiers(registrationResults, report);
+                    results.AddRange(registrationResults);
+                }
+
+                // Phase 4: Build summary — any failed check is a blocker
                 var anyFailed = results.Any(r => !r.Result.Passed);
                 var blocker = FindBlocker(report.Tiers);
                 report.Summary = new SummaryResult
@@ -829,28 +777,6 @@ public sealed class ValidateCommand
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Failed to write validation report");
-        }
-    }
-
-    private static async Task<ValidateReport?> LoadExistingReportAsync(string directory, ILogger logger)
-    {
-        var reportPath = Path.Combine(directory, ReportFileName);
-        if (!File.Exists(reportPath))
-        {
-            return null;
-        }
-
-        try
-        {
-            var json = await File.ReadAllTextAsync(reportPath);
-            var report = JsonSerializer.Deserialize<ValidateReport>(json, ReportSerializerOptions);
-            logger.LogDebug("Loaded existing report from {ReportPath}", reportPath);
-            return report;
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Failed to load existing report from {ReportPath}", reportPath);
-            return null;
         }
     }
 

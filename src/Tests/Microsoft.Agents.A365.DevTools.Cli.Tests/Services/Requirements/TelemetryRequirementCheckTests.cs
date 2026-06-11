@@ -494,45 +494,6 @@ public class TelemetryRequirementCheckTests : IDisposable
         TelemetryRequirementCheck.HasNonEmptyValue("  parentId: ''").Should().BeFalse();
     }
 
-    // --- Resource attribute checks ---
-
-    [Fact]
-    public void GetMissingResourceAttributes_AllPresent_ReturnsEmpty()
-    {
-        var lines = new[]
-        {
-            "    'telemetry.sdk.name': 'opentelemetry',",
-            "    'telemetry.sdk.version': '1.25.0',",
-            "    'service.name': 'my-agent',"
-        };
-
-        TelemetryRequirementCheck.GetMissingResourceAttributes(lines).Should().BeEmpty();
-    }
-
-    [Fact]
-    public void GetMissingResourceAttributes_MissingSdkVersion_ReportsIt()
-    {
-        var lines = new[]
-        {
-            "    'telemetry.sdk.name': 'opentelemetry',",
-            "    'service.name': 'my-agent',"
-        };
-
-        var missing = TelemetryRequirementCheck.GetMissingResourceAttributes(lines);
-        missing.Should().Contain("telemetry.sdk.version");
-        missing.Should().NotContain("telemetry.sdk.name");
-        missing.Should().NotContain("service.name");
-    }
-
-    [Fact]
-    public void GetMissingResourceAttributes_NonePresent_ReturnsAll()
-    {
-        var lines = new[] { "some unrelated log output" };
-
-        var missing = TelemetryRequirementCheck.GetMissingResourceAttributes(lines);
-        missing.Should().HaveCount(3);
-    }
-
     // --- End-to-end: fully compliant spans return success ---
 
     [Fact]
@@ -587,10 +548,9 @@ public class TelemetryRequirementCheckTests : IDisposable
     }
 
     [Fact]
-    public async Task CheckAsync_MissingResourceAttributes_ReturnsWarning()
+    public async Task CheckAsync_AllSpansPresent_NoResourceAttributes_ReturnsSuccess()
     {
         var lines = new List<string>();
-        // No resource lines
         lines.Add("{");
         lines.AddRange(MakeFullAgent365Span("invoke_agent"));
         lines.Add("}");
@@ -606,9 +566,8 @@ public class TelemetryRequirementCheckTests : IDisposable
 
         var result = await check.CheckAsync(_config, _logger);
 
-        result.Passed.Should().BeTrue(because: "missing resource attributes is a warning not a failure");
-        result.IsWarning.Should().BeTrue();
-        result.Details.Should().Contain("service.name", because: "warning should list missing resource attributes");
+        result.Passed.Should().BeTrue(because: "all required spans are present with parent links");
+        result.IsWarning.Should().BeFalse(because: "resource attributes are no longer checked");
     }
 
     // ── Python console exporter format tests ──
