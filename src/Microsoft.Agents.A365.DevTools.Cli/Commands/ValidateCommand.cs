@@ -8,6 +8,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using System.CommandLine;
 using System.CommandLine.Invocation;
 using System.Text.Json;
@@ -296,9 +297,13 @@ public sealed class ValidateCommand
 
         logger.LogDebug("Checking requirements...");
 
+        // Pass NullLogger to checks to suppress their built-in logging.
+        // Validate handles its own structured output via the report and PrintSummary.
+        var checkLogger = NullLogger.Instance;
+
         foreach (var check in checks)
         {
-            var result = await check.CheckAsync(config, logger, ct);
+            var result = await check.CheckAsync(config, checkLogger, ct);
             results.Add((check, result));
         }
 
