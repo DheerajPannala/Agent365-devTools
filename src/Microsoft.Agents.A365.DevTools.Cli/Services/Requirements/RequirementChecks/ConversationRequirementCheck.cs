@@ -240,7 +240,7 @@ public class ConversationRequirementCheck : RequirementCheck
                 details: $"No .NET, Node.js, or Python project detected in {projectPath}");
         }
 
-        var port = LocalRuntimeRequirementCheck.ResolvePort(config.MessagingEndpoint);
+        var port = LocalRuntimeRequirementCheck.ResolvePort(projectPath, platform);
         var healthUrl = $"http://localhost:{port}{LocalRuntimeRequirementCheck.DefaultHealthPath}";
         var messagesUrl = $"http://localhost:{port}/api/messages";
         var conversationId = $"validate-{Guid.NewGuid():N}";

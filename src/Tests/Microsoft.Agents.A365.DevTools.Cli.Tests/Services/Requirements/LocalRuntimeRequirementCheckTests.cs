@@ -172,17 +172,45 @@ public class LocalRuntimeRequirementCheckTests : IDisposable
         result.ErrorMessage.Should().Contain("exited early");
     }
 
-    [Theory]
-    [InlineData("https://localhost:3978/api/messages", 3978)]
-    [InlineData("https://127.0.0.1:8080/api/messages", 8080)]
-    [InlineData("https://myapp.azurewebsites.net/api/messages", 5000)]
-    [InlineData("https://localhost/api/messages", 5000)]
-    [InlineData("", 5000)]
-    [InlineData(null, 5000)]
-    public void ResolvePort_ReturnsExpectedPort(string? endpoint, int expected)
+    [Fact]
+    public void ResolvePort_WithLaunchSettings_ReturnsConfiguredPort()
     {
-        var port = LocalRuntimeRequirementCheck.ResolvePort(endpoint);
-        port.Should().Be(expected, because: "port resolution should respect localhost URLs and fall back to default");
+        var propsDir = Directory.CreateDirectory(Path.Combine(_tempDir, "Properties"));
+        File.WriteAllText(Path.Combine(propsDir.FullName, "launchSettings.json"), """
+            {
+              "profiles": {
+                "MyApp": {
+                  "applicationUrl": "http://localhost:3978"
+                }
+              }
+            }
+            """);
+
+        var port = LocalRuntimeRequirementCheck.ResolvePort(_tempDir, ProjectPlatform.DotNet);
+        port.Should().Be(3978, because: "port should be read from launchSettings.json applicationUrl");
+    }
+
+    [Fact]
+    public void ResolvePort_WithEnvFile_ReturnsConfiguredPort()
+    {
+        File.WriteAllText(Path.Combine(_tempDir, ".env"), "PORT=8080\n");
+
+        var port = LocalRuntimeRequirementCheck.ResolvePort(_tempDir, ProjectPlatform.NodeJs);
+        port.Should().Be(8080, because: "port should be read from .env PORT variable");
+    }
+
+    [Fact]
+    public void ResolvePort_WithNoSettings_ReturnsDefault()
+    {
+        var port = LocalRuntimeRequirementCheck.ResolvePort(_tempDir, ProjectPlatform.DotNet);
+        port.Should().Be(5000, because: "default port is used when no launch settings are found");
+    }
+
+    [Fact]
+    public void ResolvePort_WithNullPath_ReturnsDefault()
+    {
+        var port = LocalRuntimeRequirementCheck.ResolvePort(null);
+        port.Should().Be(5000, because: "default port is used when project path is null");
     }
 
     [Fact]

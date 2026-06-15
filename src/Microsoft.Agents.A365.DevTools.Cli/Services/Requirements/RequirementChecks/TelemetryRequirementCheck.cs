@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using System.Text.RegularExpressions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Extensions.Logging;
 
@@ -90,6 +91,15 @@ public class TelemetryRequirementCheck : RequirementCheck
         "chat",
         "execute_tool"
     };
+
+    /// <summary>
+    /// Matches any line containing a parent span identifier key (parentId, parentSpanId, parent_id, etc.)
+    /// followed by a separator and a non-empty hex value. Handles all known exporter formats:
+    /// Activity.ParentSpanId, JSON quoted keys, YAML-style, and equals-sign separators.
+    /// </summary>
+    internal static readonly Regex ParentSpanPattern = new(
+        @"(?:parent[\._]?(?:span)?[\._]?(?:id|context))\s*[=:]\s*[""']?\s*(?:0x)?([0-9a-f]{2,})",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
 
     public TelemetryRequirementCheck(string? agentConsoleLogPath)
@@ -372,19 +382,7 @@ public class TelemetryRequirementCheck : RequirementCheck
             if (!isChildSpan)
                 continue;
 
-            var hasParent = block.Any(line =>
-            {
-                var trimmed = line.TrimStart();
-                return (trimmed.StartsWith("parentId:", StringComparison.OrdinalIgnoreCase) ||
-                        trimmed.StartsWith("parentSpanId:", StringComparison.OrdinalIgnoreCase) ||
-                        trimmed.StartsWith("parent_id:", StringComparison.OrdinalIgnoreCase) ||
-                        trimmed.StartsWith("\"parentId\":", StringComparison.OrdinalIgnoreCase) ||
-                        trimmed.StartsWith("\"parent_id\":", StringComparison.OrdinalIgnoreCase) ||
-                        trimmed.StartsWith("'parentId':", StringComparison.OrdinalIgnoreCase) ||
-                        trimmed.StartsWith("'parent_id':", StringComparison.OrdinalIgnoreCase) ||
-                        trimmed.StartsWith("parentSpanContext:", StringComparison.OrdinalIgnoreCase)) &&
-                    HasNonEmptyValue(trimmed);
-            });
+            var hasParent = block.Any(line => ParentSpanPattern.IsMatch(line));
 
             if (!hasParent)
             {
@@ -396,22 +394,6 @@ public class TelemetryRequirementCheck : RequirementCheck
         }
 
         return missingParent.OrderBy(o => o).ToList();
-    }
-
-    /// <summary>
-    /// Checks that a line like "parentId: 'abc123'" has a non-empty value after the key.
-    /// Returns false for lines like "parentId: undefined" or "parentId: ''".
-    /// </summary>
-    internal static bool HasNonEmptyValue(string line)
-    {
-        var colonIdx = line.IndexOf(':');
-        if (colonIdx < 0)
-            return false;
-
-        var value = line.Substring(colonIdx + 1).Trim().Trim('\'', '"', ',', ' ');
-        return !string.IsNullOrWhiteSpace(value) &&
-            !value.Equals("undefined", StringComparison.OrdinalIgnoreCase) &&
-            !value.Equals("null", StringComparison.OrdinalIgnoreCase);
     }
 
 }

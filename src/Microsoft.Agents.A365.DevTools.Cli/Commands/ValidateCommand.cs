@@ -91,21 +91,23 @@ public sealed class ValidateCommand
 
                 // --- Run all checks ---
 
-                // Phase 2: Run structural checks (manifest + build)
+                // Phase 2: Run structural checks (manifest + bearer token + build)
                 var structuralChecks = requirementChecksOverride?.ToList()
                     ?? BuildStructuralChecks(platformDetector, commandExecutor);
 
                 var results = await RunChecksDetailedAsync(structuralChecks, config, logger, ct);
                 MapResultsToTiers(results, report);
 
+                var structuralPassed = report.Tiers.Structural is { Skipped: true } or { Ok: true };
+
                 // Extract resolved uv command from build step for boot and conversation steps
                 var buildResultEntry = results
                     .FirstOrDefault(r => r.Check is ProjectBuildRequirementCheck);
                 var resolvedUvCommand = (buildResultEntry.Result?.Metadata as RequirementCheckMetadata)?.ResolvedUvCommand;
 
-                // Phase 2b: Run boot check only if build passed
+                // Phase 2b: Run boot check only if structural and build passed
                 var buildPassed = report.Tiers.Build is { Skipped: true } or { Ok: true };
-                if (buildPassed && requirementChecksOverride is null)
+                if (structuralPassed && buildPassed && requirementChecksOverride is null)
                 {
                     var bootChecks = BuildBootChecks(platformDetector, processService, resolvedUvCommand);
                     if (bootChecks.Count > 0)
@@ -115,12 +117,13 @@ public sealed class ValidateCommand
                         results.AddRange(bootResults);
                     }
                 }
-                else if (!buildPassed)
+                else if (!structuralPassed || !buildPassed)
                 {
+                    var skipReason = !structuralPassed ? "structural checks failed" : "build failed";
                     report.Tiers.Boot = new BootTierResult
                     {
                         Skipped = true,
-                        Reason = "build failed"
+                        Reason = skipReason
                     };
                 }
 
@@ -149,7 +152,7 @@ public sealed class ValidateCommand
                 }
                 else if (!bootPassed)
                 {
-                    var skipReason = report.Tiers.Boot is { Skipped: true } ? "build failed" : "boot tier failed";
+                    var skipReason = report.Tiers.Boot?.Reason ?? "boot tier failed";
                     report.Tiers.Conversation = new ConversationTierResult
                     {
                         Skipped = true,
@@ -326,6 +329,7 @@ public sealed class ValidateCommand
             switch (check)
             {
                 case ToolingManifestRequirementCheck:
+                case BearerTokenRequirementCheck:
                     // Add to structural tier
                     var structural = report.Tiers.Structural;
                     if (structural.Skipped)
@@ -334,9 +338,15 @@ public sealed class ValidateCommand
                         report.Tiers.Structural = structural;
                     }
                     structural.Checks ??= new List<StructuralCheck>();
+                    var checkName = check switch
+                    {
+                        ToolingManifestRequirementCheck => "tooling-manifest",
+                        BearerTokenRequirementCheck => "bearer-token",
+                        _ => check.Name.ToLowerInvariant().Replace(' ', '-')
+                    };
                     structural.Checks.Add(new StructuralCheck
                     {
-                        Name = "tooling-manifest",
+                        Name = checkName,
                         Ok = result.Passed,
                         Message = result.Passed ? result.Details : result.ErrorMessage
                     });
@@ -520,7 +530,12 @@ public sealed class ValidateCommand
             var desc = failedChecks is { Count: > 0 }
                 ? $"failed: {string.Join(", ", failedChecks)}"
                 : "structural checks failed";
-            return (desc, "fix project structure issues and re-run `a365 validate`");
+
+            var suggestion = failedChecks?.Contains("bearer-token") == true
+                ? "run `a365 develop get-token` to retrieve a bearer token and add it to your launch settings"
+                : "fix project structure issues and re-run `a365 validate`";
+
+            return (desc, suggestion);
         }
 
         return ("code health check failed", "fix errors and re-run `a365 validate`");
@@ -803,6 +818,11 @@ public sealed class ValidateCommand
         {
             new ToolingManifestRequirementCheck()
         };
+
+        if (platformDetector is not null)
+        {
+            checks.Add(new BearerTokenRequirementCheck(platformDetector));
+        }
 
         if (platformDetector is not null && commandExecutor is not null)
         {

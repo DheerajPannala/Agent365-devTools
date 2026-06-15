@@ -99,7 +99,7 @@ public class LocalRuntimeRequirementCheck : RequirementCheck
                 details: $"No .NET, Node.js, or Python project detected in {projectPath}");
         }
 
-        var port = ResolvePort(config.MessagingEndpoint);
+        var port = ResolvePort(projectPath, platform);
         var healthUrl = $"http://localhost:{port}{DefaultHealthPath}";
 
         logger.LogDebug(
@@ -111,28 +111,113 @@ public class LocalRuntimeRequirementCheck : RequirementCheck
     }
 
     /// <summary>
-    /// Resolves the local port from a MessagingEndpoint URL. Only uses the port when the host
-    /// is localhost/127.0.0.1/[::1]. Otherwise returns the default port.
+    /// Resolves the local port from the agent's project launch settings.
+    /// Checks launchSettings.json (for .NET) or .env files (for Node.js/Python).
+    /// Falls back to the default port when no setting is found.
     /// </summary>
-    internal static int ResolvePort(string? messagingEndpoint)
+    internal static int ResolvePort(string? projectPath, ProjectPlatform platform = ProjectPlatform.Unknown)
     {
-        if (string.IsNullOrWhiteSpace(messagingEndpoint))
+        if (!string.IsNullOrWhiteSpace(projectPath) && Directory.Exists(projectPath))
         {
-            return DefaultPort;
-        }
-
-        if (Uri.TryCreate(messagingEndpoint, UriKind.Absolute, out var uri))
-        {
-            var host = uri.Host.ToLowerInvariant();
-            var isLocalhost = host is "localhost" or "127.0.0.1" or "[::1]" or "::1";
-
-            if (isLocalhost && !uri.IsDefaultPort)
+            var portFromSettings = platform switch
             {
-                return uri.Port;
+                ProjectPlatform.DotNet => ResolvePortFromLaunchSettings(projectPath),
+                ProjectPlatform.NodeJs => ResolvePortFromEnvFile(projectPath),
+                ProjectPlatform.Python => ResolvePortFromEnvFile(projectPath),
+                _ => ResolvePortFromLaunchSettings(projectPath) ?? ResolvePortFromEnvFile(projectPath)
+            };
+
+            if (portFromSettings.HasValue)
+            {
+                return portFromSettings.Value;
             }
         }
 
         return DefaultPort;
+    }
+
+    /// <summary>
+    /// Reads the port from Properties/launchSettings.json (first profile's applicationUrl).
+    /// </summary>
+    internal static int? ResolvePortFromLaunchSettings(string projectPath)
+    {
+        var launchSettingsPath = Path.Combine(projectPath, "Properties", "launchSettings.json");
+        if (!File.Exists(launchSettingsPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var json = File.ReadAllText(launchSettingsPath);
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+
+            if (!doc.RootElement.TryGetProperty("profiles", out var profiles))
+            {
+                return null;
+            }
+
+            foreach (var profile in profiles.EnumerateObject())
+            {
+                if (profile.Value.TryGetProperty("applicationUrl", out var urlProp))
+                {
+                    var urls = urlProp.GetString();
+                    if (string.IsNullOrWhiteSpace(urls))
+                    {
+                        continue;
+                    }
+
+                    // applicationUrl can be semicolon-separated; prefer HTTP for local validation
+                    foreach (var url in urls.Split(';', StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        if (Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri) && !uri.IsDefaultPort)
+                        {
+                            return uri.Port;
+                        }
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Malformed launchSettings — fall through
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Reads the PORT variable from a .env file in the project directory.
+    /// </summary>
+    internal static int? ResolvePortFromEnvFile(string projectPath)
+    {
+        var envPath = Path.Combine(projectPath, ".env");
+        if (!File.Exists(envPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            foreach (var line in File.ReadLines(envPath))
+            {
+                var trimmed = line.Trim();
+                if (trimmed.StartsWith("PORT=", StringComparison.OrdinalIgnoreCase))
+                {
+                    var value = trimmed.Substring("PORT=".Length).Trim().Trim('"', '\'');
+                    if (int.TryParse(value, out var port) && port > 0 && port <= 65535)
+                    {
+                        return port;
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Malformed .env — fall through
+        }
+
+        return null;
     }
 
     private ProcessStartInfo BuildProcessStartInfo(ProjectPlatform platform, string projectPath, int port)

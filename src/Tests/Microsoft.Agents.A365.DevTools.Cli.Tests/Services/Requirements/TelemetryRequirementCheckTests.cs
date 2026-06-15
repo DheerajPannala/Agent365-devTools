@@ -476,22 +476,20 @@ public class TelemetryRequirementCheckTests : IDisposable
             .Should().BeEmpty(because: "invoke_agent is a root span and does not need a parent");
     }
 
-    [Fact]
-    public void HasNonEmptyValue_ValidValue_ReturnsTrue()
+    [Theory]
+    [InlineData("  parentId: 'abc123def456',", true, "JS/Node camelCase format")]
+    [InlineData("  Activity.ParentSpanId:  63a4d021ceef33ed", true, ".NET console exporter format")]
+    [InlineData("    \"parent_id\": \"0x9534d47ca25deef6\",", true, "Python JSON format with 0x prefix")]
+    [InlineData("  parentSpanId: 'abc123',", true, "camelCase spanId variant")]
+    [InlineData("  parent_id=abc123", true, "equals-sign separator")]
+    [InlineData("  parentId: undefined", false, "undefined is not a valid hex span ID")]
+    [InlineData("  parentId: ''", false, "empty value has no hex digits")]
+    [InlineData("  parentId: null", false, "null is not a valid hex span ID")]
+    [InlineData("  some unrelated line", false, "no parent key present")]
+    public void ParentSpanPattern_MatchesExpectedFormats(string line, bool shouldMatch, string because)
     {
-        TelemetryRequirementCheck.HasNonEmptyValue("  parentId: 'abc123'").Should().BeTrue();
-    }
-
-    [Fact]
-    public void HasNonEmptyValue_Undefined_ReturnsFalse()
-    {
-        TelemetryRequirementCheck.HasNonEmptyValue("  parentId: undefined").Should().BeFalse();
-    }
-
-    [Fact]
-    public void HasNonEmptyValue_EmptyQuotes_ReturnsFalse()
-    {
-        TelemetryRequirementCheck.HasNonEmptyValue("  parentId: ''").Should().BeFalse();
+        TelemetryRequirementCheck.ParentSpanPattern.IsMatch(line)
+            .Should().Be(shouldMatch, because: because);
     }
 
     // --- End-to-end: fully compliant spans return success ---
