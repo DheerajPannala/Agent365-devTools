@@ -63,6 +63,8 @@ This skill enforces the following principles:
 - **Function reuse**: Encourages reusing functions across commands
 - **No special characters**: Avoids emojis in logs/output (Windows compatibility)
 - **Self-documenting code**: Prefers clear code over excessive comments
+- **Crisp comments (pr-code-reviewer #30)**: Flags added comments that run past 1-2 lines, restate the code, or narrate design history — a comment says *why* in one line; long-form reasoning belongs in the commit/PR.
+- **Release-note-ready CHANGELOG (pr-code-reviewer #31)**: Flags `CHANGELOG.md` entries that name internals, explain mechanism, or run multiple sentences — each entry is one crisp consumer-facing sentence (it ships verbatim to nuget.org release notes).
 - **Minimal changes**: Makes only necessary changes to solve the problem
 
 ### Testing Standards
@@ -99,7 +101,7 @@ You can edit this file to:
 The skill uses **Claude Code directly** for semantic code analysis (inspired by Agent365-dotnet). No separate API key required!
 
 **Generate mode** (default):
-1. Claude Code reads `.claude/agents/pr-code-reviewer.md` for review process guidelines
+1. Claude Code reads `.claude/agents/pr-code-reviewer.md` for review process guidelines. Read the **working-tree (PR) version** of this file and of `.github/copilot-instructions.md` and `CLAUDE.md` — not the base-branch copy. When the PR under review *adds or changes a review rule* (as PR #461 did with rules #30/#31), the new rule must be applied to that same PR in the same run; reading the base copy would skip it.
 2. Claude Code reads `.github/copilot-instructions.md` for coding standards
 3. Claude Code fetches PR details: `gh pr view <number> --json ...`
 4. Claude Code analyzes actual code changes: `gh pr diff <number>`

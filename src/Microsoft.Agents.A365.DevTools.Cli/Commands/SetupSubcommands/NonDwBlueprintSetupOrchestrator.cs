@@ -526,7 +526,7 @@ internal static class NonDwBlueprintSetupOrchestrator
 
                 // S2S and Both: app role assignments (requires Global Admin; falls back to PowerShell instructions).
                 if (ctx.IsS2sMode || ctx.IsBothMode)
-                    await GrantOrInstructAgentIdentityAppPermissionsAsync(ctx, specs);
+                    await GrantAgentIdentityS2SPermissionsAsync(ctx, specs);
             }
         }
 
@@ -656,9 +656,33 @@ internal static class NonDwBlueprintSetupOrchestrator
     }
 
     /// <summary>
-    /// Attempts to grant app role assignments on the agent identity SP for S2S access.
-    /// Requires Agent ID Administrator, Application Administrator, or Global Administrator. When the signed-in user lacks
-    /// one of those roles, prints PowerShell instructions covering only the app permission section.
+    /// Grants the agent identity's S2S app roles, or skips when already inherited from the blueprint (issue #460).
+    /// </summary>
+    internal static async Task GrantAgentIdentityS2SPermissionsAsync(
+        SetupContext ctx,
+        List<ResourcePermissionSpec> specs)
+    {
+        var hasS2sSpecs = specs.Any(s => s.AppRoleScopes is { Length: > 0 });
+        if (hasS2sSpecs && AgentIdentityInheritsBlueprintAppRoles(ctx.Results))
+        {
+            ctx.Logger.LogDebug("Agent identity inherits S2S app roles from the blueprint; skipping redundant direct grant.");
+            ctx.Results.AgentIdentityS2SOutcome = Models.GrantOutcome.Granted;
+            return;
+        }
+
+        await GrantOrInstructAgentIdentityAppPermissionsAsync(ctx, specs);
+    }
+
+    /// <summary>
+    /// True when the agent identity inherits the blueprint's S2S app roles, making a direct grant redundant (issue #460).
+    /// </summary>
+    internal static bool AgentIdentityInheritsBlueprintAppRoles(SetupResults results) =>
+        results.BatchPermissionsPhase2Completed
+        && results.BlueprintS2SOutcome == Models.GrantOutcome.Granted;
+
+    /// <summary>
+    /// Grants S2S app role assignments on the agent identity SP; requires Agent ID, Application, or Global Administrator.
+    /// Falls back to az rest, then PowerShell instructions, when the Graph path lacks permission (issue #460).
     /// </summary>
     internal static async Task GrantOrInstructAgentIdentityAppPermissionsAsync(
         SetupContext ctx,
@@ -705,6 +729,18 @@ internal static class NonDwBlueprintSetupOrchestrator
         }
 
         if (failedSpecs.Count == 0)
+        {
+            using (ctx.Logger.Indent())
+                ctx.Logger.LogInformation("S2S app role assignments granted to agent identity.");
+            ctx.Results.AgentIdentityS2SOutcome = Models.GrantOutcome.Granted;
+            return;
+        }
+
+        // Issue #460: Graph token lacks AppRoleAssignment.ReadWrite.All; retry via az rest (a GA's az token carries it) before PowerShell.
+        ctx.Logger.LogDebug("S2S app role assignments on the agent identity could not be completed via the Graph API; falling back to az rest.");
+        var (attempted, succeeded) = await AzRestS2SRunner.TryRunAsync(
+            ctx.Executor, agentIdentitySpObjectId, failedSpecs, ctx.Logger, ctx.CancellationToken);
+        if (attempted && succeeded)
         {
             using (ctx.Logger.Indent())
                 ctx.Logger.LogInformation("S2S app role assignments granted to agent identity.");

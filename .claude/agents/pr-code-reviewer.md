@@ -1122,6 +1122,38 @@ When a string property represents a discrete set of values (e.g., `"obo"`, `"s2s
   ```
 - **Real example (PR #406, Comment 1)**: `isShowSecret = args.Contains("--show-secret")` in `Program.cs` would not skip the Graph preflight when the user passed `--show-secret=true`, accidentally triggering an online call on an offline-only command.
 
+### 30. Comment Essay — Multi-Line Rationale Block Where One Line Suffices
+
+Comments added in the diff must be crisp. A comment states *why* in one or two lines; it does not retell the change, restate what the code already says, or narrate design history (that belongs in the commit message / PR description).
+
+- **Pattern to catch**: any newly-added comment block — `//` inline or `///` XML `<summary>` — running more than ~2 lines of prose rationale; comments that paraphrase the next statement; commit-message-style narration ("Previously we did X, now we do Y because...") in source.
+- **Severity**: `low` — not a runtime defect, but the repo standard. Flag every instance so it does not accumulate.
+- **Check**: for each added comment, ask "does this say *why* in one line?" If it explains mechanism the code already shows, or runs to a paragraph, it is an essay. Trivial mechanical edits (a log-level change, a blank-line separator, a `catch { throw; }`) get **zero or one** line, never a rationale block.
+- **Fix**: cut to a single-line *why*; move the long-form reasoning to the commit message or PR body. Keep an issue/PR reference (`(issue #460)`) but drop the surrounding paragraph.
+- **Real example (issue #460)**: a 7-line `<summary>` and a 6-line inline `// Issue #460: ...` block both restated the inheritance rationale already captured in the commit; each was cut to one line plus the issue reference.
+
+**MANDATORY REPORTING RULE**: Whenever the diff adds or modifies any comment (`//` or `///` `<summary>`), you MUST emit a named finding for this check with one of two statuses: **`low` per instance** if essays are found (list every `file:line`), or **`info` — PASS** if all added comments are crisp. Do NOT silently omit it. A `low`-severity comment sweep is exactly what a multi-finding fan-out drops as noise — which is how 9 `<summary>` essays shipped past review in PR #461 and were caught only by Copilot. The check is cheap and per-instance; report it every time.
+
+### 31. CHANGELOG Entry Not Release-Note-Ready
+
+`CHANGELOG.md` `[Unreleased]` feeds straight into the nuget.org release notes, so each entry must be **one crisp sentence about the user-visible change** — readable by a package consumer who has never seen the code.
+
+- **Pattern to catch**: a new/edited `CHANGELOG.md` entry that names internal classes/methods (`BatchPermissionsOrchestrator`, `Phase 2a`), explains implementation mechanism (`retries via az rest`, `POST /appRoleAssignments`), restates rationale, or runs to multiple sentences of background.
+- **Severity**: `low`.
+- **Check**: read each CHANGELOG line in the diff. Would a consumer who only runs the CLI understand the *behavior* change from it, with no code knowledge? If it leans on internals or reads like a design note, it fails. Also verify the entry does not contradict another entry in the same `[Unreleased]` block (stale claims left behind by the change).
+- **Fix**: rewrite to the user-facing outcome in one sentence; keep the `(#NNN)` reference. Drop class/method names and mechanism. Correct any sibling entry the change makes stale.
+- **Real example (issue #460)**: a two-sentence entry naming `az rest` / PowerShell internals was cut to one outcome-focused sentence; a stale sibling line ("Phase 2a/2b always skipped for non-DW agents") that the change contradicted was corrected at the same time.
+
+### 32. Test Relies on a Shared Mock-Builder Default Instead of an Explicit Stub
+
+When a test reaches an assertion through a call it does not stub — depending instead on a shared mock/helper builder's *default* return (e.g. `BuildMockExecutor`, `BuildS2SGrantTestContext`) — the test is silently coupled to that helper's internals. A later change to the default flips the test's meaning with no local signal, and the test no longer documents what it actually exercises.
+
+- **Pattern to catch**: a test whose asserted path depends on an un-stubbed call that a *sibling* test in the same file stubs explicitly; a comment like "relies on the default ... behavior"; or an assertion that only holds because of an implicit helper return.
+- **Severity**: `medium` — non-deterministic coupling; the test can pass for the wrong reason after an unrelated helper edit.
+- **Check**: for each new/changed test, list the calls the asserted path depends on. Confirm each is stubbed in *this* test body — not merely defaulted by the builder, and not merely stubbed in a neighbouring test. If a sibling stubs the same call explicitly and this one does not, flag the inconsistency.
+- **Fix**: stub every call the assertion depends on explicitly in the test body, mirroring the sibling that already does so.
+- **Real example (PR #461, Copilot)**: `..._GraphAndAzRestBothFail_...` relied on `BuildMockExecutor`'s default for the initial `GET appRoleAssignments` while its sibling `..._GraphFailsAzRestSucceeds_...` stubbed it explicitly. The GET was added explicitly so the fallback's failure point is deterministic.
+
 ## Example Invocation
 
 When you receive a request like "Review PR #253", you should:
