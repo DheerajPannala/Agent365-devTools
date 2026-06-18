@@ -56,10 +56,11 @@ public static class DevelopMcpCommand
         var command = new Command(
             "evaluate",
             "Evaluate MCP server tool schema quality and generate an HTML report. " +
-            "Uses a locally installed coding agent (GitHub Copilot or Claude Code) to score semantic checks. " +
+            "Scores semantic checks with a locally installed coding agent (GitHub Copilot or Claude Code), " +
+            "or with your own Azure OpenAI deployment via --eval-engine azure-openai. " +
             "If no agent is detected, the command stops after writing the checklist so you can score it manually with your own LLM, " +
             "or pass --eval-engine none to skip agent probing entirely. " +
-            "Only run this against MCP servers you trust: the server's tool names and descriptions are sent to a locally running coding agent.");
+            "Only run this against MCP servers you trust: the server's tool names and descriptions are sent to the scoring engine.");
 
         // Use a required option (not a positional argument) for consistency with other
         // develop-mcp subcommands and Azure CLI conventions.
@@ -78,19 +79,26 @@ public static class DevelopMcpCommand
         var evalEngineOption = new Option<string>(
             "--eval-engine",
             getDefaultValue: () => "auto",
-            "Which local coding agent scores semantic checks. " +
-            "auto: try github-copilot then claude-code. " +
-            "github-copilot or claude-code: use only that engine. " +
+            "Which engine scores semantic checks. " +
+            "auto: try github-copilot then claude-code (local coding agents). " +
+            "github-copilot or claude-code: use only that local agent. " +
+            "azure-openai: use your own Azure OpenAI deployment as the judge via Entra ID (set A365_EVAL_AZURE_OPENAI_ENDPOINT and A365_EVAL_AZURE_OPENAI_DEPLOYMENT). " +
             "none: skip automatic scoring and expect the checklist to be pre-scored (bring-your-own-LLM).");
 
         var authTokenOption = new Option<string?>(
             "--auth-token",
             "Bearer token for MCP server authentication. Prefer the A365_MCP_AUTH_TOKEN environment variable; a token passed on the command line is visible to process listings (ps / Task Manager) and shell history.");
 
+        var reportNameOption = new Option<string?>(
+            "--report-name",
+            "Friendly name for the evaluated server, used for the output file names and the report's server name (e.g. \"salesforce\"). " +
+            "Defaults to a name derived from the server URL host. Set this when several servers share one gateway host so their reports don't collide.");
+
         command.AddOption(serverUrlOption);
         command.AddOption(outputDirOption);
         command.AddOption(evalEngineOption);
         command.AddOption(authTokenOption);
+        command.AddOption(reportNameOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
@@ -98,6 +106,7 @@ public static class DevelopMcpCommand
             var outputDir = context.ParseResult.GetValueForOption(outputDirOption)!;
             var evalEngine = context.ParseResult.GetValueForOption(evalEngineOption)!;
             var authToken = context.ParseResult.GetValueForOption(authTokenOption);
+            var reportName = context.ParseResult.GetValueForOption(reportNameOption);
             var ct = context.GetCancellationToken();
 
             // Secret handling: a token on the command line is visible to other processes
@@ -113,7 +122,7 @@ public static class DevelopMcpCommand
                 authToken = Environment.GetEnvironmentVariable("A365_MCP_AUTH_TOKEN");
             }
 
-            context.ExitCode = await pipelineService.RunAsync(serverUrl, outputDir, evalEngine, authToken, ct);
+            context.ExitCode = await pipelineService.RunAsync(serverUrl, outputDir, evalEngine, authToken, ct, reportName);
         });
 
         return command;

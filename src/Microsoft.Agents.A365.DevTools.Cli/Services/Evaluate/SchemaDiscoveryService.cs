@@ -26,6 +26,11 @@ internal sealed class SchemaDiscoveryService : ISchemaDiscoveryService, IDisposa
     private readonly ILogger<SchemaDiscoveryService> _logger;
     private readonly HttpClient _httpClient;
 
+    // MCP Streamable HTTP session id issued by the server on initialize. Servers that require
+    // a session (per spec) reject session-less follow-up requests with HTTP 400; we echo this
+    // header on every subsequent request. Reset per discovery (the service is a DI singleton).
+    private string? _mcpSessionId;
+
     public SchemaDiscoveryService(ILogger<SchemaDiscoveryService> logger, HttpMessageHandler? handler = null)
     {
         ArgumentNullException.ThrowIfNull(logger);
@@ -63,6 +68,7 @@ internal sealed class SchemaDiscoveryService : ISchemaDiscoveryService, IDisposa
         }
 
         _logger.LogDebug("Starting MCP schema discovery against {ServerUrl}", serverUrl);
+        _mcpSessionId = null; // reset any session id captured from a previous discovery
 
         try
         {
@@ -300,7 +306,20 @@ internal sealed class SchemaDiscoveryService : ISchemaDiscoveryService, IDisposa
             request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", authToken);
         }
 
+        // Echo the MCP session id (captured from initialize) so session-required servers accept
+        // follow-up requests; stateless servers simply ignore an unexpected header.
+        if (!string.IsNullOrEmpty(_mcpSessionId))
+        {
+            request.Headers.TryAddWithoutValidation("Mcp-Session-Id", _mcpSessionId);
+        }
+
         var response = await _httpClient.SendAsync(request, cancellationToken);
+
+        // Capture the session id from the first response (initialize) for reuse on later calls.
+        if (string.IsNullOrEmpty(_mcpSessionId) && response.Headers.TryGetValues("Mcp-Session-Id", out var sessionValues))
+        {
+            _mcpSessionId = sessionValues.FirstOrDefault();
+        }
 
         if (!response.IsSuccessStatusCode)
         {
