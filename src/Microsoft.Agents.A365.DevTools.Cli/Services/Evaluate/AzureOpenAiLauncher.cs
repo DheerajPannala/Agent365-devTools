@@ -97,9 +97,19 @@ internal sealed class AzureOpenAiLauncher : ICodingAgentLauncher
             return Task.FromResult(false);
         }
 
-        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out _))
+        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var endpointUri))
         {
             _logger.LogWarning("Azure OpenAI endpoint '{Endpoint}' (from {EndpointVar}) is not a valid absolute URL.",
+                endpoint, EvalModelConstants.AzureOpenAiEndpointEnvVar);
+            return Task.FromResult(false);
+        }
+
+        // The server's tool names and descriptions are sent to this endpoint for scoring, so
+        // require HTTPS to avoid transmitting them in plaintext. Real Azure OpenAI endpoints are
+        // HTTPS, so this also rejects an obviously misconfigured (e.g. http://) value early.
+        if (!string.Equals(endpointUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning("Azure OpenAI endpoint '{Endpoint}' (from {EndpointVar}) must use HTTPS.",
                 endpoint, EvalModelConstants.AzureOpenAiEndpointEnvVar);
             return Task.FromResult(false);
         }

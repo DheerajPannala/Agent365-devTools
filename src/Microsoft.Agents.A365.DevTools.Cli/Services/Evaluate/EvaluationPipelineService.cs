@@ -49,7 +49,7 @@ public sealed class EvaluationPipelineService : IEvaluationPipelineService
     }
 
     /// <inheritdoc />
-    public async Task<int> RunAsync(string serverUrl, string outputDir, string evalEngine, string? authToken, CancellationToken cancellationToken, string? reportName = null)
+    public async Task<int> RunAsync(string serverUrl, string outputDir, string evalEngine, string? authToken, CancellationToken cancellationToken)
     {
         try
         {
@@ -106,10 +106,7 @@ public sealed class EvaluationPipelineService : IEvaluationPipelineService
             // Run the derived name through the same sanitizer as the report filename so
             // any invalid-for-filesystem characters (?, *, <, etc.) from the fallback path
             // don't crash Path.Combine / File.Exists downstream.
-            // A friendly --report-name overrides the host-derived name for both the output
-            // file names and the report's displayed server name. Essential when many servers
-            // sit behind one gateway host (which would otherwise collide on the same name).
-            var serverName = !string.IsNullOrWhiteSpace(reportName) ? reportName! : DeriveServerName(serverUrl);
+            var serverName = DeriveServerName(serverUrl);
             var safeServerName = ReportGenerator.SanitizeFileName(serverName);
             var checklistPath = Path.Combine(outputDir, $"{safeServerName}_checklist.json");
 

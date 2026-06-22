@@ -32,10 +32,6 @@
     <PackageVersion Include="Azure.Identity" Version="1.13.2" />
     <PackageVersion Include="Azure.ResourceManager" Version="1.13.2" />
     <PackageVersion Include="Azure.ResourceManager.AppService" Version="1.2.0" />
-    <!-- OpenAI SDK (Responses API) — Azure OpenAI BYO-LLM judge for the evaluate command.
-         Pinned to 2.8.0: the last release whose transitive System.ClientModel (1.8.1) does NOT
-         force System.Text.Json / System.Diagnostics.DiagnosticSource up to 10.x. 2.9.0+ pull
-         System.ClientModel >= 1.9.0 which requires the 10.x runtime libraries. -->
     <PackageVersion Include="OpenAI" Version="2.8.0" />
     <!-- Microsoft Graph -->
     <PackageVersion Include="Microsoft.Graph" Version="5.36.0" />

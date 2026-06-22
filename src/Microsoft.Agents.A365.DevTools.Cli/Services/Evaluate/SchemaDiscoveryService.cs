@@ -26,11 +26,6 @@ internal sealed class SchemaDiscoveryService : ISchemaDiscoveryService, IDisposa
     private readonly ILogger<SchemaDiscoveryService> _logger;
     private readonly HttpClient _httpClient;
 
-    // MCP Streamable HTTP session id issued by the server on initialize. Servers that require
-    // a session (per spec) reject session-less follow-up requests with HTTP 400; we echo this
-    // header on every subsequent request. Reset per discovery (the service is a DI singleton).
-    private string? _mcpSessionId;
-
     public SchemaDiscoveryService(ILogger<SchemaDiscoveryService> logger, HttpMessageHandler? handler = null)
     {
         ArgumentNullException.ThrowIfNull(logger);
@@ -68,18 +63,22 @@ internal sealed class SchemaDiscoveryService : ISchemaDiscoveryService, IDisposa
         }
 
         _logger.LogDebug("Starting MCP schema discovery against {ServerUrl}", serverUrl);
-        _mcpSessionId = null; // reset any session id captured from a previous discovery
+
+        // The session id is scoped to this single discovery. The service is a DI singleton, so a
+        // shared mutable field would race if two discoveries ran concurrently — thread a per-call
+        // holder through the handshake instead.
+        var session = new McpSession();
 
         try
         {
             // Step 1: Initialize
-            await SendInitializeAsync(serverUrl, authToken, cancellationToken);
+            await SendInitializeAsync(serverUrl, authToken, session, cancellationToken);
 
             // Step 2: Send initialized notification
-            await SendInitializedNotificationAsync(serverUrl, authToken, cancellationToken);
+            await SendInitializedNotificationAsync(serverUrl, authToken, session, cancellationToken);
 
             // Step 3: List tools
-            var tools = await SendToolsListAsync(serverUrl, authToken, cancellationToken);
+            var tools = await SendToolsListAsync(serverUrl, authToken, session, cancellationToken);
 
             if (tools.Count == 0)
             {
@@ -145,7 +144,7 @@ internal sealed class SchemaDiscoveryService : ISchemaDiscoveryService, IDisposa
         }
     }
 
-    private async Task SendInitializeAsync(string serverUrl, string? authToken, CancellationToken cancellationToken)
+    private async Task SendInitializeAsync(string serverUrl, string? authToken, McpSession session, CancellationToken cancellationToken)
     {
         _logger.LogDebug("Sending MCP initialize request...");
 
@@ -166,7 +165,7 @@ internal sealed class SchemaDiscoveryService : ISchemaDiscoveryService, IDisposa
             id = 1
         });
 
-        using var response = await PostJsonRpcAsync(serverUrl, requestBody, authToken, cancellationToken);
+        using var response = await PostJsonRpcAsync(serverUrl, requestBody, authToken, session, cancellationToken);
         var responseBody = await ReadJsonResponseAsync(response, cancellationToken);
 
         // Validate JSON-RPC response
@@ -191,7 +190,7 @@ internal sealed class SchemaDiscoveryService : ISchemaDiscoveryService, IDisposa
         _logger.LogDebug("MCP initialize succeeded.");
     }
 
-    private async Task SendInitializedNotificationAsync(string serverUrl, string? authToken, CancellationToken cancellationToken)
+    private async Task SendInitializedNotificationAsync(string serverUrl, string? authToken, McpSession session, CancellationToken cancellationToken)
     {
         _logger.LogDebug("Sending MCP initialized notification...");
 
@@ -203,12 +202,12 @@ internal sealed class SchemaDiscoveryService : ISchemaDiscoveryService, IDisposa
         });
 
         // Notifications may not return a response body, but we still POST
-        using var response = await PostJsonRpcAsync(serverUrl, requestBody, authToken, cancellationToken);
+        using var response = await PostJsonRpcAsync(serverUrl, requestBody, authToken, session, cancellationToken);
 
         _logger.LogDebug("MCP initialized notification sent.");
     }
 
-    private async Task<List<ToolSchema>> SendToolsListAsync(string serverUrl, string? authToken, CancellationToken cancellationToken)
+    private async Task<List<ToolSchema>> SendToolsListAsync(string serverUrl, string? authToken, McpSession session, CancellationToken cancellationToken)
     {
         _logger.LogDebug("Sending MCP tools/list request...");
 
@@ -220,7 +219,7 @@ internal sealed class SchemaDiscoveryService : ISchemaDiscoveryService, IDisposa
             id = 2
         });
 
-        using var response = await PostJsonRpcAsync(serverUrl, requestBody, authToken, cancellationToken);
+        using var response = await PostJsonRpcAsync(serverUrl, requestBody, authToken, session, cancellationToken);
         var responseBody = await ReadJsonResponseAsync(response, cancellationToken);
 
         using var doc = JsonDocument.Parse(responseBody);
@@ -290,6 +289,7 @@ internal sealed class SchemaDiscoveryService : ISchemaDiscoveryService, IDisposa
         string serverUrl,
         string requestBody,
         string? authToken,
+        McpSession session,
         CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, serverUrl)
@@ -307,18 +307,30 @@ internal sealed class SchemaDiscoveryService : ISchemaDiscoveryService, IDisposa
         }
 
         // Echo the MCP session id (captured from initialize) so session-required servers accept
-        // follow-up requests; stateless servers simply ignore an unexpected header.
-        if (!string.IsNullOrEmpty(_mcpSessionId))
+        // follow-up requests; stateless servers simply ignore an unexpected header. The value was
+        // validated as visible ASCII at capture time, so Headers.Add (which validates) won't throw.
+        if (!string.IsNullOrEmpty(session.Id))
         {
-            request.Headers.TryAddWithoutValidation("Mcp-Session-Id", _mcpSessionId);
+            request.Headers.Add("Mcp-Session-Id", session.Id);
         }
 
         var response = await _httpClient.SendAsync(request, cancellationToken);
 
         // Capture the session id from the first response (initialize) for reuse on later calls.
-        if (string.IsNullOrEmpty(_mcpSessionId) && response.Headers.TryGetValues("Mcp-Session-Id", out var sessionValues))
+        // The id is server-controlled, so validate it before it is ever echoed back into a request
+        // header: reject anything outside visible ASCII (0x21-0x7E), which blocks CR/LF and other
+        // control characters that could otherwise enable header injection.
+        if (string.IsNullOrEmpty(session.Id) && response.Headers.TryGetValues("Mcp-Session-Id", out var sessionValues))
         {
-            _mcpSessionId = sessionValues.FirstOrDefault();
+            var candidate = sessionValues.FirstOrDefault();
+            if (!string.IsNullOrEmpty(candidate) && IsValidMcpSessionId(candidate))
+            {
+                session.Id = candidate;
+            }
+            else if (!string.IsNullOrEmpty(candidate))
+            {
+                _logger.LogWarning("Ignoring malformed Mcp-Session-Id from server (must be visible ASCII 0x21-0x7E).");
+            }
         }
 
         if (!response.IsSuccessStatusCode)
@@ -382,5 +394,35 @@ internal sealed class SchemaDiscoveryService : ISchemaDiscoveryService, IDisposa
         // Fallback: return raw body and let the JSON parser report the error
         _logger.LogWarning("Could not extract JSON from SSE response");
         return body;
+    }
+
+    /// <summary>
+    /// Validates a server-supplied MCP session id before it is echoed back in a request header.
+    /// Per the MCP spec the id must contain only visible ASCII characters (0x21-0x7E); enforcing
+    /// that here rejects CR/LF and other control characters that could enable header injection.
+    /// </summary>
+    private static bool IsValidMcpSessionId(string value)
+    {
+        foreach (var c in value)
+        {
+            if (c < '!' || c > '~')
+            {
+                return false;
+            }
+        }
+
+        return value.Length > 0;
+    }
+
+    /// <summary>
+    /// Per-discovery holder for the MCP Streamable HTTP session id issued by the server on
+    /// initialize. Scoped to a single <see cref="DiscoverToolsAsync"/> call so concurrent
+    /// discoveries on this singleton service never share or overwrite each other's session id.
+    /// Servers that require a session (per spec) reject session-less follow-up requests with
+    /// HTTP 400, so the id is echoed on every subsequent request once captured.
+    /// </summary>
+    private sealed class McpSession
+    {
+        public string? Id;
     }
 }

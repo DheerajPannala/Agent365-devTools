@@ -41,7 +41,7 @@ public class EvaluateCommandInvocationTests
     {
         var pipeline = Substitute.For<IEvaluationPipelineService>();
         pipeline
-            .RunAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
+            .RunAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(exitCode);
         return pipeline;
     }
@@ -99,8 +99,7 @@ public class EvaluateCommandInvocationTests
                 Arg.Any<string>(),
                 Arg.Any<string>(),
                 "env-token-xyz",
-                Arg.Any<CancellationToken>(),
-                Arg.Any<string?>());
+                Arg.Any<CancellationToken>());
         }
         finally
         {
@@ -197,8 +196,7 @@ public class EvaluateCommandInvocationTests
             "out",
             "claude-code",
             Arg.Any<string?>(),
-            Arg.Any<CancellationToken>(),
-            Arg.Any<string?>());
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -217,27 +215,6 @@ public class EvaluateCommandInvocationTests
             Arg.Any<string>(),
             "azure-openai",
             Arg.Any<string?>(),
-            Arg.Any<CancellationToken>(),
-            Arg.Any<string?>());
-    }
-
-    [Fact]
-    public async Task InvokeAsync_ReportNameFlag_ForwardsReportNameAsSixthArgument()
-    {
-        var pipeline = PipelineReturning(0);
-        var evaluate = GetEvaluateSubcommand(Substitute.For<ILogger>(), pipeline);
-        var parser = BuildFaithfulParser(evaluate);
-
-        var exitCode = await parser.InvokeAsync(
-            new[] { "--server-url", "http://localhost/mcp", "--eval-engine", "none", "--report-name", "salesforce" });
-
-        exitCode.Should().Be(0, because: "RunAsync returned 0, which the handler must propagate as the process exit code");
-        await pipeline.Received(1).RunAsync(
-            Arg.Any<string>(),
-            Arg.Any<string>(),
-            Arg.Any<string>(),
-            Arg.Any<string?>(),
-            Arg.Any<CancellationToken>(),
-            "salesforce");
+            Arg.Any<CancellationToken>());
     }
 }

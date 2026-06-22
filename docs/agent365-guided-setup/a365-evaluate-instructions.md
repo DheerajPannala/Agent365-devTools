@@ -143,7 +143,7 @@ No local coding agent is used — the `a365` CLI calls your Azure OpenAI deploym
 
 ```bash
 echo "$A365_EVAL_AZURE_OPENAI_ENDPOINT"     # e.g. https://<resource>.services.ai.azure.com/openai/v1
-echo "$A365_EVAL_AZURE_OPENAI_DEPLOYMENT"   # e.g. gpt-4.1
+echo "$A365_EVAL_AZURE_OPENAI_DEPLOYMENT"   # deployment name, e.g. gpt-5.4 (recommended)
 ```
 
 If either is empty, ask the user for their Azure OpenAI endpoint (include the `/openai/v1` path) and deployment name, then set both variables.
@@ -212,10 +212,10 @@ These settings can come from environment variables instead of (or alongside) the
 | `A365_EVAL_COPILOT_MODEL` | Override the GitHub Copilot model (exact model ID, e.g. `claude-haiku-4.5`). |
 | `A365_EVAL_CLAUDE_MODEL` | Override the Claude Code model (alias, e.g. `haiku`). |
 | `A365_EVAL_AZURE_OPENAI_ENDPOINT` | **Required for `--eval-engine azure-openai`.** Azure OpenAI endpoint, including the API path (e.g. `https://<resource>.services.ai.azure.com/openai/v1`). |
-| `A365_EVAL_AZURE_OPENAI_DEPLOYMENT` | **Required for `--eval-engine azure-openai`.** Deployment (model) name to score with (e.g. `gpt-4.1`). |
+| `A365_EVAL_AZURE_OPENAI_DEPLOYMENT` | **Required for `--eval-engine azure-openai`.** Deployment (model) name to score with. `gpt-5.4` is recommended — it is the model this engine was tested against. |
 | `A365_EVAL_AZURE_OPENAI_MAX_CONCURRENCY` | Parallel check-scoring calls for the `azure-openai` engine. Default `100`. |
 
-For the coding-agent engines the model defaults to Claude Haiku 4.5; override only to move to a newer model without waiting for a CLI release. The `azure-openai` engine uses whatever deployment you name in `A365_EVAL_AZURE_OPENAI_DEPLOYMENT` and authenticates with Entra ID only (no API key — see Step 2).
+For the coding-agent engines the model defaults to Claude Haiku 4.5; override only to move to a newer model without waiting for a CLI release. The `azure-openai` engine uses whatever deployment you name in `A365_EVAL_AZURE_OPENAI_DEPLOYMENT` (`gpt-5.4` recommended) and authenticates with Entra ID only (no API key — see Step 2).
 
 ### What you will see
 

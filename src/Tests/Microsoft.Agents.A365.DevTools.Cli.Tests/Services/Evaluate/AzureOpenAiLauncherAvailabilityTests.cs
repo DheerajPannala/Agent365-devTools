@@ -104,6 +104,20 @@ public class AzureOpenAiLauncherAvailabilityTests
     }
 
     [Fact]
+    public async Task IsAvailableAsync_PlaintextHttpEndpoint_ReturnsFalse()
+    {
+        // A valid absolute URL, but http:// — the engine transmits tool names and descriptions to
+        // this endpoint, so a plaintext scheme must be rejected rather than silently used.
+        await WithEnvAsync(endpoint: "http://x.openai.azure.com/openai/v1", deployment: "gpt-4.1", async () =>
+        {
+            var available = await CreateLauncher().IsAvailableAsync();
+
+            available.Should().BeFalse(
+                because: "tool metadata is sent to the endpoint, so a non-HTTPS endpoint must be treated as unavailable to avoid plaintext transmission");
+        });
+    }
+
+    [Fact]
     public async Task IsAvailableAsync_BothSetWithValidHttpsEndpoint_ReturnsTrue()
     {
         await WithEnvAsync(endpoint: "https://x.openai.azure.com/openai/v1", deployment: "gpt-4.1", async () =>

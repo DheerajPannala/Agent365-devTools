@@ -89,16 +89,10 @@ public static class DevelopMcpCommand
             "--auth-token",
             "Bearer token for MCP server authentication. Prefer the A365_MCP_AUTH_TOKEN environment variable; a token passed on the command line is visible to process listings (ps / Task Manager) and shell history.");
 
-        var reportNameOption = new Option<string?>(
-            "--report-name",
-            "Friendly name for the evaluated server, used for the output file names and the report's server name (e.g. \"salesforce\"). " +
-            "Defaults to a name derived from the server URL host. Set this when several servers share one gateway host so their reports don't collide.");
-
         command.AddOption(serverUrlOption);
         command.AddOption(outputDirOption);
         command.AddOption(evalEngineOption);
         command.AddOption(authTokenOption);
-        command.AddOption(reportNameOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
@@ -106,7 +100,6 @@ public static class DevelopMcpCommand
             var outputDir = context.ParseResult.GetValueForOption(outputDirOption)!;
             var evalEngine = context.ParseResult.GetValueForOption(evalEngineOption)!;
             var authToken = context.ParseResult.GetValueForOption(authTokenOption);
-            var reportName = context.ParseResult.GetValueForOption(reportNameOption);
             var ct = context.GetCancellationToken();
 
             // Secret handling: a token on the command line is visible to other processes
@@ -122,7 +115,7 @@ public static class DevelopMcpCommand
                 authToken = Environment.GetEnvironmentVariable("A365_MCP_AUTH_TOKEN");
             }
 
-            context.ExitCode = await pipelineService.RunAsync(serverUrl, outputDir, evalEngine, authToken, ct, reportName);
+            context.ExitCode = await pipelineService.RunAsync(serverUrl, outputDir, evalEngine, authToken, ct);
         });
 
         return command;

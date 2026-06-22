@@ -17,9 +17,6 @@ public interface IEvaluationPipelineService
     /// <param name="evalEngine">Coding agent engine name (auto, github-copilot, claude-code, none).</param>
     /// <param name="authToken">Optional bearer token for MCP server authentication.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <param name="reportName">Optional friendly name for the evaluated server. When provided it is
-    /// used (sanitized) for the output filenames and the report's server name instead of the value
-    /// derived from the URL host — needed when many servers share one gateway host.</param>
     /// <returns>Process exit code: 0 on success or an intentional bring-your-own-LLM stop; 1 when evaluation could not be performed as requested.</returns>
-    Task<int> RunAsync(string serverUrl, string outputDir, string evalEngine, string? authToken, CancellationToken cancellationToken, string? reportName = null);
+    Task<int> RunAsync(string serverUrl, string outputDir, string evalEngine, string? authToken, CancellationToken cancellationToken);
 }
