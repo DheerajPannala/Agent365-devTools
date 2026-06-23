@@ -194,7 +194,7 @@ public class BlueprintRegistrationRequirementCheck : RequirementCheck
     /// <summary>
     /// After core registration checks pass, verify inheritable permissions
     /// by comparing the static baseline + tooling manifest scopes against what is actually in Entra.
-    /// Missing or mismatched permissions produce a warning (not a failure).
+    /// Missing or mismatched permissions produce a failure.
     /// </summary>
     private async Task<RequirementCheckResult> BuildSuccessResult(
             Agent365Config config,
@@ -220,7 +220,7 @@ public class BlueprintRegistrationRequirementCheck : RequirementCheck
             }
 
             // Build expected permissions: static baseline + tooling manifest scopes
-            var expectedPermissions = BuildExpectedPermissions(config, logger);
+            var expectedPermissions = await BuildExpectedPermissionsAsync(config, logger, cancellationToken);
 
             List<(string ResourceAppId, bool ScopesAllAllowed, bool RolesAllAllowed)> inheritableEntries;
             try
@@ -368,8 +368,8 @@ public class BlueprintRegistrationRequirementCheck : RequirementCheck
     /// Builds the expected permission list from the static baseline plus tooling manifest scopes.
     /// Scopes for the same resource app ID are merged.
     /// </summary>
-    internal static List<(string ResourceAppId, string ResourceName, List<string> Scopes)> BuildExpectedPermissions(
-        Agent365Config config, ILogger logger)
+    internal static async Task<List<(string ResourceAppId, string ResourceName, List<string> Scopes)>> BuildExpectedPermissionsAsync(
+        Agent365Config config, ILogger logger, CancellationToken cancellationToken = default)
     {
         var merged = new Dictionary<string, (string ResourceName, HashSet<string> Scopes)>(StringComparer.OrdinalIgnoreCase);
 
@@ -389,15 +389,18 @@ public class BlueprintRegistrationRequirementCheck : RequirementCheck
         }
 
         // Add tooling manifest scopes (if manifest exists)
+        var projectPath = string.IsNullOrWhiteSpace(config.DeploymentProjectPath)
+            ? Directory.GetCurrentDirectory()
+            : config.DeploymentProjectPath;
         var manifestPath = Path.Combine(
-            config.DeploymentProjectPath ?? Directory.GetCurrentDirectory(),
+            projectPath,
             McpConstants.ToolingManifestFileName);
 
         if (File.Exists(manifestPath))
         {
             try
             {
-                var scopesByAudience = ManifestHelper.GetScopesByAudienceAsync(manifestPath).GetAwaiter().GetResult();
+                var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(manifestPath);
 
                 foreach (var (audienceAppId, scopes) in scopesByAudience)
                 {
@@ -413,7 +416,7 @@ public class BlueprintRegistrationRequirementCheck : RequirementCheck
                     }
                 }
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 logger.LogDebug(ex, "Failed to read tooling manifest at {Path}, skipping manifest scopes", manifestPath);
             }
