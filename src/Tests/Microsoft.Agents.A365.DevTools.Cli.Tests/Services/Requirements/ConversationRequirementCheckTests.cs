@@ -575,7 +575,7 @@ public class ConversationRequirementCheckTests : IDisposable
             FileName = OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/sh",
             Arguments = OperatingSystem.IsWindows()
                 ? (exitImmediately ? "/c exit 1" : "/c ping -n 60 127.0.0.1 >nul")
-                : (exitImmediately ? "-c 'exit 1'" : "-c 'sleep 60'"),
+                : (exitImmediately ? $"-c \"exit {exitCode}\"" : "-c \"sleep 60\""),
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
