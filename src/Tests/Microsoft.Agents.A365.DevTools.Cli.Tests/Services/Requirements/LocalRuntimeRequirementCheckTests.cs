@@ -247,6 +247,16 @@ public class LocalRuntimeRequirementCheckTests : IDisposable
     {
         // Arrange
         File.WriteAllText(Path.Combine(_tempDir, "test.csproj"), "<Project />");
+        var propsDir = Directory.CreateDirectory(Path.Combine(_tempDir, "Properties"));
+        File.WriteAllText(Path.Combine(propsDir.FullName, "launchSettings.json"), """
+            {
+              "profiles": {
+                "MyApp": {
+                  "applicationUrl": "http://localhost:3978"
+                }
+              }
+            }
+            """);
         var fakeProcess = CreateFakeProcess(exitImmediately: false);
         _processService.Start(Arg.Any<ProcessStartInfo>()).Returns(fakeProcess);
 
@@ -254,8 +264,7 @@ public class LocalRuntimeRequirementCheckTests : IDisposable
         var check = CreateCheck(handler);
         var config = new Agent365Config
         {
-            DeploymentProjectPath = _tempDir,
-            MessagingEndpoint = "https://localhost:3978/api/messages"
+            DeploymentProjectPath = _tempDir
         };
 
         // Act
