@@ -105,10 +105,9 @@ public class TelemetryRequirementCheck : RequirementCheck
         string[] logLines;
         try
         {
-            var allLines = File.ReadAllLines(_agentConsoleLogPath);
-            logLines = allLines.Length > MaxTelemetryLines
-                ? allLines[^MaxTelemetryLines..]
-                : allLines;
+            logLines = File.ReadLines(_agentConsoleLogPath)
+                .TakeLast(MaxTelemetryLines)
+                .ToArray();
         }
         catch (Exception ex)
         {

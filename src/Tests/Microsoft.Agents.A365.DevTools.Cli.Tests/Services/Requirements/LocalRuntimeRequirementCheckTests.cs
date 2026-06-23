@@ -21,6 +21,7 @@ public class LocalRuntimeRequirementCheckTests : IDisposable
     private readonly PlatformDetector _platformDetector;
     private readonly IProcessService _processService;
     private readonly string _tempDir;
+    private readonly List<IDisposable> _disposables = new();
 
     public LocalRuntimeRequirementCheckTests()
     {
@@ -33,6 +34,11 @@ public class LocalRuntimeRequirementCheckTests : IDisposable
 
     public void Dispose()
     {
+        foreach (var disposable in _disposables)
+        {
+            disposable.Dispose();
+        }
+
         if (Directory.Exists(_tempDir))
         {
             Directory.Delete(_tempDir, recursive: true);
@@ -42,7 +48,10 @@ public class LocalRuntimeRequirementCheckTests : IDisposable
     private LocalRuntimeRequirementCheck CreateCheck(HttpMessageHandler? handler = null)
     {
         var httpClient = handler is not null ? new HttpClient(handler) : new HttpClient();
-        return new LocalRuntimeRequirementCheck(_platformDetector, _processService, httpClient);
+        _disposables.Add(httpClient);
+        var check = new LocalRuntimeRequirementCheck(_platformDetector, _processService, httpClient);
+        _disposables.Add(check);
+        return check;
     }
 
     [Fact]

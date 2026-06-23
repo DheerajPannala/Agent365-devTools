@@ -429,11 +429,11 @@ public class ProjectBuildRequirementCheck : RequirementCheck
             return "uv";
         }
 
-        // Try to install uv via pip
-        logger.LogDebug("uv not found, attempting to install via pip");
+        // Try to install uv via pip (use python -m pip to target the active interpreter)
+        logger.LogDebug("uv not found, attempting to install via python -m pip");
 
         var installResult = await _commandExecutor.ExecuteAsync(
-            "pip", "install uv",
+            "python", "-m pip install uv",
             captureOutput: true,
             suppressErrorLogging: true,
             cancellationToken: cancellationToken);
