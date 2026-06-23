@@ -61,7 +61,7 @@ public class TelemetryRequirementCheck : RequirementCheck
     /// Activity.ParentSpanId, JSON quoted keys, YAML-style, and equals-sign separators.
     /// </summary>
     internal static readonly Regex ParentSpanPattern = new(
-        @"(?:parent[\._]?(?:span)?[\._]?(?:id|context))\s*[=:]\s*[""']?\s*(?:0x)?([0-9a-f]{2,})",
+        @"(?:parent[\._]?(?:span)?[\._]?(?:id|context))[""']?\s*[=:]\s*[""']?\s*(?:0x)?([0-9a-f]{2,})",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
 
