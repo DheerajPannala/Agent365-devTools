@@ -18,46 +18,9 @@ public class TelemetryRequirementCheck : RequirementCheck
     private readonly string? _agentConsoleLogPath;
 
     /// <summary>
-    /// Maximum number of telemetry-relevant log lines to analyze.
+    /// Maximum number of log lines to analyze from the end of the agent console output.
     /// </summary>
     internal const int MaxTelemetryLines = 200;
-
-    /// <summary>
-    /// Keywords that identify a log line as telemetry-related (console exporter output).
-    /// A line must contain at least one of these to be considered relevant.
-    /// </summary>
-    internal static readonly string[] TelemetryContextKeywords = new[]
-    {
-        // Console exporter span output fields (camelCase and snake_case variants)
-        "traceid:",
-        "trace_id:",
-        "spanid:",
-        "span_id:",
-        "tracestate:",
-        "parentspancontext:",
-        "parent_id:",
-        // OpenTelemetry SDK indicators
-        "opentelemetry",
-        "otel",
-        "telemetry.sdk.name",
-        "telemetry.sdk.version",
-        "consoleexporter",
-        "consolespanexporter",
-        // .NET Activity-based console exporter
-        "activity.traceid",
-        "activity.displayname",
-        "activity.spanid",
-        "activitysource",
-        // GenAI semantic convention attributes
-        "gen_ai.operation.name",
-        "gen_ai.request.model",
-        "gen_ai.usage.input_tokens",
-        "gen_ai.agent.name",
-        // Agent365 observability SDK
-        "a365observabilitysdk",
-        "agent365observability",
-        "agent365.observability"
-    };
 
     /// <summary>
     /// Required GenAI semantic convention operation names that must ALL appear in traces.
@@ -142,7 +105,10 @@ public class TelemetryRequirementCheck : RequirementCheck
         string[] logLines;
         try
         {
-            logLines = File.ReadAllLines(_agentConsoleLogPath);
+            var allLines = File.ReadAllLines(_agentConsoleLogPath);
+            logLines = allLines.Length > MaxTelemetryLines
+                ? allLines[^MaxTelemetryLines..]
+                : allLines;
         }
         catch (Exception ex)
         {
