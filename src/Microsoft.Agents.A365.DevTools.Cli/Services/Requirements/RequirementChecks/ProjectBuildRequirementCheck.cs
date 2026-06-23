@@ -149,7 +149,7 @@ public class ProjectBuildRequirementCheck : RequirementCheck
         return platform switch
         {
             ProjectPlatform.DotNet => ("dotnet",
-                $"build --no-restore /p:TreatWarningsAsErrors=true -fl -flp:logfile={buildLogFile};verbosity=normal"),
+                $"build --no-restore /p:TreatWarningsAsErrors=true -fl \"-flp:logfile={buildLogFile};verbosity=normal\""),
             ProjectPlatform.NodeJs => ("npm", "run build"),
             ProjectPlatform.Python => DetectPythonInstallCommand(projectPath) is ("uv", _)
                 ? (_resolvedUvCommand ?? "uv", "run python -m compileall -q .")
