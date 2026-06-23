@@ -42,6 +42,8 @@ public class ToolingManifestRequirementCheck : RequirementCheck
 
         if (!File.Exists(manifestPath))
         {
+            // ToolingManifest.json is optional — agents that do not use MCP tool servers
+            // will not have one. Returning Success here is intentional.
             return RequirementCheckResult.Success("ToolingManifest.json not present, skipping");
         }
 
