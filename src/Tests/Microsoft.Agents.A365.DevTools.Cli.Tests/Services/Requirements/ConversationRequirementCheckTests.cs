@@ -382,7 +382,7 @@ public class ConversationRequirementCheckTests : IDisposable
             healthStatusCode: HttpStatusCode.OK,
             messagesStatusCode: HttpStatusCode.OK);
         var fakeReceiver = new FakeBotCallbackReceiver(
-            new BotCallbackResponse("An internal error occurred while processing", "message"));
+            new BotCallbackResponse("An internal server error occurred while processing your request", "message"));
         var check = CreateCheck(handler, fakeReceiver);
         var config = new Agent365Config { DeploymentProjectPath = _tempDir };
 

@@ -18,11 +18,12 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementCh
 /// Validates that the agent can hold a multi-turn conversation by spawning the agent locally,
 /// waiting for readiness via /api/health, then POSTing Bot Framework Activity messages to /api/messages.
 /// </summary>
-public class ConversationRequirementCheck : RequirementCheck
+public class ConversationRequirementCheck : RequirementCheck, IDisposable
 {
     private readonly PlatformDetector _platformDetector;
     private readonly IProcessService _processService;
     private readonly HttpClient _httpClient;
+    private readonly bool _ownsHttpClient;
     private readonly IBotCallbackReceiver? _callbackReceiver;
     private readonly bool _launchPlayground;
     private readonly string? _resolvedUvCommand;
@@ -194,10 +195,20 @@ public class ConversationRequirementCheck : RequirementCheck
     {
         _platformDetector = platformDetector ?? throw new ArgumentNullException(nameof(platformDetector));
         _processService = processService ?? throw new ArgumentNullException(nameof(processService));
+        _ownsHttpClient = httpClient is null;
         _httpClient = httpClient ?? new HttpClient();
         _callbackReceiver = callbackReceiver;
         _launchPlayground = launchPlayground;
         _resolvedUvCommand = resolvedUvCommand;
+    }
+
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        if (_ownsHttpClient)
+        {
+            _httpClient.Dispose();
+        }
     }
 
     /// <inheritdoc />
@@ -1040,6 +1051,11 @@ public class ConversationRequirementCheck : RequirementCheck
             : response[..maxLength] + "...";
     }
 
+    /// <summary>
+    /// Detects error responses using structural signals (stack traces, HTTP error codes)
+    /// rather than keyword matching, to avoid false positives on legitimate agent replies
+    /// that mention words like "error" or "not found" in conversational context.
+    /// </summary>
     private static bool IsErrorResponse(string? responseText)
     {
         if (string.IsNullOrWhiteSpace(responseText))
@@ -1048,18 +1064,32 @@ public class ConversationRequirementCheck : RequirementCheck
         }
 
         var lower = responseText.ToLowerInvariant();
-        return lower.Contains("error") ||
-               lower.Contains("exception") ||
-               lower.Contains("failed") ||
-               lower.Contains("not found") ||
-               lower.Contains("unauthorized") ||
-               lower.Contains("forbidden") ||
-               lower.Contains("internal server error") ||
-               lower.Contains("unhandled") ||
-               lower.Contains("stack trace") ||
-               lower.Contains("timed out") ||
-               lower.Contains("timeout") ||
-               System.Text.RegularExpressions.Regex.IsMatch(lower, @"http\s*[45]\d{2}");
+
+        // Detect stack traces (e.g., "   at Namespace.Class.Method()")
+        if (System.Text.RegularExpressions.Regex.IsMatch(responseText, @"^\s+at\s+\S+\.\S+\(", System.Text.RegularExpressions.RegexOptions.Multiline))
+        {
+            return true;
+        }
+
+        // Detect unhandled exception headers (e.g., "System.InvalidOperationException:")
+        if (System.Text.RegularExpressions.Regex.IsMatch(responseText, @"\b\w+Exception\s*:", System.Text.RegularExpressions.RegexOptions.Multiline))
+        {
+            return true;
+        }
+
+        // Detect HTTP 4xx/5xx status codes
+        if (System.Text.RegularExpressions.Regex.IsMatch(lower, @"http\s*[45]\d{2}"))
+        {
+            return true;
+        }
+
+        // Detect "internal server error" as a specific, unambiguous signal
+        if (lower.Contains("internal server error"))
+        {
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>
