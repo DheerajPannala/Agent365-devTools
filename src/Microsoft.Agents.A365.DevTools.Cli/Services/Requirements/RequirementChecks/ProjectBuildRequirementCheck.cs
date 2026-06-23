@@ -295,8 +295,42 @@ public class ProjectBuildRequirementCheck : RequirementCheck
         {
             ProjectPlatform.Python => await InstallPythonDependenciesAsync(projectPath, logger, cancellationToken),
             ProjectPlatform.NodeJs => await InstallNodeDependenciesAsync(projectPath, logger, cancellationToken),
+            ProjectPlatform.DotNet => await RestoreDotNetDependenciesAsync(projectPath, logger, cancellationToken),
             _ => (null, null)
         };
+    }
+
+    /// <summary>
+    /// Runs dotnet restore so that the subsequent --no-restore build has a valid assets file.
+    /// </summary>
+    private async Task<(RequirementCheckResult? FailureResult, CommandResult? Output)> RestoreDotNetDependenciesAsync(
+        string projectPath,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        logger.LogDebug("Running dotnet restore in {Path}", projectPath);
+
+        var result = await _commandExecutor.ExecuteAsync(
+            "dotnet", "restore",
+            workingDirectory: projectPath,
+            captureOutput: true,
+            suppressErrorLogging: true,
+            cancellationToken: cancellationToken);
+
+        if (result.Success)
+        {
+            logger.LogDebug("dotnet restore completed successfully");
+            return (null, result);
+        }
+
+        var summary = ExtractBuildErrorSummary(result, ProjectPlatform.DotNet);
+
+        return (new RequirementCheckResult
+        {
+            Passed = false,
+            ErrorMessage = $"Package restore failed (.NET):\n{summary}",
+            ResolutionGuidance = "Run 'dotnet restore' manually and fix any dependency issues."
+        }, null);
     }
 
     /// <summary>

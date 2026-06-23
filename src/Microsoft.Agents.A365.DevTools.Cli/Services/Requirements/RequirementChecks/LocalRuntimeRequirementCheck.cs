@@ -367,6 +367,7 @@ public class LocalRuntimeRequirementCheck : RequirementCheck, IDisposable
                     {
                         stopwatch.Stop();
                         logger.LogDebug("Health endpoint returned {StatusCode}", (int)response.StatusCode);
+                        WriteBootLog(bootLogFile, outputLines, errorLines);
                         return new RequirementCheckResult
                         {
                             Passed = true,
@@ -375,7 +376,8 @@ public class LocalRuntimeRequirementCheck : RequirementCheck, IDisposable
                             {
                                 Port = port,
                                 BootMs = stopwatch.ElapsedMilliseconds,
-                                Platform = platform.ToString()
+                                Platform = platform.ToString(),
+                                BootLogFile = bootLogFile
                             }
                         };
                     }

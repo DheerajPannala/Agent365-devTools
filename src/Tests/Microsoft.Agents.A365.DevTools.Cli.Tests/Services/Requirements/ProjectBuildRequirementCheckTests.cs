@@ -112,6 +112,14 @@ public class ProjectBuildRequirementCheckTests : IDisposable
         var config = new Agent365Config { DeploymentProjectPath = _tempDir };
         _commandExecutor.ExecuteAsync(
             Arg.Is("dotnet"),
+            Arg.Is<string>(a => a.Contains("restore")),
+            Arg.Any<string>(),
+            Arg.Any<bool>(),
+            Arg.Any<bool>(),
+            Arg.Any<CancellationToken>())
+            .Returns(new CommandResult { ExitCode = 0, StandardOutput = "Restore succeeded." });
+        _commandExecutor.ExecuteAsync(
+            Arg.Is("dotnet"),
             Arg.Is<string>(a => a.Contains("TreatWarningsAsErrors")),
             Arg.Any<string>(),
             Arg.Any<bool>(),
@@ -135,7 +143,15 @@ public class ProjectBuildRequirementCheckTests : IDisposable
         var config = new Agent365Config { DeploymentProjectPath = _tempDir };
         _commandExecutor.ExecuteAsync(
             Arg.Is("dotnet"),
+            Arg.Is<string>(a => a.Contains("restore")),
             Arg.Any<string>(),
+            Arg.Any<bool>(),
+            Arg.Any<bool>(),
+            Arg.Any<CancellationToken>())
+            .Returns(new CommandResult { ExitCode = 0, StandardOutput = "Restore succeeded." });
+        _commandExecutor.ExecuteAsync(
+            Arg.Is("dotnet"),
+            Arg.Is<string>(a => a.Contains("TreatWarningsAsErrors")),
             Arg.Any<string>(),
             Arg.Any<bool>(),
             Arg.Any<bool>(),
@@ -162,7 +178,15 @@ public class ProjectBuildRequirementCheckTests : IDisposable
         var config = new Agent365Config { DeploymentProjectPath = _tempDir };
         _commandExecutor.ExecuteAsync(
             Arg.Is("dotnet"),
+            Arg.Is<string>(a => a.Contains("restore")),
             Arg.Any<string>(),
+            Arg.Any<bool>(),
+            Arg.Any<bool>(),
+            Arg.Any<CancellationToken>())
+            .Returns(new CommandResult { ExitCode = 0, StandardOutput = "Restore succeeded." });
+        _commandExecutor.ExecuteAsync(
+            Arg.Is("dotnet"),
+            Arg.Is<string>(a => a.Contains("TreatWarningsAsErrors")),
             Arg.Any<string>(),
             Arg.Any<bool>(),
             Arg.Any<bool>(),
@@ -264,8 +288,16 @@ public class ProjectBuildRequirementCheckTests : IDisposable
         File.WriteAllText(Path.Combine(_tempDir, "test.csproj"), "<Project />");
         var config = new Agent365Config { DeploymentProjectPath = _tempDir };
         _commandExecutor.ExecuteAsync(
+            Arg.Is("dotnet"),
+            Arg.Is<string>(a => a.Contains("restore")),
             Arg.Any<string>(),
-            Arg.Any<string>(),
+            Arg.Any<bool>(),
+            Arg.Any<bool>(),
+            Arg.Any<CancellationToken>())
+            .Returns(new CommandResult { ExitCode = 0, StandardOutput = "Restore succeeded." });
+        _commandExecutor.ExecuteAsync(
+            Arg.Is("dotnet"),
+            Arg.Is<string>(a => a.Contains("TreatWarningsAsErrors")),
             Arg.Any<string>(),
             Arg.Any<bool>(),
             Arg.Any<bool>(),

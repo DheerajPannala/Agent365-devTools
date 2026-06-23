@@ -132,7 +132,7 @@ public sealed class HttpListenerBotCallbackReceiver : IBotCallbackReceiver
             try
             {
                 var context = await _listener.GetContextAsync();
-                _ = HandleRequestAsync(context);
+                await HandleRequestAsync(context);
             }
             catch (HttpListenerException) when (cancellationToken.IsCancellationRequested)
             {

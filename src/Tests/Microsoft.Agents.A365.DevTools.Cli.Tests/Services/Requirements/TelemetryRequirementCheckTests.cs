@@ -332,8 +332,8 @@ public class TelemetryRequirementCheckTests : IDisposable
 
         var blocks = TelemetryRequirementCheck.SplitIntoSpanBlocks(lines);
 
-        // The lines before the first traceId won't be in any block
-        // instrumentationScope needs to be AFTER traceId or we need to handle this
+        // SplitIntoSpanBlocks carries lines before the first traceId into the first block,
+        // so instrumentationScope preceding traceId is preserved in block[0]
         blocks.Should().HaveCount(1);
     }
 
