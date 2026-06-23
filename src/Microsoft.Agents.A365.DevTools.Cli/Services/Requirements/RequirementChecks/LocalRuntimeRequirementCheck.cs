@@ -15,11 +15,12 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementCh
 /// Validates that the user's agent app starts locally and responds on a health endpoint.
 /// Spawns the app process, polls /api/health, captures stdout/stderr, then stops the process.
 /// </summary>
-public class LocalRuntimeRequirementCheck : RequirementCheck
+public class LocalRuntimeRequirementCheck : RequirementCheck, IDisposable
 {
     private readonly PlatformDetector _platformDetector;
     private readonly IProcessService _processService;
     private readonly HttpClient _httpClient;
+    private readonly bool _ownsHttpClient;
     private readonly string? _resolvedUvCommand;
 
     /// <summary>
@@ -55,8 +56,18 @@ public class LocalRuntimeRequirementCheck : RequirementCheck
     {
         _platformDetector = platformDetector ?? throw new ArgumentNullException(nameof(platformDetector));
         _processService = processService ?? throw new ArgumentNullException(nameof(processService));
+        _ownsHttpClient = httpClient is null;
         _httpClient = httpClient ?? new HttpClient();
         _resolvedUvCommand = resolvedUvCommand;
+    }
+
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        if (_ownsHttpClient)
+        {
+            _httpClient.Dispose();
+        }
     }
 
     /// <inheritdoc />
