@@ -221,7 +221,7 @@ public sealed class HttpListenerBotCallbackReceiver : IBotCallbackReceiver
             return false;
         }
 
-        return response.Type == "message" && !string.IsNullOrWhiteSpace(response.Text);
+        return string.Equals(response.Type, "message", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(response.Text);
     }
 
     public async ValueTask DisposeAsync()
