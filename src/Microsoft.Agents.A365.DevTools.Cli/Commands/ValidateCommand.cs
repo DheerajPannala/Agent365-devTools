@@ -24,11 +24,11 @@ public sealed class ValidateCommand
 {
     internal const string ReportFileName = "a365.validate.json";
 
-    // Status markers — use characters supported across Windows/macOS/Linux terminals
-    private const string PassMark = "\u221A";  // √ (square root, same as Windows renders for checkmark)
-    private const string FailMark = "X";
-    private const string WarnMark = "!";
-    private const string SkipMark = "-";
+    // Status markers — plain ASCII for consistent rendering across terminals and log files
+    private const string PassMark = "PASS";
+    private const string FailMark = "FAIL";
+    private const string WarnMark = "WARN";
+    private const string SkipMark = "SKIP";
 
     private static readonly JsonSerializerOptions ReportSerializerOptions = new()
     {
@@ -63,6 +63,7 @@ public sealed class ValidateCommand
             var configPath = Path.Combine(cwd, ConfigConstants.DefaultConfigFileName);
             var report = new ValidateReport();
             var launchPlayground = context.ParseResult.GetValueForOption(playgroundOption);
+            var disposableChecks = new List<IDisposable>();
 
             try
             {
@@ -110,6 +111,7 @@ public sealed class ValidateCommand
                 if (structuralPassed && buildPassed && requirementChecksOverride is null)
                 {
                     var bootChecks = BuildBootChecks(platformDetector, processService, resolvedUvCommand);
+                    disposableChecks.AddRange(bootChecks.OfType<IDisposable>());
                     if (bootChecks.Count > 0)
                     {
                         var bootResults = await RunChecksDetailedAsync(bootChecks, config, logger, ct);
@@ -132,6 +134,7 @@ public sealed class ValidateCommand
                 if (bootPassed && requirementChecksOverride is null)
                 {
                     var conversationChecks = BuildConversationChecks(platformDetector, processService, launchPlayground, resolvedUvCommand);
+                    disposableChecks.AddRange(conversationChecks.OfType<IDisposable>());
                     if (conversationChecks.Count > 0)
                     {
                         var conversationResults = await RunChecksDetailedAsync(conversationChecks, config, logger, ct);
@@ -198,6 +201,11 @@ public sealed class ValidateCommand
             finally
             {
                 await WriteReportAsync(report, cwd, logger);
+
+                foreach (var disposable in disposableChecks)
+                {
+                    disposable.Dispose();
+                }
             }
         });
 
