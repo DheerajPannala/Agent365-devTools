@@ -113,7 +113,7 @@ public class AddByoScopesExecutorTests
         result.Should().BeTrue(because: "dry run should succeed without making API calls");
 
         // Verify no tooling or Graph calls were made
-        await _mockToolingService.DidNotReceive().GetMcpServerAppIdsByNameAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await _mockToolingService.DidNotReceive().GetMcpServerAppIdByNameAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -139,8 +139,8 @@ public class AddByoScopesExecutorTests
         var instanceSpId = "00000000-0000-0000-0000-000000000003";
 
         _mockToolingService
-            .GetMcpServerAppIdsByNameAsync("ext_server1", Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult<McpServerAppIdsResponse?>(null));
+            .GetMcpServerAppIdByNameAsync("ext_server1", Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<McpServerAppIdResponse?>(null));
 
         var executor = new AddByoScopesExecutor(_mockLogger, _mockToolingService, _mockBlueprintService, _mockGraphApiService);
         var result = await executor.ExecuteAsync("ext_server1", null, instanceSpId, tenantId, false, CancellationToken.None);

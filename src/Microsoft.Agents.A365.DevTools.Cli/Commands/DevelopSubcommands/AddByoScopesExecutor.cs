@@ -126,15 +126,15 @@ internal sealed class AddByoScopesExecutor
             _logger.LogInformation("Processing server: {ServerName}...", serverName);
 
             // Step 1: Get the PPMI app ID from MCP Platform
-            var appIdsResponse = await _toolingService.GetMcpServerAppIdsByNameAsync(serverName, cancellationToken);
-            if (appIdsResponse == null || string.IsNullOrWhiteSpace(appIdsResponse.McpServerAppId))
+            var appIdResponse = await _toolingService.GetMcpServerAppIdByNameAsync(serverName, cancellationToken);
+            if (appIdResponse == null || string.IsNullOrWhiteSpace(appIdResponse.McpServerAppId))
             {
                 _logger.LogError("Failed to get app ID for server '{ServerName}'. Skipping.", serverName);
                 totalFailed += instanceSpIds.Count;
                 continue;
             }
 
-            var mcpServerAppId = appIdsResponse.McpServerAppId;
+            var mcpServerAppId = appIdResponse.McpServerAppId;
             _logger.LogDebug("MCP server '{ServerName}' PPMI app ID: {AppId}", serverName, mcpServerAppId);
 
             // Step 2: Resolve the PPMI app's service principal in the tenant

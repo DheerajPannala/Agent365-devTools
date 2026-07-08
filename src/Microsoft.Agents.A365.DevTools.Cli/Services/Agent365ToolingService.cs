@@ -853,7 +853,7 @@ public class Agent365ToolingService : IAgent365ToolingService
     }
 
     /// <inheritdoc />
-    public async Task<McpServerAppIdsResponse?> GetMcpServerAppIdsByNameAsync(
+    public async Task<McpServerAppIdResponse?> GetMcpServerAppIdByNameAsync(
         string serverName,
         CancellationToken cancellationToken = default)
     {
@@ -866,7 +866,7 @@ public class Agent365ToolingService : IAgent365ToolingService
 
             var correlationId = Internal.HttpClientFactory.GenerateCorrelationId();
 
-            _logger.LogDebug("Getting app IDs for MCP server {ServerName} (CorrelationId: {CorrelationId})", serverName, correlationId);
+            _logger.LogDebug("Getting app ID for MCP server {ServerName} (CorrelationId: {CorrelationId})", serverName, correlationId);
             _logger.LogDebug("Endpoint URL: {Url}", endpointUrl);
 
             var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
@@ -886,7 +886,7 @@ public class Agent365ToolingService : IAgent365ToolingService
 
             using var response = await httpClient.GetAsync(endpointUrl, cancellationToken);
 
-            var (isSuccess, responseContent) = await ValidateResponseAsync(response, "get MCP server app IDs", cancellationToken);
+            var (isSuccess, responseContent) = await ValidateResponseAsync(response, "get MCP server app ID", cancellationToken);
             if (!isSuccess)
             {
                 return null;
@@ -894,25 +894,25 @@ public class Agent365ToolingService : IAgent365ToolingService
 
             if (string.IsNullOrWhiteSpace(responseContent))
             {
-                _logger.LogError("Get MCP server app IDs returned empty response");
+                _logger.LogError("Get MCP server app ID returned empty response");
                 return null;
             }
 
-            var appIdsResponse = JsonDeserializationHelper.DeserializeWithDoubleSerialization<McpServerAppIdsResponse>(
+            var appIdResponse = JsonDeserializationHelper.DeserializeWithDoubleSerialization<McpServerAppIdResponse>(
                 responseContent, _logger);
 
-            if (appIdsResponse == null || string.IsNullOrWhiteSpace(appIdsResponse.McpServerAppId))
+            if (appIdResponse == null || string.IsNullOrWhiteSpace(appIdResponse.McpServerAppId))
             {
-                _logger.LogError("Get MCP server app IDs response is missing mcpServerAppId");
+                _logger.LogError("Get MCP server app ID response is missing mcpServerAppId");
                 return null;
             }
 
-            _logger.LogDebug("Successfully retrieved app ID {AppId} for MCP server {ServerName}", appIdsResponse.McpServerAppId, serverName);
-            return appIdsResponse;
+            _logger.LogDebug("Successfully retrieved app ID {AppId} for MCP server {ServerName}", appIdResponse.McpServerAppId, serverName);
+            return appIdResponse;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to get app IDs for MCP server {ServerName}", serverName);
+            _logger.LogError(ex, "Failed to get app ID for MCP server {ServerName}", serverName);
             return null;
         }
     }

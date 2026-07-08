@@ -104,7 +104,7 @@ public interface IAgent365ToolingService
     /// <param name="serverName">MCP server name</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Response containing the MCP server's PPMI app ID, or null on failure</returns>
-    Task<McpServerAppIdsResponse?> GetMcpServerAppIdsByNameAsync(
+    Task<McpServerAppIdResponse?> GetMcpServerAppIdByNameAsync(
         string serverName,
         CancellationToken cancellationToken = default);
 
