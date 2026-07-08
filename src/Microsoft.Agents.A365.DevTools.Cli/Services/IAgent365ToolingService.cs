@@ -99,7 +99,7 @@ public interface IAgent365ToolingService
 
     /// <summary>
     /// Retrieves the PPMI application (client) ID for a BYO MCP server by name.
-    /// Calls GET /agents/mcpServers/byName/{serverName}/appIds on the MCP Platform.
+    /// Calls GET /agents/mcpServers/appIds?serverName={serverName} on the MCP Platform.
     /// </summary>
     /// <param name="serverName">MCP server name</param>
     /// <param name="cancellationToken">Cancellation token</param>

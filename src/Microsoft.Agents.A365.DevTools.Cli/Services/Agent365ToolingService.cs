@@ -326,7 +326,7 @@ public class Agent365ToolingService : IAgent365ToolingService
     private string BuildGetMcpServerAppIdsUrl(string environment, string serverName)
     {
         var baseUrl = BuildAgent365ToolsBaseUrl(environment);
-        return $"{baseUrl}/agents/mcpServers/byName/{Uri.EscapeDataString(serverName)}/appIds";
+        return $"{baseUrl}/agents/mcpServers/appIds?serverName={Uri.EscapeDataString(serverName)}";
     }
 
     /// <inheritdoc />
