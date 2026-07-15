@@ -51,6 +51,9 @@ class Program
         var loggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory(logLevel);
         var startupLogger = loggerFactory.CreateLogger("Program");
 
+        // Held outside the try so it can be flushed in the finally block (CLI equivalent of OnStop).
+        ITelemetryService? telemetryService = null;
+
         try
         {
             // Log startup info (debug level - not shown to users by default on console, but always in log file)
@@ -64,10 +67,25 @@ class Program
             // Log version information
             var version = GetDisplayVersion();
 
+            // Local build marker: lets a developer confirm at a glance the installed CLI is a
+            // locally-built copy (with in-progress changes) rather than a published NuGet release.
+            startupLogger.LogInformation("Agent 365 CLI {Version} (local development build)", version);
+
             // Set up dependency injection
             var services = new ServiceCollection();
             ConfigureServices(services, logLevel, logFilePath);
             var serviceProvider = services.BuildServiceProvider();
+
+            // Initialize telemetry and record one event per invocation (minimal, best-effort).
+            telemetryService = serviceProvider.GetRequiredService<ITelemetryService>();
+            telemetryService.Initialize();
+            telemetryService.TrackEvent(
+                Constants.ConfigConstants.TelemetryCommandInvokedEvent,
+                new Dictionary<string, string>
+                {
+                    ["command"] = commandName,
+                    ["version"] = GetDisplayVersion(),
+                });
 
             // Notice and version checks run concurrently — worst-case startup delay is ~2s, not ~4s.
             using var noticeCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
@@ -283,6 +301,7 @@ class Program
         finally
         {
             Console.ResetColor();
+            telemetryService?.FlushAndShutdown();
             loggerFactory.Dispose();
         }
     }
@@ -324,6 +343,7 @@ class Program
         services.AddSingleton<IClientAppValidator, ClientAppValidator>();
         services.AddSingleton<IVersionCheckService, VersionCheckService>();
         services.AddSingleton<INoticeService, NoticeService>();
+        services.AddSingleton<ITelemetryService, TelemetryService>();
 
         // Add Microsoft Agent 365 Tooling Service with environment detection
         services.AddSingleton<IAgent365ToolingService>(provider =>

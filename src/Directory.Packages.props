@@ -34,6 +34,14 @@
     <PackageVersion Include="Azure.ResourceManager.AppService" Version="1.2.0" />
     <!-- Microsoft Graph -->
     <PackageVersion Include="Microsoft.Graph" Version="5.36.0" />
+    <!-- Telemetry (Aria / 1DS) - served from the mapped 'Aria' feed. NetStandard variant pairs with Bond.Core.NET 3.0.48 available on the feed. -->
+    <PackageVersion Include="Microsoft.Applications.Telemetry.Server-NetStandard" Version="1.1.255.10" />
+    <!-- Bond serialization assemblies (Microsoft.Bond.*) required by the Aria Server SDK; served from the mapped 'Aria' feed. -->
+    <PackageVersion Include="Bond.Core.NET" Version="3.0.48" />
+    <!-- Runtime dependency of the Aria Server SDK (MemoryCache); not in the .NET shared framework, so must be referenced explicitly on net8.0. -->
+    <PackageVersion Include="System.Runtime.Caching" Version="8.0.0" />
+    <!-- Runtime dependency of the Aria Server SDK (performance counters); not in the .NET shared framework. -->
+    <PackageVersion Include="System.Diagnostics.PerformanceCounter" Version="8.0.0" />
     <!-- Transitive pin: resolves NU1107 conflict between Microsoft.Extensions.Http 9.x (needs >= 9.0.8)
          and Microsoft.Kiota.Abstractions 1.7.2 (needs < 9.0.0). CentralPackageTransitivePinningEnabled
          allows this pin to override the Kiota upper bound. -->

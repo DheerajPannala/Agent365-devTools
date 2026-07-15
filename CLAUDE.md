@@ -60,7 +60,7 @@ public class MyTests { }
 ### Project Structure
 ```
 src/Microsoft.Agents.A365.DevTools.Cli/
-├── Commands/              # CLI command implementations (AsyncCommand<Settings>)
+├── Commands/              # CLI command implementations (System.CommandLine)
 ├── Services/              # Business logic (ConfigService, DeploymentService, etc.)
 ├── Models/                # Data models (Agent365Config, etc.)
 ├── Constants/             # Centralized error codes, messages, auth constants
@@ -71,14 +71,14 @@ src/Microsoft.Agents.A365.DevTools.Cli/
 
 ### Key Patterns
 
-1. **Command Pattern:** Commands inherit from `AsyncCommand<Settings>`, return exit codes (0=success)
+1. **Command Pattern:** Each command exposes a static `CreateCommand(...)` factory that builds a `System.CommandLine` `Command` and runs logic in `SetHandler`; handlers set `context.ExitCode` explicitly (0=success, 1=failure). No `AsyncCommand`/Spectre base class is used.
 
 2. **Configuration Architecture (Two-file design):**
    - `a365.config.json` - Static, user-managed, version-controlled
    - `a365.generated.config.json` - Dynamic, CLI-managed, gitignored
    - `Agent365Config` model has init-only (static) and get/set (dynamic) properties
 
-3. **Platform Builder Strategy:** `IPlatformBuilder` interface with implementations for DotNet, Node, Python
+3. **Platform Detection:** `PlatformDetector` service auto-detects the project type (.NET/Node/Python) via `Detect(project)`
 
 4. **Dependency Injection:** ServiceCollection in Program.cs with singletons for stateless services
 

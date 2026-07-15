@@ -26,6 +26,27 @@ public static class ConfigConstants
     public const string ExampleConfigFileName = "a365.config.example.json";
 
     /// <summary>
+    /// Aria (1DS) ingestion/app token used to send CLI usage telemetry.
+    /// Override at runtime with the A365_TELEMETRY_TOKEN environment variable.
+    /// </summary>
+    public const string TelemetryAppToken = "e5b3cefd4afb48499d3c4fa797533c30-0b37f418-3335-41ba-85b2-af58801f6034-6887";
+
+    /// <summary>
+    /// Environment variable that overrides the compiled Aria app token.
+    /// </summary>
+    public const string TelemetryTokenEnvVar = "A365_TELEMETRY_TOKEN";
+
+    /// <summary>
+    /// Environment variable that disables telemetry when set to a truthy value (1/true).
+    /// </summary>
+    public const string TelemetryOptOutEnvVar = "A365_TELEMETRY_OPTOUT";
+
+    /// <summary>
+    /// Event name emitted once per CLI invocation.
+    /// </summary>
+    public const string TelemetryCommandInvokedEvent = "cli_command_invoked";
+
+    /// <summary>
     /// Microsoft Learn documentation URL for Agent 365 CLI setup and usage
     /// </summary>
     public const string Agent365CliDocumentationUrl = "https://learn.microsoft.com/microsoft-agent-365/developer/agent-365-cli";

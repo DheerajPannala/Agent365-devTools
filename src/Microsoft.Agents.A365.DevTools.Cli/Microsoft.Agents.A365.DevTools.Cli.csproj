@@ -48,6 +48,13 @@
 
     <!-- Microsoft Graph -->
     <PackageReference Include="Microsoft.Graph" />
+
+    <!-- Telemetry (Aria / 1DS) -->
+    <PackageReference Include="Microsoft.Applications.Telemetry.Server-NetStandard" />
+    <!-- Bond ships only .NET Framework assemblies; loaded on net8.0 via the compat fallback (NU1701 expected). -->
+    <PackageReference Include="Bond.Core.NET" NoWarn="NU1701" />
+    <PackageReference Include="System.Runtime.Caching" />
+    <PackageReference Include="System.Diagnostics.PerformanceCounter" />
   </ItemGroup>
 
   <ItemGroup>
