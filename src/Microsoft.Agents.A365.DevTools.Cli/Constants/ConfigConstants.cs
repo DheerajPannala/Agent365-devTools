@@ -29,9 +29,8 @@ public static class ConfigConstants
     /// Aria (1DS) ingestion/app token used to send CLI usage telemetry.
     /// Override at runtime with the A365_TELEMETRY_TOKEN environment variable.
     /// </summary>
-    public const string TelemetryAppToken = "e5b3cefd4afb48499d3c4fa797533c30-0b37f418-3335-41ba-85b2-af58801f6034-6887";
-
-    /// <summary>
+    public const string TelemetryAppToken = ""; // TODO: Add Aria token here
+    
     /// Environment variable that overrides the compiled Aria app token.
     /// </summary>
     public const string TelemetryTokenEnvVar = "A365_TELEMETRY_TOKEN";
