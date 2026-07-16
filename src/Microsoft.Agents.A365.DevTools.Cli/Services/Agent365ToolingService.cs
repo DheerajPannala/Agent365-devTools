@@ -553,7 +553,7 @@ public class Agent365ToolingService : IAgent365ToolingService
     }
 
     /// <inheritdoc />
-    public async Task<bool> UnpublishServerAsync(
+    public async Task<UnpublishMcpServerResponse?> UnpublishServerAsync(
         string environmentId,
         string serverName,
         CancellationToken cancellationToken = default)
@@ -587,7 +587,7 @@ public class Agent365ToolingService : IAgent365ToolingService
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire authentication token");
-                return false;
+                return null;
             }
 
             // Create authenticated HTTP client
@@ -600,19 +600,37 @@ public class Agent365ToolingService : IAgent365ToolingService
             using var response = await httpClient.DeleteAsync(endpointUrl, cancellationToken);
 
             // Validate response using common helper
-            var (isSuccess, _) = await ValidateResponseAsync(response, "unpublish MCP server", cancellationToken);
+            var (isSuccess, responseContent) = await ValidateResponseAsync(response, "unpublish MCP server", cancellationToken);
             if (!isSuccess)
             {
-                return false;
+                return null;
             }
 
             _logger.LogDebug("Successfully unpublished MCP server");
-            return true;
+
+            // Allow for an empty/null body: the operation still succeeded, there is just nothing to clean up.
+            if (string.IsNullOrWhiteSpace(responseContent))
+            {
+                return new UnpublishMcpServerResponse
+                {
+                    Status = "Success",
+                    Message = $"Successfully unpublished {serverName}"
+                };
+            }
+
+            var unpublishResponse = JsonDeserializationHelper.DeserializeWithDoubleSerialization<UnpublishMcpServerResponse>(
+                responseContent, _logger);
+
+            return unpublishResponse ?? new UnpublishMcpServerResponse
+            {
+                Status = "Success",
+                Message = $"Successfully unpublished {serverName}"
+            };
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to unpublish MCP server {ServerName} from environment {EnvId}", serverName, environmentId);
-            return false;
+            return null;
         }
     }
 

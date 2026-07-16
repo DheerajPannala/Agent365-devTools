@@ -604,6 +604,30 @@ public class GraphApiService
     }
 
     /// <summary>
+    /// Resolves an application's object ID from its appId (client ID). Returns null when the application
+    /// cannot be found (for example it was already deleted). Virtual to allow substitution in unit tests.
+    /// </summary>
+    public virtual async Task<string?> GetAppObjectIdByAppIdAsync(
+        string tenantId, string appId, CancellationToken ct = default)
+    {
+        // Validate GUID format to prevent OData injection.
+        if (!Guid.TryParse(appId, out var validGuid))
+        {
+            _logger.LogWarning("Invalid appId format for application lookup: {AppId}", appId);
+            return null;
+        }
+
+        using var doc = await GraphGetAsync(
+            tenantId,
+            $"/v1.0/applications?$filter=appId eq '{validGuid:D}'&$select=id&$top=1",
+            ct);
+        if (doc == null) return null;
+        if (!doc.RootElement.TryGetProperty("value", out var value) || value.GetArrayLength() == 0) return null;
+        if (!value[0].TryGetProperty("id", out var id)) return null;
+        return id.GetString();
+    }
+
+    /// <summary>
     /// Looks up the display name of a service principal by its application ID.
     /// Returns null if the service principal is not found.
     /// Virtual to allow substitution in unit tests using NSubstitute.

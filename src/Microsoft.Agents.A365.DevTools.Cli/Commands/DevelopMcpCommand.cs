@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Evaluate;
@@ -37,7 +38,7 @@ public static class DevelopMcpCommand
         developMcpCommand.AddCommand(CreateListEnvironmentsSubcommand(logger, toolingService));
         developMcpCommand.AddCommand(CreateListServersSubcommand(logger, toolingService));
         developMcpCommand.AddCommand(CreatePublishSubcommand(logger, toolingService, graphApiService));
-        developMcpCommand.AddCommand(CreateUnpublishSubcommand(logger, toolingService));
+        developMcpCommand.AddCommand(CreateUnpublishSubcommand(logger, toolingService, graphApiService));
         developMcpCommand.AddCommand(CreateRegisterExternalMcpServerSubcommand(logger, toolingService, graphApiService));
 
         if (evaluationPipelineService is not null)
@@ -424,7 +425,8 @@ public static class DevelopMcpCommand
     /// </summary>
     private static Command CreateUnpublishSubcommand(
         ILogger logger, 
-        IAgent365ToolingService toolingService)
+        IAgent365ToolingService toolingService,
+        GraphApiService? graphApiService)
     {
         var command = new Command("unpublish", "Unpublish an MCP server from a Dataverse environment");
 
@@ -517,9 +519,9 @@ public static class DevelopMcpCommand
             }
 
             // Call service
-            var success = await toolingService.UnpublishServerAsync(envId, serverName);
+            var response = await toolingService.UnpublishServerAsync(envId, serverName);
 
-            if (!success)
+            if (response is null || !response.IsSuccess)
             {
                 logger.LogError("Failed to unpublish MCP server {ServerName} from environment {EnvId}", serverName, envId);
                 return;
@@ -527,9 +529,97 @@ public static class DevelopMcpCommand
 
             logger.LogInformation("Successfully unpublished MCP server {ServerName} from environment {EnvId}", serverName, envId);
 
+            // The platform removes the tenant publication but cannot delete Entra app registrations in the
+            // customer tenant, so it returns any it created for this server for the CLI to clean up here.
+            await CleanupEntraAppsAsync(logger, graphApiService, response.AppIdsToCleanup, serverName);
+
         }, envIdOption, serverNameOption, dryRunOption, verboseOption);
 
         return command;
+    }
+
+    /// <summary>
+    /// Best-effort deletion of the Entra app registrations the platform returned from an unpublish. Each
+    /// delete is independent so one failure does not skip the rest, and every failure is logged with the
+    /// app id so the user can remove it manually. When Graph is unavailable or the tenant cannot be
+    /// detected, the app ids are logged for manual cleanup instead.
+    /// </summary>
+    private static async Task CleanupEntraAppsAsync(
+        ILogger logger,
+        GraphApiService? graphApiService,
+        IReadOnlyList<McpServerAppEntry>? appsToCleanup,
+        string serverName)
+    {
+        if (appsToCleanup is null || appsToCleanup.Count == 0)
+        {
+            return;
+        }
+
+        if (graphApiService is null)
+        {
+            foreach (var app in appsToCleanup)
+            {
+                logger.LogWarning(
+                    "Graph API is unavailable; cannot delete Entra app '{AppName}' (appId {AppId}) for server '{ServerName}'. Delete it manually in the Azure portal.",
+                    app.AppName ?? "<unknown>", app.AppId ?? "<unknown>", serverName);
+            }
+
+            return;
+        }
+
+        var tenantId = await TenantDetectionHelper.DetectTenantIdAsync(null, logger);
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            foreach (var app in appsToCleanup)
+            {
+                logger.LogWarning(
+                    "Could not detect the tenant; cannot delete Entra app '{AppName}' (appId {AppId}) for server '{ServerName}'. Delete it manually in the Azure portal.",
+                    app.AppName ?? "<unknown>", app.AppId ?? "<unknown>", serverName);
+            }
+
+            return;
+        }
+
+        logger.LogInformation("Cleaning up Entra app registrations for unpublished server '{ServerName}'...", serverName);
+
+        foreach (var app in appsToCleanup)
+        {
+            if (string.IsNullOrWhiteSpace(app.AppId))
+            {
+                continue;
+            }
+
+            try
+            {
+                var objectId = await graphApiService.GetAppObjectIdByAppIdAsync(tenantId, app.AppId);
+                if (string.IsNullOrWhiteSpace(objectId))
+                {
+                    logger.LogWarning(
+                        "Entra app '{AppName}' (appId {AppId}) was not found; it may already be deleted.",
+                        app.AppName ?? "<unknown>", app.AppId);
+                    continue;
+                }
+
+                var deleted = await graphApiService.DeleteEntraAppAsync(tenantId, objectId);
+                if (deleted)
+                {
+                    logger.LogInformation("Deleted Entra app '{AppName}' (appId {AppId})", app.AppName ?? "<unknown>", app.AppId);
+                }
+                else
+                {
+                    logger.LogError(
+                        "Failed to delete Entra app '{AppName}' (appId {AppId}). Delete it manually in the Azure portal.",
+                        app.AppName ?? "<unknown>", app.AppId);
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(
+                    ex,
+                    "Exception deleting Entra app '{AppName}' (appId {AppId}). Delete it manually in the Azure portal.",
+                    app.AppName ?? "<unknown>", app.AppId);
+            }
+        }
     }
 
     /// <summary>
