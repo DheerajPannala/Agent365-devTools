@@ -530,8 +530,9 @@ public static class DevelopMcpCommand
             logger.LogInformation("Successfully unpublished MCP server {ServerName} from environment {EnvId}", serverName, envId);
 
             // The platform removes the tenant publication but cannot delete Entra app registrations in the
-            // customer tenant, so it returns any it created for this server for the CLI to clean up here.
-            await CleanupEntraAppsAsync(logger, graphApiService, response.AppIdsToCleanup, serverName);
+            // customer tenant, so it returns any it created for this server (in ManualCleanupRequired) for
+            // the CLI to clean up here.
+            await CleanupEntraAppsAsync(logger, graphApiService, response.ManualCleanupRequired?.Apps, serverName);
 
         }, envIdOption, serverNameOption, dryRunOption, verboseOption);
 

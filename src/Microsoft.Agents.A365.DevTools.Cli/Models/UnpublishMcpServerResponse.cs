@@ -1,7 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 using System;
-using System.Collections.Generic;
 using System.Text.Json.Serialization;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Models;
@@ -24,13 +23,12 @@ public class UnpublishMcpServerResponse
     public string? Message { get; set; }
 
     /// <summary>
-    /// Entra app registrations the platform created for this server that the CLI must delete: the
-    /// platform's identity cannot delete app registrations in the customer tenant, so it returns them
-    /// here for the CLI to clean up. Currently the server's Public Clients app; empty/null when the
-    /// server had none (for example OOB Dataverse servers or legacy records).
+    /// Resources the platform could not delete in the customer tenant and that the caller must remove
+    /// manually (with a reason and the affected app registrations). Null when there is nothing for the
+    /// caller to clean up (for example OOB Dataverse servers or legacy records).
     /// </summary>
-    [JsonPropertyName("AppIdsToCleanup")]
-    public List<McpServerAppEntry>? AppIdsToCleanup { get; set; }
+    [JsonPropertyName("ManualCleanupRequired")]
+    public McpServerManualCleanup? ManualCleanupRequired { get; set; }
 
     /// <summary>
     /// Whether the operation was successful.

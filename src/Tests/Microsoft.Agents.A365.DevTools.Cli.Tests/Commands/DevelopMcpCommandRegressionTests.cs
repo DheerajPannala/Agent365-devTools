@@ -386,9 +386,13 @@ public class DevelopMcpCommandRegressionTests
             .Returns(new UnpublishMcpServerResponse
             {
                 Status = "Success",
-                AppIdsToCleanup = new List<McpServerAppEntry>
+                ManualCleanupRequired = new McpServerManualCleanup
                 {
-                    new() { AppName = $"{testServerName}-PublicClients", AppId = "11111111-1111-1111-1111-111111111111" },
+                    Reason = "The platform cannot delete Entra app registrations in your tenant.",
+                    Apps = new List<McpServerAppEntry>
+                    {
+                        new() { AppName = $"{testServerName}-PublicClients", AppId = "11111111-1111-1111-1111-111111111111" },
+                    },
                 },
             });
 
