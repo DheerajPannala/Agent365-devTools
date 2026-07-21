@@ -2270,42 +2270,6 @@ public class GraphApiService
     }
 
     /// <summary>
-    /// Looks up an application by its appId (clientId) and returns the object ID.
-    /// Retries up to 6 times with a 10-second delay to handle replication lag for newly created apps.
-    /// </summary>
-    public virtual async Task<string?> GetAppObjectIdByClientIdAsync(
-        string tenantId, string clientId, CancellationToken ct = default)
-    {
-        const int maxAttempts = 6;
-        const int delayMs = 10_000;
-
-        for (var attempt = 0; attempt < maxAttempts; attempt++)
-        {
-            var response = await GraphGetWithResponseAsync(tenantId, $"/v1.0/applications?$filter=appId eq '{clientId}'&$select=id", ct: ct);
-            if (response.IsSuccess && response.Json != null)
-            {
-                var values = response.Json.RootElement.GetProperty("value");
-                if (values.GetArrayLength() > 0)
-                {
-                    return values[0].GetProperty("id").GetString();
-                }
-            }
-            else
-            {
-                _logger.LogDebug("App {ClientId} query failed: {Code} {Reason} (attempt {Attempt}/{Max})", clientId, response.StatusCode, response.ReasonPhrase, attempt + 1, maxAttempts);
-            }
-
-            if (attempt < maxAttempts - 1)
-            {
-                _logger.LogDebug("App {ClientId} not found yet, retrying in {Delay}s (attempt {Attempt}/{Max})...", clientId, delayMs / 1000, attempt + 1, maxAttempts);
-                await Task.Delay(delayMs, ct);
-            }
-        }
-
-        return null;
-    }
-
-    /// <summary>
     /// Finds an application's object ID by its display name.
     /// </summary>
     public virtual async Task<string?> GetAppObjectIdByDisplayNameAsync(

@@ -354,9 +354,10 @@ public class DevelopMcpCommandRegressionTests
     }
 
     [Fact]
-    public async Task UnpublishCommand_WhenServiceReturnsNull_DoesNotThrow()
+    public async Task UnpublishCommand_WhenServiceReturnsNull_ReturnsNonZeroExitCode()
     {
-        // A null response means the unpublish failed; the command must log and return cleanly.
+        // A null response means the unpublish failed; the command must log the failure and surface it to
+        // the shell as a non-zero exit code (not swallow it as success).
         var testEnvId = "test-environment-789";
         var testServerName = "msdyn_TestServer";
 
@@ -370,7 +371,7 @@ public class DevelopMcpCommandRegressionTests
             "-s", testServerName
         });
 
-        result.Should().Be(0);
+        result.Should().Be(1);
         await _mockToolingService.Received(1).UnpublishServerAsync(testEnvId, testServerName);
     }
 

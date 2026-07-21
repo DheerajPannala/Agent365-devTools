@@ -621,11 +621,22 @@ public class Agent365ToolingService : IAgent365ToolingService
             var unpublishResponse = JsonDeserializationHelper.DeserializeWithDoubleSerialization<UnpublishMcpServerResponse>(
                 responseContent, _logger);
 
-            return unpublishResponse ?? new UnpublishMcpServerResponse
+            // A non-empty body that fails to parse is not fatal to the unpublish itself, but it means we
+            // may have lost the ManualCleanupRequired block - so warn the user to check for leftovers rather
+            // than silently returning a clean success.
+            if (unpublishResponse is null)
             {
-                Status = "Success",
-                Message = $"Successfully unpublished {serverName}"
-            };
+                _logger.LogWarning(
+                    "The unpublish for {ServerName} succeeded but its response body could not be parsed, so any Entra app registrations the platform asked to be cleaned up may have been missed. Review the server's app registrations in the Azure portal and delete any leftovers manually.",
+                    serverName);
+                return new UnpublishMcpServerResponse
+                {
+                    Status = "Success",
+                    Message = $"Successfully unpublished {serverName}"
+                };
+            }
+
+            return unpublishResponse;
         }
         catch (Exception ex)
         {

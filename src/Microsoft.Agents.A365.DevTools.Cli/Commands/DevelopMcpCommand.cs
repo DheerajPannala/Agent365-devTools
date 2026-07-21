@@ -456,9 +456,12 @@ public static class DevelopMcpCommand
         );
         command.AddOption(verboseOption);
 
-        command.SetHandler(async (envId, serverName, dryRun, verbose) =>
+        command.SetHandler(async (context) =>
         {
-            _ = verbose;
+            var envId = context.ParseResult.GetValueForOption(envIdOption);
+            var serverName = context.ParseResult.GetValueForOption(serverNameOption);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+
             try
             {
                 // Validate and prompt for missing required arguments with security checks
@@ -468,6 +471,7 @@ public static class DevelopMcpCommand
                     if (string.IsNullOrWhiteSpace(envId))
                     {
                         logger.LogError("Environment ID is required");
+                        context.ExitCode = 1;
                         return;
                     }
                 }
@@ -478,6 +482,7 @@ public static class DevelopMcpCommand
                     if (envId == null)
                     {
                         logger.LogError("Invalid environment ID format");
+                        context.ExitCode = 1;
                         return;
                     }
                 }
@@ -488,6 +493,7 @@ public static class DevelopMcpCommand
                     if (string.IsNullOrWhiteSpace(serverName))
                     {
                         logger.LogError("Server name is required");
+                        context.ExitCode = 1;
                         return;
                     }
                 }
@@ -498,6 +504,7 @@ public static class DevelopMcpCommand
                     if (serverName == null)
                     {
                         logger.LogError("Invalid server name format");
+                        context.ExitCode = 1;
                         return;
                     }
                 }
@@ -505,6 +512,7 @@ public static class DevelopMcpCommand
             catch (ArgumentException ex)
             {
                 logger.LogError("Input validation failed: {Message}", ex.Message);
+                context.ExitCode = 1;
                 return;
             }
 
@@ -524,6 +532,7 @@ public static class DevelopMcpCommand
             if (response is null || !response.IsSuccess)
             {
                 logger.LogError("Failed to unpublish MCP server {ServerName} from environment {EnvId}", serverName, envId);
+                context.ExitCode = 1;
                 return;
             }
 
@@ -533,8 +542,7 @@ public static class DevelopMcpCommand
             // customer tenant, so it returns any it created for this server (in ManualCleanupRequired) for
             // the CLI to clean up here.
             await CleanupEntraAppsAsync(logger, graphApiService, response.ManualCleanupRequired?.Apps, serverName);
-
-        }, envIdOption, serverNameOption, dryRunOption, verboseOption);
+        });
 
         return command;
     }
@@ -587,6 +595,9 @@ public static class DevelopMcpCommand
         {
             if (string.IsNullOrWhiteSpace(app.AppId))
             {
+                logger.LogWarning(
+                    "The platform returned Entra app '{AppName}' for cleanup without an appId, so it cannot be deleted automatically. If it exists, delete it manually in the Azure portal.",
+                    app.AppName ?? "<unknown>");
                 continue;
             }
 
