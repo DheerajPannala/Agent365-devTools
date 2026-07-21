@@ -608,26 +608,19 @@ public class Agent365ToolingService : IAgent365ToolingService
 
             _logger.LogDebug("Successfully unpublished MCP server");
 
-            // Allow for an empty/null body: the operation still succeeded, there is just nothing to clean up.
-            if (string.IsNullOrWhiteSpace(responseContent))
-            {
-                return new UnpublishMcpServerResponse
-                {
-                    Status = "Success",
-                    Message = $"Successfully unpublished {serverName}"
-                };
-            }
+            var unpublishResponse = string.IsNullOrWhiteSpace(responseContent)
+                ? null
+                : JsonDeserializationHelper.DeserializeWithDoubleSerialization<UnpublishMcpServerResponse>(
+                    responseContent, _logger);
 
-            var unpublishResponse = JsonDeserializationHelper.DeserializeWithDoubleSerialization<UnpublishMcpServerResponse>(
-                responseContent, _logger);
-
-            // A non-empty body that fails to parse is not fatal to the unpublish itself, but it means we
-            // may have lost the ManualCleanupRequired block - so warn the user to check for leftovers rather
-            // than silently returning a clean success.
+            // The platform always returns a JSON body on a successful unpublish, so an empty body or one
+            // that fails to parse means we could not read the response - including any ManualCleanupRequired
+            // block. The unpublish itself still succeeded, so warn the user to check for leftover Entra app
+            // registrations rather than silently returning a clean success.
             if (unpublishResponse is null)
             {
                 _logger.LogWarning(
-                    "The unpublish for {ServerName} succeeded but its response body could not be parsed, so any Entra app registrations the platform asked to be cleaned up may have been missed. Review the server's app registrations in the Azure portal and delete any leftovers manually.",
+                    "The unpublish for {ServerName} succeeded but its response body was empty or could not be parsed, so any Entra app registrations the platform asked to be cleaned up may have been missed. Review the server's app registrations in the Azure portal and delete any leftovers manually.",
                     serverName);
                 return new UnpublishMcpServerResponse
                 {

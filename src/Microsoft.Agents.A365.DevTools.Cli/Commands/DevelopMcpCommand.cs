@@ -7,6 +7,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Evaluate;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
+using System.Linq;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 
@@ -551,7 +552,7 @@ public static class DevelopMcpCommand
     /// Best-effort deletion of the Entra app registrations the platform returned from an unpublish. Each
     /// delete is independent so one failure does not skip the rest, and every failure is logged with the
     /// app id so the user can remove it manually. When Graph is unavailable or the tenant cannot be
-    /// detected, the app ids are logged for manual cleanup instead.
+    /// detected, the apps are listed once for manual cleanup instead.
     /// </summary>
     private static async Task CleanupEntraAppsAsync(
         ILogger logger,
@@ -564,28 +565,19 @@ public static class DevelopMcpCommand
             return;
         }
 
-        if (graphApiService is null)
+        // Tenant detection shells out to az, so only attempt it when Graph is available.
+        var tenantId = graphApiService is null
+            ? null
+            : await TenantDetectionHelper.DetectTenantIdAsync(null, logger);
+
+        if (graphApiService is null || string.IsNullOrWhiteSpace(tenantId))
         {
-            foreach (var app in appsToCleanup)
-            {
-                logger.LogWarning(
-                    "Graph API is unavailable; cannot delete Entra app '{AppName}' (appId {AppId}) for server '{ServerName}'. Delete it manually in the Azure portal.",
-                    app.AppName ?? "<unknown>", app.AppId ?? "<unknown>", serverName);
-            }
-
-            return;
-        }
-
-        var tenantId = await TenantDetectionHelper.DetectTenantIdAsync(null, logger);
-        if (string.IsNullOrWhiteSpace(tenantId))
-        {
-            foreach (var app in appsToCleanup)
-            {
-                logger.LogWarning(
-                    "Could not detect the tenant; cannot delete Entra app '{AppName}' (appId {AppId}) for server '{ServerName}'. Delete it manually in the Azure portal.",
-                    app.AppName ?? "<unknown>", app.AppId ?? "<unknown>", serverName);
-            }
-
+            var appList = string.Join(
+                Environment.NewLine,
+                appsToCleanup.Select(app => $"  - {app.AppName ?? "<unknown>"} (appId {app.AppId ?? "<unknown>"})"));
+            logger.LogWarning(
+                "The platform could not automatically delete {Count} Entra app registration(s) for server '{ServerName}'. Delete them manually in the Azure portal:{NewLine}{AppList}",
+                appsToCleanup.Count, serverName, Environment.NewLine, appList);
             return;
         }
 
