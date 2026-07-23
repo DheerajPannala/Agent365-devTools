@@ -105,6 +105,7 @@ internal static class RequirementsSubcommand
                         return;
                     }
 
+                    graphApiService.ConfigureCloudEndpoints(configForChecks);
                     var configPassed = await RunRequirementChecksAsync(configChecks, configForChecks, logger, ct: ct);
                     allPassed = allPassed && configPassed;
                 }

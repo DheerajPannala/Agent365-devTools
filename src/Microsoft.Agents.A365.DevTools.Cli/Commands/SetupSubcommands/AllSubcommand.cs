@@ -407,8 +407,7 @@ internal static class AllSubcommand
                 }
 
                 // Build SetupContext for non-DW blueprint and delegate to orchestrator.
-                if (!string.IsNullOrWhiteSpace(nonDwConfig.ClientAppId))
-                    graphApiService.CustomClientAppId = nonDwConfig.ClientAppId;
+                graphApiService.ConfigureCloudEndpoints(nonDwConfig);
 
                 var nonDwGeneratedConfigPath = Path.Combine(
                     config.DirectoryName ?? Environment.CurrentDirectory,
@@ -526,12 +525,7 @@ internal static class AllSubcommand
                     }
                 }
 
-                // Configure GraphApiService with custom client app ID if available
-                // This ensures inheritable permissions operations use the validated custom app
-                if (!string.IsNullOrWhiteSpace(setupConfig.ClientAppId))
-                {
-                    graphApiService.CustomClientAppId = setupConfig.ClientAppId;
-                }
+                graphApiService.ConfigureCloudEndpoints(setupConfig);
 
                 setupResults.PrerequisitesSkipped = skipRequirements;
                 setupResults.InfrastructureSkipped = true;
@@ -627,7 +621,7 @@ internal static class AllSubcommand
                 // Display verification URLs and setup summary
                 await SetupHelpers.DisplayVerificationInfoAsync(config, logger);
                 logger.LogInformation("");
-                SetupHelpers.DisplaySetupSummary(setupResults, logger);
+                SetupHelpers.DisplaySetupSummary(setupResults, logger, graphApiService.GraphBaseUrl);
             }
             catch (Agent365Exception ex)
             {
@@ -635,7 +629,7 @@ internal static class AllSubcommand
                 ExceptionHandler.HandleAgent365Exception(ex, logFilePath: logFilePath);
                 setupResults.Errors.Add(ex.Message);
                 logger.LogInformation("");
-                SetupHelpers.DisplaySetupSummary(setupResults, logger);
+                SetupHelpers.DisplaySetupSummary(setupResults, logger, graphApiService.GraphBaseUrl);
                 ExceptionHandler.ExitWithCleanup(1);
             }
             catch (FileNotFoundException fnfEx)
@@ -643,7 +637,7 @@ internal static class AllSubcommand
                 logger.LogError("Setup failed: {Message}", fnfEx.Message);
                 setupResults.Errors.Add(fnfEx.Message);
                 logger.LogInformation("");
-                SetupHelpers.DisplaySetupSummary(setupResults, logger);
+                SetupHelpers.DisplaySetupSummary(setupResults, logger, graphApiService.GraphBaseUrl);
                 ExceptionHandler.ExitWithCleanup(1);
             }
             catch (OperationCanceledException)
@@ -657,7 +651,7 @@ internal static class AllSubcommand
                 logger.LogError(ex, "Setup failed: {Message}", ex.Message);
                 setupResults.Errors.Add(ex.Message);
                 logger.LogInformation("");
-                SetupHelpers.DisplaySetupSummary(setupResults, logger);
+                SetupHelpers.DisplaySetupSummary(setupResults, logger, graphApiService.GraphBaseUrl);
                 throw;
             }
         });

@@ -196,11 +196,7 @@ internal static class PermissionsSubcommand
                 return;
             }
 
-            // Configure GraphApiService with custom client app ID if available
-            if (!string.IsNullOrWhiteSpace(setupConfig.ClientAppId))
-            {
-                graphApiService.CustomClientAppId = setupConfig.ClientAppId;
-            }
+            graphApiService.ConfigureCloudEndpoints(setupConfig);
 
             // Verify system requirements (PowerShell modules are required for Graph operations).
             // Skipped in dry-run: PowerShellModulesRequirementCheck can auto-install modules,
@@ -329,11 +325,7 @@ internal static class PermissionsSubcommand
                 return;
             }
 
-            // Configure GraphApiService with custom client app ID if available
-            if (!string.IsNullOrWhiteSpace(setupConfig.ClientAppId))
-            {
-                graphApiService.CustomClientAppId = setupConfig.ClientAppId;
-            }
+            graphApiService.ConfigureCloudEndpoints(setupConfig);
 
             // Verify system requirements (PowerShell modules are required for Graph operations).
             // Skipped in dry-run: PowerShellModulesRequirementCheck can auto-install modules,
@@ -513,11 +505,7 @@ internal static class PermissionsSubcommand
                 return;
             }
 
-            // Configure GraphApiService with custom client app ID if available
-            if (!string.IsNullOrWhiteSpace(setupConfig.ClientAppId))
-            {
-                graphApiService.CustomClientAppId = setupConfig.ClientAppId;
-            }
+            graphApiService.ConfigureCloudEndpoints(setupConfig);
 
             // Verify system requirements (PowerShell modules are required for Graph operations).
             // Skipped in dry-run: PowerShellModulesRequirementCheck can auto-install modules,
@@ -587,9 +575,12 @@ internal static class PermissionsSubcommand
                         StringComparison.OrdinalIgnoreCase);
                     if (isGraph)
                     {
-                        var fullyQualified = scopes.Select(s => $"{AuthenticationConstants.MicrosoftGraphResourceUri}/{s}");
+                        var graphBaseUrl = ConfigConstants.GetGraphBaseUrl(setupConfig.Environment, setupConfig.GraphBaseUrl);
+                        var graphResourceUri = GraphApiConstants.GetResource(graphBaseUrl).TrimEnd('/');
+                        var authorityHost = ConfigConstants.GetAuthorityHost(setupConfig.Environment, setupConfig.AuthorityHost);
+                        var fullyQualified = scopes.Select(s => $"{graphResourceUri}/{s}");
                         var url = SetupHelpers.BuildAdminConsentUrl(
-                            setupConfig.TenantId, setupConfig.AgentBlueprintId!, fullyQualified);
+                            setupConfig.TenantId, setupConfig.AgentBlueprintId!, fullyQualified, authorityHost);
                         LogAdminConsentNextSteps(logger, url);
                     }
                     else

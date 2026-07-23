@@ -140,14 +140,17 @@ public class Agent365Config
     public string MessagingEndpoint { get; init; } = string.Empty;
 
     /// <summary>
-    /// Base URL for Microsoft Graph API.
-    /// Override this to target sovereign / government clouds:
-    ///   GCC High / DoD : "https://graph.microsoft.us"
-    ///   China (21Vianet): "https://microsoftgraph.chinacloudapi.cn"
-    /// Defaults to "https://graph.microsoft.com" when omitted.
+    /// Base URL for Microsoft Graph API. Defaults to the commercial cloud endpoint.
     /// </summary>
     [JsonPropertyName("graphBaseUrl")]
     public string GraphBaseUrl { get; init; } = Constants.GraphApiConstants.BaseUrl;
+
+    /// <summary>
+    /// OAuth authority host for the selected cloud. Pair this with <see cref="GraphBaseUrl"/>
+    /// so authentication and Graph data-plane calls target the same environment.
+    /// </summary>
+    [JsonPropertyName("authorityHost")]
+    public string? AuthorityHost { get; init; }
 
     #endregion
 

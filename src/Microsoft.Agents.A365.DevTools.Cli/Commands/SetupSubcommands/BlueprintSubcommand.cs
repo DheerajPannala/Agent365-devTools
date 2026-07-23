@@ -111,7 +111,6 @@ internal static class BlueprintSubcommand
     }
     private const int ClientSecretValidationRetryDelayMs = 1000;
     private const int ClientSecretValidationTimeoutSeconds = 10;
-    private const string MicrosoftLoginOAuthTokenEndpoint = "https://login.microsoftonline.com/{0}/oauth2/v2.0/token";
 
     public static Command CreateCommand(
         ILogger logger,
@@ -354,14 +353,7 @@ internal static class BlueprintSubcommand
 
             // Configure GraphApiService with custom client app ID if available
             // This ensures inheritable permissions operations use the validated custom app
-            if (!string.IsNullOrWhiteSpace(setupConfig.ClientAppId))
-            {
-                graphApiService.CustomClientAppId = setupConfig.ClientAppId;
-            }
-
-            // Wire the sovereign/government cloud base URL from config so all Graph calls
-            // target the correct national cloud endpoint (commercial by default).
-            graphApiService.GraphBaseUrl = setupConfig.GraphBaseUrl;
+            graphApiService.ConfigureCloudEndpoints(setupConfig);
 
             // Handle --update-endpoint flag (--m365 is inferred for endpoint operations).
             if (!string.IsNullOrWhiteSpace(updateEndpoint))
@@ -560,13 +552,12 @@ internal static class BlueprintSubcommand
         // Create required services.
         // Pass the caller's logger so consent messages appear in the correct indent scope.
         var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
+        var delegatedGraphService = new GraphApiService(
+            cleanLoggerFactory.CreateLogger<GraphApiService>(), executor,
+            new AuthenticationService(cleanLoggerFactory.CreateLogger<AuthenticationService>()));
+        delegatedGraphService.ConfigureCloudEndpoints(setupConfig);
         var delegatedConsentService = new DelegatedConsentService(
-            logger,
-            new GraphApiService(
-                cleanLoggerFactory.CreateLogger<GraphApiService>(),
-                executor,
-                new AuthenticationService(cleanLoggerFactory.CreateLogger<AuthenticationService>()),
-                graphBaseUrl: setupConfig.GraphBaseUrl));
+            logger, delegatedGraphService);
 
         // Use DI-provided GraphApiService which already has MicrosoftGraphTokenProvider configured
         var graphService = graphApiService;
@@ -681,6 +672,7 @@ internal static class BlueprintSubcommand
                 setupConfig.AgentBlueprintClientSecret,
                 setupConfig.AgentBlueprintClientSecretProtected,
                 setupConfig.TenantId!,
+                graphService,
                 logger,
                 cancellationToken);
 
@@ -776,7 +768,7 @@ internal static class BlueprintSubcommand
                 GraphInheritablePermissionsError = blueprintResult.graphInheritablePermissionsError,
                 FederatedCredentialError = blueprintResult.ficError,
             };
-            SetupHelpers.DisplaySetupSummary(summary, logger);
+            SetupHelpers.DisplaySetupSummary(summary, logger, graphApiService.GraphBaseUrl);
         }
 
         return new BlueprintCreationResult
@@ -953,7 +945,8 @@ internal static class BlueprintSubcommand
                 {
                     using var spHttpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(spToken);
                     var spRetryHelper = new Services.Helpers.RetryHelper(logger);
-                    existingServicePrincipalId = await CreateServicePrincipalAsync(existingAppId, spHttpClient, spRetryHelper, logger, ct);
+                    existingServicePrincipalId = await CreateServicePrincipalAsync(
+                        existingAppId, spHttpClient, spRetryHelper, logger, graphApiService.GraphBaseUrl, ct);
                     if (!string.IsNullOrWhiteSpace(existingServicePrincipalId))
                     {
                         requiresPersistence = true;
@@ -976,7 +969,7 @@ internal static class BlueprintSubcommand
                             {
                                 if (spAuthDenied) return true;
                                 using var checkResp = await spHttpClient.GetAsync(
-                                    $"{Constants.GraphApiConstants.BaseUrl}/v1.0/oauth2PermissionGrants?$filter=clientId eq '{existingServicePrincipalId}'", token);
+                                    $"{graphApiService.GraphBaseUrl}/v1.0/oauth2PermissionGrants?$filter=clientId eq '{existingServicePrincipalId}'", token);
                                 if (checkResp.StatusCode == System.Net.HttpStatusCode.Forbidden)
                                 {
                                     spAuthDenied = true;
@@ -1090,7 +1083,7 @@ internal static class BlueprintSubcommand
                 {
                     sponsorUserId = me.Id;
                     logger.LogInformation("Current user: {DisplayName} <{UPN}>", me.DisplayName, me.UserPrincipalName);
-                    logger.LogDebug("Sponsor: {BaseUrl}/v1.0/users/{UserId}", Constants.GraphApiConstants.BaseUrl, sponsorUserId);
+                    logger.LogDebug("Sponsor: {BaseUrl}/v1.0/users/{UserId}", graphApiService.GraphBaseUrl, sponsorUserId);
                 }
             }
             catch (Exception ex)
@@ -1114,11 +1107,11 @@ internal static class BlueprintSubcommand
             {
                 appManifest["sponsors@odata.bind"] = new JsonArray
                 {
-                    $"{Constants.GraphApiConstants.BaseUrl}/v1.0/users/{sponsorUserId}"
+                    $"{graphApiService.GraphBaseUrl}/v1.0/users/{sponsorUserId}"
                 };
                 appManifest["owners@odata.bind"] = new JsonArray
                 {
-                    $"{Constants.GraphApiConstants.BaseUrl}/v1.0/users/{sponsorUserId}"
+                    $"{graphApiService.GraphBaseUrl}/v1.0/users/{sponsorUserId}"
                 };
             }
 
@@ -1134,7 +1127,9 @@ internal static class BlueprintSubcommand
             logger.LogDebug("Acquiring blueprint httpClient token — scope: AgentIdentityBlueprintPrincipal.Create, loginHint: {LoginHint}", blueprintLoginHint ?? "(none)");
             var graphToken = await AcquireMsalGraphTokenAsync(tenantId, setupConfig.ClientAppId, logger, ct,
                 scope: AuthenticationConstants.AgentIdentityBlueprintPrincipalCreateScope,
-                loginHint: blueprintLoginHint);
+                loginHint: blueprintLoginHint,
+                graphBaseUrl: graphApiService.GraphBaseUrl,
+                authorityHost: graphApiService.AuthorityHost);
             if (string.IsNullOrEmpty(graphToken))
             {
                 logger.LogError("Failed to extract access token from Graph client");
@@ -1146,7 +1141,7 @@ internal static class BlueprintSubcommand
             httpClient.DefaultRequestHeaders.Add("ConsistencyLevel", "eventual");
             httpClient.DefaultRequestHeaders.Add("OData-Version", "4.0"); // Required for @odata.type
 
-            var createAppUrl = $"{Constants.GraphApiConstants.BaseUrl}/beta/applications";
+            var createAppUrl = $"{graphApiService.GraphBaseUrl}/beta/applications";
 
             logger.LogInformation("Display Name: {DisplayName}", displayName);
             if (!string.IsNullOrEmpty(sponsorUserId))
@@ -1239,7 +1234,7 @@ internal static class BlueprintSubcommand
             var appAvailable = await retryHelper.ExecuteWithRetryAsync(
                 async ct =>
                 {
-                    var checkResp = await httpClient.GetAsync($"{Constants.GraphApiConstants.BaseUrl}/v1.0/applications/{objectId}", ct);
+                    var checkResp = await httpClient.GetAsync($"{graphApiService.GraphBaseUrl}/v1.0/applications/{objectId}", ct);
                     return checkResp.IsSuccessStatusCode;
                 },
                 result => !result,
@@ -1258,7 +1253,7 @@ internal static class BlueprintSubcommand
             // Update application with identifier URI and expose the access_agent_as_user scope
             // so callers can acquire tokens scoped to this blueprint via the OBO flow.
             var identifierUri = $"api://{appId}";
-            var patchAppUrl = $"{Constants.GraphApiConstants.BaseUrl}/v1.0/applications/{objectId}";
+            var patchAppUrl = $"{graphApiService.GraphBaseUrl}/v1.0/applications/{objectId}";
             var patchBody = new JsonObject
             {
                 ["identifierUris"] = new JsonArray { identifierUri },
@@ -1354,7 +1349,8 @@ internal static class BlueprintSubcommand
             // objectId. Retry with backoff until the appId index is replicated.
             logger.LogInformation("");
             logger.LogInformation("Creating blueprint service principal...");
-            string? servicePrincipalId = await CreateServicePrincipalAsync(appId, httpClient, retryHelper, logger, ct);
+            string? servicePrincipalId = await CreateServicePrincipalAsync(
+                appId, httpClient, retryHelper, logger, graphApiService.GraphBaseUrl, ct);
             if (string.IsNullOrWhiteSpace(servicePrincipalId))
             {
                 logger.LogError("Service principal creation failed after retries");
@@ -1465,9 +1461,10 @@ internal static class BlueprintSubcommand
         HttpClient httpClient,
         Services.Helpers.RetryHelper retryHelper,
         ILogger logger,
+        string graphBaseUrl,
         CancellationToken ct)
     {
-        var createSpUrl = $"{Constants.GraphApiConstants.BaseUrl}/v1.0/serviceprincipals/graph.agentIdentityBlueprintPrincipal";
+        var createSpUrl = $"{graphBaseUrl}/v1.0/serviceprincipals/graph.agentIdentityBlueprintPrincipal";
         var spManifestJson = new JsonObject { ["appId"] = appId }.ToJsonString();
         int forbiddenRetries = 0;
         const int maxForbiddenRetries = 3;
@@ -1598,7 +1595,7 @@ internal static class BlueprintSubcommand
                 {
                     var ownerPayload = new Dictionary<string, string>
                     {
-                        ["@odata.id"] = $"{Constants.GraphApiConstants.BaseUrl}/v1.0/users/{currentUserObjectId}"
+                        ["@odata.id"] = $"{graphApiService.GraphBaseUrl}/v1.0/users/{currentUserObjectId}"
                     };
 
                     var ownerResponse = await graphApiService.GraphPostWithResponseAsync(
@@ -1665,7 +1662,7 @@ internal static class BlueprintSubcommand
                         tenantId,
                         objectId,
                         credentialName,
-                        $"https://login.microsoftonline.com/{tenantId}/v2.0",
+                        $"{graphApiService.AuthorityHost}/{tenantId}/v2.0",
                         managedIdentityPrincipalId,
                         new List<string> { "api://AzureADTokenExchange" },
                         ct);
@@ -1907,7 +1904,8 @@ internal static class BlueprintSubcommand
         // Build the reference/handoff URL up front so it is available even if the orchestrator throws.
         var consentUrlGraph = SetupHelpers.BuildAdminConsentUrl(
             tenantId, appId,
-            applicationScopes.Select(s => $"{AuthenticationConstants.MicrosoftGraphResourceUri}/{s}"));
+            applicationScopes.Select(s => $"{graphApiService.GraphBaseUrl}/{s}"),
+            graphApiService.AuthorityHost);
 
         bool consentSuccess;
         bool inheritedConfigured;
@@ -1964,7 +1962,10 @@ internal static class BlueprintSubcommand
     /// rejected by the Agent Blueprint API. Defaults to .default (all consented permissions).
     /// Pass loginHint so WAM targets the az-logged-in user rather than the OS default account.
     /// </summary>
-    private static async Task<string?> AcquireMsalGraphTokenAsync(string tenantId, string clientAppId, ILogger logger, CancellationToken ct = default, string? scope = null, string? loginHint = null, string[]? additionalScopes = null)
+    private static async Task<string?> AcquireMsalGraphTokenAsync(
+        string tenantId, string clientAppId, ILogger logger, CancellationToken ct = default,
+        string? scope = null, string? loginHint = null, string[]? additionalScopes = null,
+        string? graphBaseUrl = null, string? authorityHost = null)
     {
         // Guard: MSAL will fail (and block for ~30s on WAM) with empty credentials.
         if (string.IsNullOrWhiteSpace(clientAppId) || string.IsNullOrWhiteSpace(tenantId))
@@ -1975,19 +1976,22 @@ internal static class BlueprintSubcommand
 
         try
         {
+            var resolvedGraphBaseUrl = ConfigConstants.NormalizeGraphBaseUrl(graphBaseUrl);
+            var resolvedAuthorityHost = ConfigConstants.NormalizeAuthorityHost(authorityHost);
             var credential = new MsalBrowserCredential(
                 clientAppId,
                 tenantId,
                 redirectUri: null,  // Let MsalBrowserCredential use WAM on Windows
                 logger,
+                authority: $"{resolvedAuthorityHost}/{tenantId}",
                 loginHint: loginHint);
 
             var primaryScope = string.IsNullOrWhiteSpace(scope)
-                ? $"{Constants.GraphApiConstants.BaseUrl}/.default"
-                : $"{Constants.GraphApiConstants.BaseUrl}/{scope}";
+                ? $"{resolvedGraphBaseUrl}/.default"
+                : $"{resolvedGraphBaseUrl}/{scope}";
 
             var allScopes = additionalScopes?.Length > 0
-                ? new[] { primaryScope }.Concat(additionalScopes.Select(s => $"{Constants.GraphApiConstants.BaseUrl}/{s}")).ToArray()
+                ? new[] { primaryScope }.Concat(additionalScopes.Select(s => $"{resolvedGraphBaseUrl}/{s}")).ToArray()
                 : new[] { primaryScope };
 
             var tokenRequestContext = new TokenRequestContext(allScopes);
@@ -2039,7 +2043,9 @@ internal static class BlueprintSubcommand
         // Pass the caller's logger so messages appear in the correct indent scope.
         var interactiveAuth = new InteractiveGraphAuthService(
             logger,
-            setupConfig.ClientAppId);
+            setupConfig.ClientAppId,
+            graphBaseUrl: ConfigConstants.GetGraphBaseUrl(setupConfig.Environment, setupConfig.GraphBaseUrl),
+            authorityHost: ConfigConstants.GetAuthorityHost(setupConfig.Environment, setupConfig.AuthorityHost));
 
         try
         {
@@ -2103,7 +2109,9 @@ internal static class BlueprintSubcommand
                 setupConfig.ClientAppId ?? string.Empty,
                 logger, ct,
                 scope: AuthenticationConstants.AgentIdentityBlueprintReadWriteAllScope,
-                loginHint: loginHint);
+                loginHint: loginHint,
+                graphBaseUrl: graphService.GraphBaseUrl,
+                authorityHost: graphService.AuthorityHost);
 
             if (string.IsNullOrWhiteSpace(graphToken))
             {
@@ -2122,7 +2130,7 @@ internal static class BlueprintSubcommand
                 }
             };
 
-            var addPasswordUrl = $"{Constants.GraphApiConstants.BaseUrl}/v1.0/applications/{blueprintObjectId}/addPassword";
+            var addPasswordUrl = $"{graphService.GraphBaseUrl}/v1.0/applications/{blueprintObjectId}/addPassword";
             var secretBodyJson = secretBody.ToJsonString();
 
             // Retry on 404 (blueprint not yet visible on all replicas) and transient 403 (owner
@@ -2232,6 +2240,7 @@ internal static class BlueprintSubcommand
         string clientSecret,
         bool isProtected,
         string tenantId,
+        GraphApiService graphService,
         ILogger logger,
         CancellationToken ct = default)
     {
@@ -2245,7 +2254,7 @@ internal static class BlueprintSubcommand
         using var httpClient = new HttpClient();
         httpClient.Timeout = TimeSpan.FromSeconds(ClientSecretValidationTimeoutSeconds);
 
-        var tokenUrl = string.Format(MicrosoftLoginOAuthTokenEndpoint, tenantId);
+        var tokenUrl = ConfigConstants.BuildTokenEndpointUrl(graphService.AuthorityHost, tenantId);
 
         for (int attempt = 1; attempt <= ClientSecretValidationMaxRetries; attempt++)
         {
@@ -2255,7 +2264,7 @@ internal static class BlueprintSubcommand
                 {
                     ["client_id"] = clientId,
                     ["client_secret"] = plaintextSecret,
-                    ["scope"] = $"{Constants.GraphApiConstants.BaseUrl}/.default",
+                    ["scope"] = $"{graphService.GraphBaseUrl}/.default",
                     ["grant_type"] = "client_credentials"
                 });
 

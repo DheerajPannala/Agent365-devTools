@@ -177,10 +177,13 @@ public class SetupHelpersConsentUrlTests
     {
         var url = SetupHelpers.BuildCombinedConsentUrl(
             TenantId, BlueprintClientId,
-            new[] { "Mail.Send" }, new[] { "McpServers.Mail.All" });
+            new[] { "Mail.Send" }, new[] { "McpServers.Mail.All" },
+            graphResourceUri: "https://graph.example",
+            authorityHost: "https://login.example");
 
-        url.Should().StartWith($"https://login.microsoftonline.com/{TenantId}/v2.0/adminconsent");
+        url.Should().StartWith($"https://login.example/{TenantId}/v2.0/adminconsent");
         url.Should().Contain($"client_id={BlueprintClientId}");
+        url.Should().Contain(Uri.EscapeDataString("https://graph.example/Mail.Send"));
         url.Should().Contain($"redirect_uri={Uri.EscapeDataString(AuthenticationConstants.BlueprintConsentRedirectUri)}",
             because: "redirect_uri must be registered on the blueprint app — AADSTS500113 is returned if absent or unregistered");
     }

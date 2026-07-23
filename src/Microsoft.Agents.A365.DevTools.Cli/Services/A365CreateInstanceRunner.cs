@@ -148,6 +148,21 @@ public sealed class A365CreateInstanceRunner
             _logger.LogInformation("Using environment from config: {Env}", environment);
         }
 
+        // Wire the sovereign/government cloud endpoints so all Graph calls and client-credential
+        // token acquisition target the correct national cloud (commercial by default).
+        var configuredGraphBaseUrl = GetConfig("graphBaseUrl");
+        _graphService.GraphBaseUrl = ConfigConstants.GetGraphBaseUrl(
+            environment,
+            string.IsNullOrWhiteSpace(configuredGraphBaseUrl) ? null : configuredGraphBaseUrl);
+        var configuredAuthorityHost = GetConfig("authorityHost");
+        _graphService.AuthorityHost = ConfigConstants.GetAuthorityHost(
+            environment,
+            string.IsNullOrWhiteSpace(configuredAuthorityHost) ? null : configuredAuthorityHost);
+        var configuredClientAppId = GetConfig("clientAppId");
+        if (!string.IsNullOrWhiteSpace(configuredClientAppId))
+            _graphService.CustomClientAppId = configuredClientAppId;
+        var mcpResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(environment);
+
         var usageLocation = GetConfig("agentUserUsageLocation");
 
         await SaveInstanceAsync(generatedConfigPath, instance, cancellationToken);
@@ -320,7 +335,7 @@ public sealed class A365CreateInstanceRunner
                     [AuthenticationConstants.MicrosoftGraphResourceAppId] = (
                         "Microsoft Graph",
                         new HashSet<string>(ConfigConstants.DefaultAgentIdentityScopes, StringComparer.OrdinalIgnoreCase)),
-                    [McpConstants.WorkIQToolsProdAppId] = (
+                    [mcpResourceAppId] = (
                         "Work IQ Tools",
                         new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                         {
@@ -657,7 +672,7 @@ public sealed class A365CreateInstanceRunner
                 : correlationId;
 
             using var httpClient = HttpClientFactory.CreateAuthenticatedClient(correlationId: effectiveCorrelationId);
-            var tokenEndpoint = $"https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token";
+            var tokenEndpoint = ConfigConstants.BuildTokenEndpointUrl(_graphService.AuthorityHost, tenantId);
             
             var requestBody = new FormUrlEncodedContent(new[]
             {

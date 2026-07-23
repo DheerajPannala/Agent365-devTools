@@ -120,8 +120,10 @@ public sealed class DelegatedConsentService
                     var result = await EnsureScopeOnGrantAsync(httpClient, grant, TargetScope, cancellationToken);
                     if (result == ScopeGrantResult.NeedsAdminConsent)
                     {
-                        var scopeUri = Uri.EscapeDataString($"{AuthenticationConstants.MicrosoftGraphResourceUri}/{TargetScope}");
-                        var consentUrl = $"https://login.microsoftonline.com/{tenantId}/v2.0/adminconsent?client_id={callingAppId}&scope={scopeUri}";
+                        var graphResourceUri = GraphApiConstants.GetResource(_graphService.GraphBaseUrl).TrimEnd('/');
+                        var scopeUri = Uri.EscapeDataString($"{graphResourceUri}/{TargetScope}");
+                        var consentBaseUrl = ConfigConstants.BuildAdminConsentEndpointUrl(_graphService.AuthorityHost, tenantId);
+                        var consentUrl = $"{consentBaseUrl}?client_id={callingAppId}&scope={scopeUri}";
                         _logger.LogError(
                             "The existing permission grant could not be updated to include '{Scope}'. " +
                             "An administrator ({Roles}) must grant admin consent. " +
@@ -192,7 +194,7 @@ public sealed class DelegatedConsentService
 
             // Create new service principal
             _logger.LogDebug("Creating service principal for app {AppId}", appId);
-            var createSpUrl = $"{GraphApiConstants.BaseUrl}/v1.0/servicePrincipals";
+            var createSpUrl = $"{_graphService.GraphBaseUrl}/v1.0/servicePrincipals";
             var createBody = new
             {
                 appId = appId
@@ -350,7 +352,7 @@ public sealed class DelegatedConsentService
     {
         try
         {
-            var url = $"{GraphApiConstants.BaseUrl}/v1.0/servicePrincipals?$filter=appId eq '{appId}'";
+            var url = $"{_graphService.GraphBaseUrl}/v1.0/servicePrincipals?$filter=appId eq '{appId}'";
             using var response = await httpClient.GetAsync(url, cancellationToken);
 
             if (!response.IsSuccessStatusCode)
@@ -391,7 +393,7 @@ public sealed class DelegatedConsentService
         try
         {
             var filter = $"clientId eq '{clientId}' and resourceId eq '{resourceId}' and consentType eq '{AllPrincipalsConsentType}'";
-            var url = $"{GraphApiConstants.BaseUrl}/v1.0/oauth2PermissionGrants?$filter={Uri.EscapeDataString(filter)}";
+            var url = $"{_graphService.GraphBaseUrl}/v1.0/oauth2PermissionGrants?$filter={Uri.EscapeDataString(filter)}";
 
             using var response = await httpClient.GetAsync(url, cancellationToken);
 
@@ -458,7 +460,7 @@ public sealed class DelegatedConsentService
             _logger.LogDebug("    Updating grant {GrantId} to include scope: {Scope}", grantId, scopeToAdd);
 
             // Update the grant
-            var updateUrl = $"{GraphApiConstants.BaseUrl}/v1.0/oauth2PermissionGrants/{grantId}";
+            var updateUrl = $"{_graphService.GraphBaseUrl}/v1.0/oauth2PermissionGrants/{grantId}";
             var updateBody = new
             {
                 scope = newScope
@@ -509,7 +511,7 @@ public sealed class DelegatedConsentService
     {
         try
         {
-            var createUrl = $"{GraphApiConstants.BaseUrl}/v1.0/oauth2PermissionGrants";
+            var createUrl = $"{_graphService.GraphBaseUrl}/v1.0/oauth2PermissionGrants";
             var createBody = new
             {
                 clientId = clientId,

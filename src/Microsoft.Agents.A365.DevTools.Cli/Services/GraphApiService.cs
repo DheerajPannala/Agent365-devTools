@@ -27,6 +27,11 @@ public class GraphApiService
     private readonly IAuthenticationService _authService;
     private readonly RetryHelper _retryHelper;
     private string _graphBaseUrl;
+    private string _authorityHost = ConfigConstants.DefaultAuthorityHost;
+    private string? GraphBaseUrlOverride =>
+        string.Equals(_graphBaseUrl, GraphApiConstants.BaseUrl, StringComparison.OrdinalIgnoreCase) ? null : _graphBaseUrl;
+    private string? AuthorityHostOverride =>
+        string.Equals(_authorityHost, ConfigConstants.DefaultAuthorityHost, StringComparison.OrdinalIgnoreCase) ? null : _authorityHost;
 
     // Login hint resolved once per GraphApiService instance.
     // Used to direct MSAL/WAM to the correct identity, preventing the Windows default
@@ -62,7 +67,29 @@ public class GraphApiService
     public string GraphBaseUrl
     {
         get => _graphBaseUrl;
-        set => _graphBaseUrl = string.IsNullOrWhiteSpace(value) ? GraphApiConstants.BaseUrl : value;
+        set => _graphBaseUrl = ConfigConstants.NormalizeGraphBaseUrl(value);
+    }
+
+    /// <summary>
+    /// OAuth authority host used for token acquisition.
+    /// </summary>
+    public string AuthorityHost
+    {
+        get => _authorityHost;
+        set => _authorityHost = ConfigConstants.NormalizeAuthorityHost(value);
+    }
+
+    /// <summary>
+    /// Applies cloud endpoints and the custom client app from a loaded project config.
+    /// </summary>
+    public void ConfigureCloudEndpoints(Agent365Config config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+
+        GraphBaseUrl = ConfigConstants.GetGraphBaseUrl(config.Environment, config.GraphBaseUrl);
+        AuthorityHost = ConfigConstants.GetAuthorityHost(config.Environment, config.AuthorityHost);
+        if (!string.IsNullOrWhiteSpace(config.ClientAppId))
+            CustomClientAppId = config.ClientAppId;
     }
 
     // Lightweight wrapper to surface HTTP status, reason and body to callers
@@ -88,7 +115,7 @@ public class GraphApiService
         _retryHelper = retryHelper ?? new RetryHelper(_logger);
         // Default: try az CLI first (if present), fall back to JWT cache in AuthenticationService.
         _loginHintResolver = loginHintResolver ?? (() => ResolveLoginHintWithFallbackAsync(authService));
-        _graphBaseUrl = string.IsNullOrWhiteSpace(graphBaseUrl) ? GraphApiConstants.BaseUrl : graphBaseUrl;
+        _graphBaseUrl = ConfigConstants.NormalizeGraphBaseUrl(graphBaseUrl);
         _agentRegistryRetryDelay = agentRegistryRetryDelay ?? TimeSpan.FromSeconds(30);
     }
 
@@ -146,7 +173,9 @@ public class GraphApiService
         {
             var resource = GraphApiConstants.GetResource(_graphBaseUrl);
             var loginHint = await _loginHintResolver();
-            var token = await _authService.GetAccessTokenAsync(resource, tenantId, forceRefresh: forceRefresh, userId: loginHint, ct: ct);
+            var token = await _authService.GetAccessTokenAsync(
+                resource, tenantId, forceRefresh: forceRefresh, userId: loginHint, ct: ct,
+                authorityHost: AuthorityHostOverride);
             if (!string.IsNullOrWhiteSpace(token))
             {
                 _logger.LogDebug("Graph API access token acquired successfully");
@@ -210,7 +239,9 @@ public class GraphApiService
                 "Acquiring Graph token via token provider (clientId: {AppId}, scopes: {Scopes})",
                 CustomClientAppId, string.Join(", ", effectiveScopes));
             var loginHint = await ResolveLoginHintAsync();
-            token = await _tokenProvider.GetMgGraphAccessTokenAsync(tenantId, effectiveScopes, false, CustomClientAppId, ct, loginHint, forceRefresh);
+            token = await _tokenProvider.GetMgGraphAccessTokenAsync(
+                tenantId, effectiveScopes, false, CustomClientAppId, ct, loginHint, forceRefresh,
+                GraphBaseUrlOverride, AuthorityHostOverride);
 
             if (string.IsNullOrWhiteSpace(token))
             {
@@ -1177,7 +1208,7 @@ public class GraphApiService
                 clientAppId: CustomClientAppId,
                 ct: ct,
                 loginHint: loginHint,
-                forceRefresh: false);
+                forceRefresh: false, graphBaseUrl: GraphBaseUrlOverride, authorityHost: AuthorityHostOverride);
             if (string.IsNullOrWhiteSpace(token))
                 return Models.RoleCheckResult.Unknown;
 
@@ -1377,7 +1408,7 @@ public class GraphApiService
         // Use .default so the token includes all permissions consented on the "Agent 365 CLI" app,
         // including AgentRegistration.ReadWrite.All, without enumerating scopes explicitly.
         IEnumerable<string>? registrationScopes = _tokenProvider != null
-            ? [$"{Constants.AuthenticationConstants.MicrosoftGraphResourceUri}/.default"]
+            ? [$"{_graphBaseUrl}/.default"]
             : null;
 
         var now = DateTimeOffset.UtcNow.ToString("o");
@@ -1493,10 +1524,10 @@ public class GraphApiService
         // Use .default so the token includes all permissions consented on the "Agent 365 CLI" app,
         // including AgentRegistration.ReadWrite.All, without enumerating scopes explicitly.
         IEnumerable<string>? scopes = _tokenProvider != null
-            ? [$"{Constants.AuthenticationConstants.MicrosoftGraphResourceUri}/.default"]
+            ? [$"{_graphBaseUrl}/.default"]
             : null;
 
-        _logger.LogInformation("DELETE https://graph.microsoft.com{Path}/{RegistrationId}", AgentRegistrationsPath, registrationId);
+        _logger.LogInformation("DELETE {GraphBaseUrl}{Path}/{RegistrationId}", _graphBaseUrl, AgentRegistrationsPath, registrationId);
 
         return await GraphDeleteAsync(
             tenantId,
@@ -1519,11 +1550,11 @@ public class GraphApiService
         CancellationToken ct = default)
     {
         IEnumerable<string>? scopes = _tokenProvider != null
-            ? [$"{Constants.AuthenticationConstants.MicrosoftGraphResourceUri}/.default"]
+            ? [$"{_graphBaseUrl}/.default"]
             : null;
 
         var path = $"{AgentRegistrationsPath}/{Uri.EscapeDataString(registrationId)}";
-        _logger.LogDebug("GET https://graph.microsoft.com{Path}", path);
+        _logger.LogDebug("GET {GraphBaseUrl}{Path}", _graphBaseUrl, path);
 
         try
         {
@@ -1558,7 +1589,7 @@ public class GraphApiService
             ? [Constants.AuthenticationConstants.AgentInstanceReadWriteAllScope]
             : null;
 
-        _logger.LogInformation("DELETE https://graph.microsoft.com/beta/agentRegistry/agentInstances/{InstanceId}", instanceId);
+        _logger.LogInformation("DELETE {GraphBaseUrl}/beta/agentRegistry/agentInstances/{InstanceId}", _graphBaseUrl, instanceId);
 
         return await GraphDeleteAsync(
             tenantId,
@@ -1588,7 +1619,7 @@ public class GraphApiService
             _logger.LogDebug("Acquiring blueprint access token via client credentials (CorrelationId: {Id})", effectiveCorrelationId);
 
             using var httpClient = HttpClientFactory.CreateAuthenticatedClient(correlationId: effectiveCorrelationId);
-            var tokenEndpoint = $"https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token";
+            var tokenEndpoint = ConfigConstants.BuildTokenEndpointUrl(_authorityHost, tenantId);
 
             const int maxRetries = 12;
             const int baseDelaySeconds = 5;
@@ -1600,7 +1631,7 @@ public class GraphApiService
                 {
                     new KeyValuePair<string, string>("client_id", clientId),
                     new KeyValuePair<string, string>("client_secret", clientSecret),
-                    new KeyValuePair<string, string>("scope", "https://graph.microsoft.com/.default"),
+                    new KeyValuePair<string, string>("scope", $"{_graphBaseUrl}/.default"),
                     new KeyValuePair<string, string>("grant_type", "client_credentials"),
                 });
 
@@ -1690,7 +1721,8 @@ public class GraphApiService
             {
                 var loginHint = await ResolveLoginHintAsync();
                 var previewToken = await _tokenProvider.GetMgGraphAccessTokenAsync(
-                    tenantId, scopes, false, CustomClientAppId, ct, loginHint);
+                    tenantId, scopes, false, CustomClientAppId, ct, loginHint,
+                    graphBaseUrl: GraphBaseUrlOverride, authorityHost: AuthorityHostOverride);
                 if (!string.IsNullOrWhiteSpace(previewToken))
                 {
                     var scp = TryDecodeTokenClaim(previewToken, "scp");
@@ -1717,15 +1749,15 @@ public class GraphApiService
             {
                 body["sponsors@odata.bind"] = new JsonArray
                 {
-                    $"https://graph.microsoft.com/v1.0/users/{currentUserId}"
+                    $"{_graphBaseUrl}/v1.0/users/{currentUserId}"
                 };
                 body["owners@odata.bind"] = new JsonArray
                 {
-                    $"https://graph.microsoft.com/v1.0/users/{currentUserId}"
+                    $"{_graphBaseUrl}/v1.0/users/{currentUserId}"
                 };
             }
 
-            _logger.LogDebug("POST https://graph.microsoft.com/beta/servicePrincipals/Microsoft.Graph.AgentIdentity (delegated)");
+            _logger.LogDebug("POST {GraphBaseUrl}/beta/servicePrincipals/Microsoft.Graph.AgentIdentity (delegated)", _graphBaseUrl);
             _logger.LogDebug("Body: {Body}", body.ToJsonString());
 
             // Use GraphPostWithResponseAsync so we can log the full error body on failure.
@@ -1827,13 +1859,13 @@ public class GraphApiService
             {
                 body["sponsors@odata.bind"] = new JsonArray
                 {
-                    $"https://graph.microsoft.com/v1.0/users/{currentUserId}"
+                    $"{_graphBaseUrl}/v1.0/users/{currentUserId}"
                 };
             }
 
             const int maxAttempts = 5;
             const int baseDelaySeconds = 5;
-            const string agentIdentityUrl = "https://graph.microsoft.com/beta/serviceprincipals/Microsoft.Graph.AgentIdentity";
+            var agentIdentityUrl = $"{_graphBaseUrl}/beta/serviceprincipals/Microsoft.Graph.AgentIdentity";
 
             for (int attempt = 0; attempt < maxAttempts; attempt++)
             {

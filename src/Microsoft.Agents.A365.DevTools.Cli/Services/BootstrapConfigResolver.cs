@@ -146,6 +146,9 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
         {
             ["tenantId"] = config.TenantId,
             ["clientAppId"] = config.ClientAppId,
+            ["environment"] = config.Environment,
+            ["graphBaseUrl"] = config.GraphBaseUrl,
+            ["authorityHost"] = config.AuthorityHost,
             ["agentIdentityDisplayName"] = config.AgentIdentityDisplayName,
             ["agentBlueprintDisplayName"] = config.AgentBlueprintDisplayName,
             ["agentDescription"] = config.AgentDescription,
@@ -236,6 +239,27 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
         }
     }
 
+    private async Task<string> GetBootstrapEnvironmentAsync()
+    {
+        var configuredEnvironment = Environment.GetEnvironmentVariable("A365_ENVIRONMENT");
+        if (!string.IsNullOrWhiteSpace(configuredEnvironment))
+            return configuredEnvironment;
+
+        try
+        {
+            var result = await _executor.ExecuteAsync(
+                "az", "cloud show --query name -o tsv",
+                captureOutput: true, suppressErrorLogging: true);
+            var cloudName = result.StandardOutput?.Trim();
+            return string.IsNullOrWhiteSpace(cloudName) ? "prod" : cloudName;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to resolve current Azure CLI cloud; using the default environment.");
+            return "prod";
+        }
+    }
+
     // ── Private helpers ────────────────────────────────────────────────────────
 
     private async Task<Agent365Config?> BuildBootstrapConfigAsync(
@@ -246,6 +270,9 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
         var tenantId = await SetupHelpers.ResolveBootstrapTenantIdAsync(tenantIdFlag, _executor, _logger);
         if (tenantId is null)
             return null;
+
+        var environment = await GetBootstrapEnvironmentAsync();
+        _graphApiService?.ConfigureCloudEndpoints(new Agent365Config { Environment = environment });
 
         var clientAppId = await SetupHelpers.ResolveBootstrapClientAppIdAsync(
             tenantId, _graphApiService, _logger, ct);
@@ -259,6 +286,9 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
         {
             TenantId = tenantId,
             ClientAppId = clientAppId,
+            Environment = environment,
+            GraphBaseUrl = _graphApiService?.GraphBaseUrl ?? ConfigConstants.GetGraphBaseUrl(environment),
+            AuthorityHost = _graphApiService?.AuthorityHost ?? ConfigConstants.GetAuthorityHost(environment),
             AgentIdentityDisplayName = $"{agentName} Identity",
             AgentBlueprintDisplayName = $"{agentName} Blueprint",
             AgentDescription = agentName,
@@ -289,6 +319,9 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
             _logger.LogError("Could not detect tenant ID. Sign in with 'az login' or pass --tenant-id.");
             return null;
         }
+
+        var environment = await GetBootstrapEnvironmentAsync();
+        _graphApiService?.ConfigureCloudEndpoints(new Agent365Config { Environment = environment });
 
         // Step 2: Resolve client app ID — prefer local a365.config.json when tenant matches.
         var resolvedClientAppId = await SetupHelpers.ResolveBootstrapClientAppIdAsync(
@@ -379,6 +412,9 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
         {
             TenantId = tenantId,
             ClientAppId = resolvedClientAppId,
+            Environment = environment,
+            GraphBaseUrl = _graphApiService?.GraphBaseUrl ?? ConfigConstants.GetGraphBaseUrl(environment),
+            AuthorityHost = _graphApiService?.AuthorityHost ?? ConfigConstants.GetAuthorityHost(environment),
             AgentIdentityDisplayName = $"{agentName} Identity",
             AgentBlueprintDisplayName = blueprintDisplayName,
             AgentDescription = agentName,

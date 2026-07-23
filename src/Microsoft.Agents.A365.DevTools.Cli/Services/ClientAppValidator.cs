@@ -165,7 +165,7 @@ public sealed class ClientAppValidator : IClientAppValidator
                         missingDetails.Add("OAuth2 consent grant must be upgraded from per-user (Principal) to tenant-wide (AllPrincipals)");
                     if (needsWidsClaim)
                         missingDetails.Add("'wids' optional claim missing on access tokens — without it, role detection always returns Unknown and the AllPrincipals grant phase silently skips, leaving the agent blueprint with no permissions granted on its service principal");
-                    var consentUrl = ClientAppValidationException.BuildAdminConsentUrl(clientAppId, tenantId);
+                    var consentUrl = ClientAppValidationException.BuildAdminConsentUrl(clientAppId, tenantId, _graphApiService.AuthorityHost);
                     var steps = new List<string>
                     {
                         "Next Steps — Global Administrator action required:",
@@ -289,7 +289,7 @@ public sealed class ClientAppValidator : IClientAppValidator
             // Step 4: Verify admin consent (requires AllPrincipals grant)
             if (!await ValidateAdminConsentAsync(clientAppId, tenantId, ct))
             {
-                throw ClientAppValidationException.MissingAdminConsent(clientAppId, tenantId);
+                throw ClientAppValidationException.MissingAdminConsent(clientAppId, tenantId, _graphApiService.AuthorityHost);
             }
 
             // Step 5: Verify and fix redirect URIs
@@ -1570,7 +1570,7 @@ public sealed class ClientAppValidator : IClientAppValidator
             }
 
             // Print the admin consent URL so the user (or their admin) can fix this immediately
-            var consentUrl = ClientAppValidationException.BuildAdminConsentUrl(clientAppId, tenantId);
+            var consentUrl = ClientAppValidationException.BuildAdminConsentUrl(clientAppId, tenantId, _graphApiService.AuthorityHost);
             if (consentUrl != null)
             {
                 _logger.LogInformation("To grant tenant-wide admin consent, share this URL with a Global Administrator:");

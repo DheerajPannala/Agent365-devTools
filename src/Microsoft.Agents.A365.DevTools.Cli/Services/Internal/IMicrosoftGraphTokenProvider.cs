@@ -27,5 +27,7 @@ public interface IMicrosoftGraphTokenProvider
         string? clientAppId = null,
         CancellationToken ct = default,
         string? loginHint = null,
-        bool forceRefresh = false);
+        bool forceRefresh = false,
+        string? graphBaseUrl = null,
+        string? authorityHost = null);
 }

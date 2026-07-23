@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using System;
+using System.Text.RegularExpressions;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Constants;
 
@@ -10,6 +11,14 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Constants;
 /// </summary>
 public static class ConfigConstants
 {
+    /// <summary>
+    /// Commercial-cloud OAuth authority host. Used as the fallback when no cloud-specific
+    /// override is configured.
+    /// </summary>
+    public const string DefaultAuthorityHost = "https://login.microsoftonline.com";
+    private const string AuthorityHostEnvVar = "A365_AUTHORITY_HOST";
+    private const string GraphBaseUrlEnvVar = "A365_GRAPH_BASE_URL";
+
     /// <summary>
     /// Default static configuration file name (user-managed, version-controlled)
     /// </summary>
@@ -153,7 +162,7 @@ public static class ConfigConstants
     public static string GetDiscoverEndpointUrl(string environment)
     {
         // Check for custom endpoint in environment variable first
-        var customEndpoint = Environment.GetEnvironmentVariable($"A365_DISCOVER_ENDPOINT_{environment?.ToUpper()}");
+        var customEndpoint = GetEnvironmentScopedSetting("A365_DISCOVER_ENDPOINT", environment);
         if (!string.IsNullOrEmpty(customEndpoint))
             return customEndpoint;
 
@@ -167,13 +176,78 @@ public static class ConfigConstants
     /// <summary>
     /// environment-aware Agent 365 Tools resource Application ID
     /// </summary>
-public static string GetAgent365ToolsResourceAppId(string environment)
-{
-    // Check for custom app ID in environment variable first
-    var customAppId = Environment.GetEnvironmentVariable($"A365_MCP_APP_ID_{environment?.ToUpperInvariant()}");
-    if (!string.IsNullOrEmpty(customAppId))
-        return customAppId;
+    public static string GetAgent365ToolsResourceAppId(string environment)
+        => GetEnvironmentScopedSetting("A365_MCP_APP_ID", environment)
+            ?? McpConstants.WorkIQToolsProdAppId;
 
-    return McpConstants.WorkIQToolsProdAppId;
-}
+    /// <summary>
+    /// Returns the authority host for the selected cloud environment.
+    /// </summary>
+    public static string GetAuthorityHost(string environment, string? configAuthorityHost = null)
+        => NormalizeAuthorityHost(GetEnvironmentScopedSetting(AuthorityHostEnvVar, environment) ?? configAuthorityHost);
+
+    /// <summary>
+    /// Returns the Graph base URL for the selected cloud environment.
+    /// </summary>
+    public static string GetGraphBaseUrl(string environment, string? configGraphBaseUrl = null)
+        => NormalizeGraphBaseUrl(GetEnvironmentScopedSetting(GraphBaseUrlEnvVar, environment) ?? configGraphBaseUrl);
+
+    /// <summary>
+    /// Composes an OAuth2 admin-consent endpoint from an already-resolved authority host.
+    /// </summary>
+    public static string BuildAdminConsentEndpointUrl(string? authorityHost, string tenantId)
+        => $"{NormalizeAuthorityHost(authorityHost)}/{tenantId}/v2.0/adminconsent";
+
+    /// <summary>
+    /// Returns the OAuth2 token endpoint URL for the given tenant and environment.
+    /// </summary>
+    public static string GetTokenEndpointUrl(string tenantId, string environment, string? configAuthorityHost = null)
+        => BuildTokenEndpointUrl(GetAuthorityHost(environment, configAuthorityHost), tenantId);
+
+    /// <summary>
+    /// Composes an OAuth2 token endpoint from an already-resolved authority host.
+    /// </summary>
+    public static string BuildTokenEndpointUrl(string? authorityHost, string tenantId)
+        => $"{NormalizeAuthorityHost(authorityHost)}/{tenantId}/oauth2/v2.0/token";
+
+    internal static string NormalizeAuthorityHost(string? authorityHost)
+        => NormalizeHttpsOrigin(authorityHost, DefaultAuthorityHost, "Authority host");
+
+    internal static string NormalizeGraphBaseUrl(string? graphBaseUrl)
+        => NormalizeHttpsOrigin(graphBaseUrl, GraphApiConstants.BaseUrl, "Graph base URL");
+
+    /// <summary>
+    /// Normalizes an environment key so arbitrary cloud names can map to env vars.
+    /// </summary>
+    public static string NormalizeEnvironmentKey(string? environment)
+    {
+        if (string.IsNullOrWhiteSpace(environment))
+            return "PROD";
+
+        var normalized = Regex.Replace(environment.Trim(), "[^A-Za-z0-9]", "_").ToUpperInvariant();
+        return string.IsNullOrWhiteSpace(normalized) ? "PROD" : normalized;
+    }
+
+    private static string? GetEnvironmentScopedSetting(string prefix, string? environment)
+        => Environment.GetEnvironmentVariable($"{prefix}_{NormalizeEnvironmentKey(environment)}") is { } value
+            && !string.IsNullOrWhiteSpace(value)
+                ? value.Trim()
+                : null;
+
+    private static string NormalizeHttpsOrigin(string? value, string fallback, string settingName)
+    {
+        var candidate = string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+        if (!Uri.TryCreate(candidate, UriKind.Absolute, out var uri) ||
+            !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
+            !string.IsNullOrEmpty(uri.UserInfo) ||
+            !string.IsNullOrEmpty(uri.Query) ||
+            !string.IsNullOrEmpty(uri.Fragment) ||
+            uri.AbsolutePath != "/")
+        {
+            throw new ArgumentException(
+                $"{settingName} must be an HTTPS origin without a path, query, fragment, or user info.");
+        }
+
+        return uri.GetLeftPart(UriPartial.Authority);
+    }
 }
