@@ -157,7 +157,7 @@ public sealed class InteractiveGraphAuthService
         _logger.LogInformation("Successfully authenticated to Microsoft Graph!");
 
         var graphClient = new GraphServiceClient(credential!, _requiredScopes);
-        graphClient.RequestAdapter.BaseUrl = _graphBaseUrl;
+        graphClient.RequestAdapter.BaseUrl = $"{_graphBaseUrl}/{GraphApiConstants.Versions.V1}";
         _cachedClient = graphClient;
         _cachedTenantId = tenantId;
 

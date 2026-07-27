@@ -239,7 +239,7 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
         }
     }
 
-    private async Task<string> GetBootstrapEnvironmentAsync()
+    private async Task<string> GetBootstrapEnvironmentAsync(CancellationToken ct)
     {
         var configuredEnvironment = Environment.GetEnvironmentVariable("A365_ENVIRONMENT");
         if (!string.IsNullOrWhiteSpace(configuredEnvironment))
@@ -249,7 +249,7 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
         {
             var result = await _executor.ExecuteAsync(
                 "az", "cloud show --query name -o tsv",
-                captureOutput: true, suppressErrorLogging: true);
+                captureOutput: true, suppressErrorLogging: true, cancellationToken: ct);
             var cloudName = result.StandardOutput?.Trim();
             return string.IsNullOrWhiteSpace(cloudName) ? "prod" : cloudName;
         }
@@ -271,7 +271,7 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
         if (tenantId is null)
             return null;
 
-        var environment = await GetBootstrapEnvironmentAsync();
+        var environment = await GetBootstrapEnvironmentAsync(ct);
         _graphApiService?.ConfigureCloudEndpoints(new Agent365Config { Environment = environment });
 
         var clientAppId = await SetupHelpers.ResolveBootstrapClientAppIdAsync(
@@ -320,7 +320,7 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
             return null;
         }
 
-        var environment = await GetBootstrapEnvironmentAsync();
+        var environment = await GetBootstrapEnvironmentAsync(ct);
         _graphApiService?.ConfigureCloudEndpoints(new Agent365Config { Environment = environment });
 
         // Step 2: Resolve client app ID — prefer local a365.config.json when tenant matches.
