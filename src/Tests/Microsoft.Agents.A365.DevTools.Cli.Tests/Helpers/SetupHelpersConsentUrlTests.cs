@@ -183,7 +183,8 @@ public class SetupHelpersConsentUrlTests
 
         url.Should().StartWith($"https://login.example/{TenantId}/v2.0/adminconsent");
         url.Should().Contain($"client_id={BlueprintClientId}");
-        url.Should().Contain(Uri.EscapeDataString("https://graph.example/Mail.Send"));
+        url.Should().Contain(Uri.EscapeDataString("https://graph.example/Mail.Send"),
+            because: "Graph scopes in the consent URL must be fully-qualified resource URIs and URI-encoded — AAD rejects bare scope names or unencoded URIs in the adminconsent query string");
         url.Should().Contain($"redirect_uri={Uri.EscapeDataString(AuthenticationConstants.BlueprintConsentRedirectUri)}",
             because: "redirect_uri must be registered on the blueprint app — AADSTS500113 is returned if absent or unregistered");
     }

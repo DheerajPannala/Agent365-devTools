@@ -241,7 +241,9 @@ public class MicrosoftGraphTokenProviderTests
 
         // Assert
         token.Should().Be(msalToken);
-        requestedScopes.Should().Equal("https://graph.example/AgentIdentityBlueprint.DeleteRestore.All");
+        requestedScopes.Should().Equal(
+            new[] { "https://graph.example/AgentIdentityBlueprint.DeleteRestore.All" },
+            because: "short scope names must be normalized to fully-qualified URIs by prepending the configured Graph base URL before being passed to MSAL");
         await _executor.DidNotReceive().ExecuteWithStreamingAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(),
             Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(),

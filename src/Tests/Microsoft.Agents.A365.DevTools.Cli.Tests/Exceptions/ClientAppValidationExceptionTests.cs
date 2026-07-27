@@ -159,7 +159,8 @@ public class ClientAppValidationExceptionTests
 
         // Assert
         consentUrl.Should().NotBeNull();
-        consentUrl.Should().StartWith($"https://login.example/{TestTenantId}/adminconsent");
+        consentUrl.Should().StartWith($"https://login.example/{TestTenantId}/adminconsent",
+            because: "the admin consent URL must be rooted at the cloud-specific authority host with the tenant ID in the path — using the wrong authority host produces an AADSTS error for sovereign/government clouds");
         consentUrl.Should().Contain($"client_id={TestClientAppId}", because: "the client ID must be preserved in the admin consent URL query string");
         consentUrl.Should().Contain(
             $"redirect_uri={Uri.EscapeDataString("https://login.example/common/oauth2/nativeclient")}",
