@@ -119,9 +119,7 @@ public sealed class MsalBrowserCredential : TokenCredential
         _loginHint = loginHint;
         _forceRefresh = forceRefresh;
 
-        // Capture the login authority host so consent URLs surfaced later (BuildAdminConsentUrl)
-        // target the same cloud this credential authenticates against. Falls back to commercial
-        // when no explicit sovereign authority was supplied.
+        // Pin consent URLs (BuildAdminConsentUrl) to the cloud we authenticate against; default commercial.
         _authorityHost = Uri.TryCreate(authority, UriKind.Absolute, out var authorityUri)
             ? authorityUri.GetLeftPart(UriPartial.Authority)
             : ConfigConstants.DefaultAuthorityHost;

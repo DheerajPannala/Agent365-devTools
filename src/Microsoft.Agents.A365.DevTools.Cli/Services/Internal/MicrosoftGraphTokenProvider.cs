@@ -289,6 +289,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
 
         var validScopes = scopes
             .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Select(s => s.Trim())
             .Select(s => s.Contains("://", StringComparison.Ordinal)
                 ? s
                 : $"{graphBaseUrl}/{s.TrimStart('/')}")
