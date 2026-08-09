@@ -89,9 +89,10 @@ public class PermissionSpecsTests : IDisposable
             AuthenticationConstants.MicrosoftGraphResourceAppId,
             ConfigConstants.MessagingBotApiAppId,
             ConfigConstants.ObservabilityApiAppId,
+            ConfigConstants.DefenderApiAppId,
             PowerPlatformConstants.PowerPlatformApiResourceAppId,
             McpConstants.WorkIQToolsProdAppId,
-        }, because: "the DW baseline spec set is the four fixed platform APIs plus the ATG AppId (seeded with McpServersMetadata.Read.All for V1 compatibility)");
+        }, because: "the DW baseline spec set is the five fixed platform APIs (including the Defender API required by the security integration) plus the ATG AppId (seeded with McpServersMetadata.Read.All for V1 compatibility)");
 
         // Assert: ATG entry carries only the seeded V1-compat scope when no manifest is present.
         SpecFor(specs, McpConstants.WorkIQToolsProdAppId).Scopes.Should().BeEquivalentTo(new[] { McpServersMetadataReadAll },
@@ -260,6 +261,7 @@ public class PermissionSpecsTests : IDisposable
             AuthenticationConstants.MicrosoftGraphResourceAppId,
             ConfigConstants.MessagingBotApiAppId,
             ConfigConstants.ObservabilityApiAppId,
+            ConfigConstants.DefenderApiAppId,
             PowerPlatformConstants.PowerPlatformApiResourceAppId,
             McpConstants.WorkIQToolsProdAppId,
         }, because: "with a manifest present and isM365 true, blueprint agents must receive the same spec set as DW agents — this is the unified-pipeline contract");
@@ -284,6 +286,25 @@ public class PermissionSpecsTests : IDisposable
             because: "Observability API delegated scope grants OtelWrite for the OBO path");
         obs.AppRoleScopes.Should().BeEquivalentTo(new[] { ConfigConstants.ObservabilityApiOtelWriteScope },
             because: "Observability API app role grants OtelWrite for the s2s path — losing either side breaks one auth mode");
+    }
+
+    [Fact]
+    public async Task DefenderApi_CarriesBothDelegatedScopeAndAppRole()
+    {
+        // Arrange: smallest config that produces the Defender spec on either path.
+        var config = new Agent365Config { DeploymentProjectPath = _tempDir };
+
+        // Act
+        var specs = await SetupHelpers.BuildConfiguredPermissionSpecsAsync(config, setInheritable: true, isM365: true);
+
+        // Assert
+        var defender = SpecFor(specs, ConfigConstants.DefenderApiAppId);
+        defender.Scopes.Should().BeEquivalentTo(new[] { ConfigConstants.DefenderApiToolInvocationScope },
+            because: "the Defender API delegated scope grants ToolInvocation for the OBO path");
+        defender.AppRoleScopes.Should().BeEquivalentTo(new[] { ConfigConstants.DefenderApiToolInvocationScope },
+            because: "the Defender API app role grants ToolInvocation for the s2s path — the Defender webhook rejects tokens without the roles claim, so losing either side breaks one auth mode");
+        defender.SetInheritable.Should().BeTrue(
+            because: "agent identities minted from the blueprint must inherit the Defender permission, exactly as they do for OtelWrite");
     }
 
     [Fact]

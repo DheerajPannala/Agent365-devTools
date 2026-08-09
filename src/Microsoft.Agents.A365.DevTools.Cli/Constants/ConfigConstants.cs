@@ -81,6 +81,18 @@ public static class ConfigConstants
     public const string ObservabilityApiIdentifierUri = "api://9b975845-388f-4429-889e-eab1ef63949c";
 
     /// <summary>
+    /// Defender API App ID. Hosts the security inspection endpoint used by the Defender integration.
+    /// </summary>
+    public const string DefenderApiAppId = "86a21212-634e-4553-b3d6-e477e4c9d9ec";
+
+    /// <summary>
+    /// Defender API identifier URI. Unlike the Observability API this resource
+    /// publishes an https identifier URI only — api://{appId} is not in its
+    /// servicePrincipalNames and consent fails with AADSTS500011.
+    /// </summary>
+    public const string DefenderApiIdentifierUri = "https://rtp-a365.ai.defender.microsoft.com";
+
+    /// <summary>
     /// Single source of truth for the Messaging Bot API delegated scope.
     /// The resource SP (appId 5a807f24-c9de-44ee-a3a7-329e88a00ffc) exposes exactly
     /// one delegated scope, "AgentData.ReadWrite". Both the per-resource and combined
@@ -96,6 +108,13 @@ public static class ConfigConstants
     /// Used in admin consent URLs and granted to provisioned agent identities via OAuth2PermissionGrants.
     /// </summary>
     public const string ObservabilityApiOtelWriteScope = "Agent365.Observability.OtelWrite";
+
+    /// <summary>
+    /// Defender API scope for tool invocation inspection, enabling the Defender
+    /// security integration. Published on the resource as both a delegated scope (OBO) and an
+    /// application app role (S2S), so it is granted through both paths like OtelWrite.
+    /// </summary>
+    public const string DefenderApiToolInvocationScope = "AIAgentsRTP.ToolInvocation";
 
     /// <summary>
     /// Delegated scope value exposed on the blueprint app registration to enable
