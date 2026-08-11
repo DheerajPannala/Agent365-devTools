@@ -79,7 +79,7 @@ public class SetupHelpersConsentUrlTests
         var urls = SetupHelpers.BuildAdminConsentUrls(TenantId, BlueprintClientId, new[] { "Mail.Send" }, new[] { "scope" });
         var defenderUrl = urls.First(u => u.ResourceName == "Defender API").ConsentUrl;
 
-        defenderUrl.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.DefenderApiIdentifierUri}/{ConfigConstants.DefenderApiToolInvocationScope}"),
+        defenderUrl.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.DefenderApiIdentifierUri}/{ConfigConstants.DefenderApiRealtimeProtectionScope}"),
             because: "the Defender resource publishes only the https identifier URI — api://{appId} is not in its servicePrincipalNames and consent fails with AADSTS500011");
         defenderUrl.Should().NotContain(Uri.EscapeDataString($"api://{ConfigConstants.DefenderApiAppId}"),
             because: "the api:// form of the Defender resource is not a registered servicePrincipalName");
@@ -235,8 +235,8 @@ public class SetupHelpersConsentUrlTests
             because: "scope URIs are Uri.EscapeDataString-encoded in the query string — required by AAD for adminconsent");
         url.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiOtelWriteScope}"),
             because: "OtelWrite is the published delegated scope on the Observability API used for admin consent");
-        url.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.DefenderApiIdentifierUri}/{ConfigConstants.DefenderApiToolInvocationScope}"),
-            because: "ToolInvocation is the published delegated scope on the Defender API — without it the agent cannot call the Defender security webhook");
+        url.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.DefenderApiIdentifierUri}/{ConfigConstants.DefenderApiRealtimeProtectionScope}"),
+            because: "RealtimeProtection.Process is the published delegated scope on the Defender API — without it the agent cannot call the Defender security webhook");
         url.Should().Contain(Uri.EscapeDataString($"{PowerPlatformConstants.PowerPlatformApiIdentifierUri}/{PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead}"));
     }
 

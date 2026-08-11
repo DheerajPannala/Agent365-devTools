@@ -82,9 +82,9 @@ internal static class SetupHelpers
         specs.Add(new ResourcePermissionSpec(
             ConfigConstants.DefenderApiAppId,
             "Defender API",
-            new[] { ConfigConstants.DefenderApiToolInvocationScope },
+            new[] { ConfigConstants.DefenderApiRealtimeProtectionScope },
             setInheritable,
-            AppRoleScopes: new[] { ConfigConstants.DefenderApiToolInvocationScope }));
+            AppRoleScopes: new[] { ConfigConstants.DefenderApiRealtimeProtectionScope }));
         specs.Add(new ResourcePermissionSpec(
             PowerPlatformConstants.PowerPlatformApiResourceAppId,
             "Power Platform API",
@@ -377,8 +377,8 @@ internal static class SetupHelpers
     [
         ("Observability API",  ConfigConstants.ObservabilityApiAppId,                          ConfigConstants.ObservabilityApiOtelWriteScope,                     "Application"),
         ("Observability API",  ConfigConstants.ObservabilityApiAppId,                          ConfigConstants.ObservabilityApiOtelWriteScope,                     "Delegated"),
-        ("Defender API",       ConfigConstants.DefenderApiAppId,                               ConfigConstants.DefenderApiToolInvocationScope,                     "Application"),
-        ("Defender API",       ConfigConstants.DefenderApiAppId,                               ConfigConstants.DefenderApiToolInvocationScope,                     "Delegated"),
+        ("Defender API",       ConfigConstants.DefenderApiAppId,                               ConfigConstants.DefenderApiRealtimeProtectionScope,                 "Application"),
+        ("Defender API",       ConfigConstants.DefenderApiAppId,                               ConfigConstants.DefenderApiRealtimeProtectionScope,                 "Delegated"),
         ("Power Platform API", PowerPlatformConstants.PowerPlatformApiResourceAppId,           PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead,  "Delegated"),
     ];
 
@@ -389,7 +389,7 @@ internal static class SetupHelpers
     internal static readonly IReadOnlyList<(string ResourceName, string ResourceAppId, string Role)> FixedApiAppRoleHandoffSpecs =
     [
         ("Observability API", ConfigConstants.ObservabilityApiAppId, ConfigConstants.ObservabilityApiOtelWriteScope),
-        ("Defender API", ConfigConstants.DefenderApiAppId, ConfigConstants.DefenderApiToolInvocationScope),
+        ("Defender API", ConfigConstants.DefenderApiAppId, ConfigConstants.DefenderApiRealtimeProtectionScope),
     ];
 
     /// <summary>
@@ -913,7 +913,7 @@ internal static class SetupHelpers
                 logger.LogInformation("");
                 logger.LogInformation("     # Defender API");
                 logger.LogInformation("     $defenderSp = Get-MgServicePrincipal -Filter \"appId eq '{DefenderAppId}'\"", ConfigConstants.DefenderApiAppId);
-                logger.LogInformation("     $body  = @{{ clientId = $agentSpId; consentType = 'AllPrincipals'; resourceId = $defenderSp.Id; scope = '{DefenderScope}' }} | ConvertTo-Json", ConfigConstants.DefenderApiToolInvocationScope);
+                logger.LogInformation("     $body  = @{{ clientId = $agentSpId; consentType = 'AllPrincipals'; resourceId = $defenderSp.Id; scope = '{DefenderScope}' }} | ConvertTo-Json", ConfigConstants.DefenderApiRealtimeProtectionScope);
                 logger.LogInformation("     Invoke-MgGraphRequest -Method POST -Uri 'https://graph.microsoft.com/v1.0/oauth2PermissionGrants' -Body $body -ContentType 'application/json'");
                 logger.LogInformation("");
                 logger.LogInformation("     # Power Platform API");
@@ -1352,7 +1352,7 @@ internal static class SetupHelpers
             urls.Add(("Messaging Bot API", Build(tenantId, blueprintClientId, ConfigConstants.MessagingBotApiIdentifierUri, new[] { ConfigConstants.MessagingBotApiAdminConsentScope })));
 
         urls.Add(("Observability API", Build(tenantId, blueprintClientId, ConfigConstants.ObservabilityApiIdentifierUri, new[] { ConfigConstants.ObservabilityApiOtelWriteScope })));
-        urls.Add(("Defender API", Build(tenantId, blueprintClientId, ConfigConstants.DefenderApiIdentifierUri, new[] { ConfigConstants.DefenderApiToolInvocationScope })));
+        urls.Add(("Defender API", Build(tenantId, blueprintClientId, ConfigConstants.DefenderApiIdentifierUri, new[] { ConfigConstants.DefenderApiRealtimeProtectionScope })));
         urls.Add(("Power Platform API", Build(tenantId, blueprintClientId, PowerPlatformConstants.PowerPlatformApiIdentifierUri, new[] { PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead })));
 
         return urls;
@@ -1408,7 +1408,7 @@ internal static class SetupHelpers
         if (isM365)
             allScopes.Add($"{ConfigConstants.MessagingBotApiIdentifierUri}/{ConfigConstants.MessagingBotApiAdminConsentScope}");
         allScopes.Add($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiOtelWriteScope}");
-        allScopes.Add($"{ConfigConstants.DefenderApiIdentifierUri}/{ConfigConstants.DefenderApiToolInvocationScope}");
+        allScopes.Add($"{ConfigConstants.DefenderApiIdentifierUri}/{ConfigConstants.DefenderApiRealtimeProtectionScope}");
         allScopes.Add($"{PowerPlatformConstants.PowerPlatformApiIdentifierUri}/{PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead}");
         return BuildAdminConsentUrl(tenantId, blueprintClientId, allScopes);
     }

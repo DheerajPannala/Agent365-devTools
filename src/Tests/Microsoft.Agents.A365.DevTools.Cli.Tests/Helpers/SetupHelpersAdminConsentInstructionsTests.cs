@@ -69,7 +69,7 @@ public class SetupHelpersAdminConsentInstructionsTests
         SetupHelpers.LogNonDwAdminConsentInstructions(logger, BlueprintId);
 
         var defenderLines = logger.Messages
-            .Where(m => m.Contains("Defender API") && m.Contains(ConfigConstants.DefenderApiToolInvocationScope))
+            .Where(m => m.Contains("Defender API") && m.Contains(ConfigConstants.DefenderApiRealtimeProtectionScope))
             .ToList();
         defenderLines.Should().HaveCount(1,
             because: "the Defender API delegated scope must appear exactly once so the admin grants it alongside the other platform APIs");

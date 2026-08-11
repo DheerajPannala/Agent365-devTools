@@ -299,12 +299,22 @@ public class PermissionSpecsTests : IDisposable
 
         // Assert
         var defender = SpecFor(specs, ConfigConstants.DefenderApiAppId);
-        defender.Scopes.Should().BeEquivalentTo(new[] { ConfigConstants.DefenderApiToolInvocationScope },
-            because: "the Defender API delegated scope grants ToolInvocation for the OBO path");
-        defender.AppRoleScopes.Should().BeEquivalentTo(new[] { ConfigConstants.DefenderApiToolInvocationScope },
-            because: "the Defender API app role grants ToolInvocation for the s2s path — the Defender webhook rejects tokens without the roles claim, so losing either side breaks one auth mode");
+        defender.Scopes.Should().BeEquivalentTo(new[] { ConfigConstants.DefenderApiRealtimeProtectionScope },
+            because: "the Defender API delegated scope grants RealtimeProtection.Process for the OBO path");
+        defender.AppRoleScopes.Should().BeEquivalentTo(new[] { ConfigConstants.DefenderApiRealtimeProtectionScope },
+            because: "the Defender API app role grants RealtimeProtection.Process for the s2s path — the Defender webhook rejects tokens without the roles claim, so losing either side breaks one auth mode");
         defender.SetInheritable.Should().BeTrue(
             because: "agent identities minted from the blueprint must inherit the Defender permission, exactly as they do for OtelWrite");
+    }
+
+    [Fact]
+    public void DefenderApi_ScopeValue_MatchesValuePublishedOnResource()
+    {
+        // The combined /v2.0/adminconsent URL validates every scope against the resource SP and
+        // rejects the ENTIRE url with AADSTS650053 on any unknown value — so a drift here breaks
+        // consent for Graph, MCP, Bot, Observability and Power Platform too, not just Defender.
+        ConfigConstants.DefenderApiRealtimeProtectionScope.Should().Be("RealtimeProtection.Process",
+            because: "this is the app role and delegated scope value published on the Defender resource SP; changing it without a matching resource-side change fails admin consent tenant-wide");
     }
 
     [Fact]

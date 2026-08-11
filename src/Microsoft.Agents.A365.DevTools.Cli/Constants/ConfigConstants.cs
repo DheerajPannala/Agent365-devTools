@@ -110,11 +110,12 @@ public static class ConfigConstants
     public const string ObservabilityApiOtelWriteScope = "Agent365.Observability.OtelWrite";
 
     /// <summary>
-    /// Defender API scope for tool invocation inspection, enabling the Defender
-    /// security integration. Published on the resource as both a delegated scope (OBO) and an
-    /// application app role (S2S), so it is granted through both paths like OtelWrite.
+    /// Defender API app role and delegated scope enabling the Defender security integration.
+    /// Published on the resource as both a delegated scope (OBO) and an application app role
+    /// (S2S), so it is granted through both paths like OtelWrite. Must match the value published
+    /// on the resource SP — a mismatch fails the combined consent URL with AADSTS650053.
     /// </summary>
-    public const string DefenderApiToolInvocationScope = "AIAgentsRTP.ToolInvocation";
+    public const string DefenderApiRealtimeProtectionScope = "RealtimeProtection.Process";
 
     /// <summary>
     /// Delegated scope value exposed on the blueprint app registration to enable
