@@ -310,9 +310,8 @@ public class PermissionSpecsTests : IDisposable
     [Fact]
     public void DefenderApi_ScopeValue_MatchesValuePublishedOnResource()
     {
-        // The combined /v2.0/adminconsent URL validates every scope against the resource SP and
-        // rejects the ENTIRE url with AADSTS650053 on any unknown value — so a drift here breaks
-        // consent for Graph, MCP, Bot, Observability and Power Platform too, not just Defender.
+        // A value the resource SP does not publish fails the combined consent URL for every
+        // resource in it (AADSTS650053), not just Defender.
         ConfigConstants.DefenderApiRealtimeProtectionScope.Should().Be("RealtimeProtection.Process",
             because: "this is the app role and delegated scope value published on the Defender resource SP; changing it without a matching resource-side change fails admin consent tenant-wide");
     }

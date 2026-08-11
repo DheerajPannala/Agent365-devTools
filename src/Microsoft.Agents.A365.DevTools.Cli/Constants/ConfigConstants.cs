@@ -81,14 +81,12 @@ public static class ConfigConstants
     public const string ObservabilityApiIdentifierUri = "api://9b975845-388f-4429-889e-eab1ef63949c";
 
     /// <summary>
-    /// Defender API App ID. Hosts the security inspection endpoint used by the Defender integration.
+    /// Defender API App ID
     /// </summary>
     public const string DefenderApiAppId = "86a21212-634e-4553-b3d6-e477e4c9d9ec";
 
     /// <summary>
-    /// Defender API identifier URI. Unlike the Observability API this resource
-    /// publishes an https identifier URI only — api://{appId} is not in its
-    /// servicePrincipalNames and consent fails with AADSTS500011.
+    /// Defender API identifier URI.
     /// </summary>
     public const string DefenderApiIdentifierUri = "https://rtp-a365.ai.defender.microsoft.com";
 
@@ -110,10 +108,8 @@ public static class ConfigConstants
     public const string ObservabilityApiOtelWriteScope = "Agent365.Observability.OtelWrite";
 
     /// <summary>
-    /// Defender API app role and delegated scope enabling the Defender security integration.
-    /// Published on the resource as both a delegated scope (OBO) and an application app role
-    /// (S2S), so it is granted through both paths like OtelWrite. Must match the value published
-    /// on the resource SP — a mismatch fails the combined consent URL with AADSTS650053.
+    /// Defender API app role and delegated scope for the Defender security integration.
+    /// Must match the value published on the resource SP.
     /// </summary>
     public const string DefenderApiRealtimeProtectionScope = "RealtimeProtection.Process";
 
