@@ -75,6 +75,30 @@ public class GraphApiService
         public JsonDocument? Json { get; init; }
     }
 
+    /// <summary>
+    /// Status-bearing result for a service-principal lookup. A successful result with a null
+    /// <see cref="ServicePrincipalId"/> means Graph completed the query and found no match.
+    /// </summary>
+    public sealed record ServicePrincipalLookupResult
+    {
+        public bool IsSuccess { get; init; }
+        public string? ServicePrincipalId { get; init; }
+        public int StatusCode { get; init; }
+        public string FailureReason { get; init; } = string.Empty;
+    }
+
+    /// <summary>
+    /// Status-bearing result for an application lookup. A successful result with a null
+    /// <see cref="ApplicationId"/> means Graph completed the query and found no match.
+    /// </summary>
+    public sealed record ApplicationLookupResult
+    {
+        public bool IsSuccess { get; init; }
+        public string? ApplicationId { get; init; }
+        public int StatusCode { get; init; }
+        public string FailureReason { get; init; } = string.Empty;
+    }
+
     // Allow injecting a custom HttpMessageHandler for unit testing.
     // loginHintResolver: optional override for login-hint resolution.
     // Pass () => Task.FromResult<string?>(null) in unit tests to skip login-hint resolution.
@@ -170,7 +194,36 @@ public class GraphApiService
     }
 
 
-    private async Task<bool> EnsureGraphHeadersAsync(string tenantId, bool forceRefresh = false, IEnumerable<string>? scopes = null, CancellationToken ct = default)
+    /// <summary>
+    /// Acquires a delegated access token for a client app so its own claims (e.g. 'scp') can be
+    /// inspected directly. Returns null if no token provider is configured; other failures propagate.
+    /// </summary>
+    public virtual async Task<string?> GetClientAppAccessTokenAsync(
+        string tenantId, string clientAppId, IEnumerable<string> scopes, CancellationToken ct = default)
+    {
+        if (_tokenProvider == null)
+        {
+            _logger.LogDebug("Cannot acquire an access token for client app {ClientAppId} — no token provider configured.", clientAppId);
+            return null;
+        }
+
+        var loginHint = await ResolveLoginHintAsync();
+        return await _tokenProvider.GetMgGraphAccessTokenAsync(
+            tenantId,
+            scopes,
+            useDeviceCode: false,
+            clientAppId: clientAppId,
+            ct: ct,
+            loginHint: loginHint,
+            forceRefresh: false);
+    }
+
+    private async Task<bool> EnsureGraphHeadersAsync(
+        string tenantId,
+        bool forceRefresh = false,
+        IEnumerable<string>? scopes = null,
+        CancellationToken ct = default,
+        string? authenticationClientAppId = null)
     {
         // Authentication strategy:
         //
@@ -195,7 +248,10 @@ public class GraphApiService
 
         string? token;
         bool hasScopes = scopes?.Any() == true;
-        bool hasCustomApp = !string.IsNullOrWhiteSpace(CustomClientAppId);
+        var effectiveClientAppId = string.IsNullOrWhiteSpace(authenticationClientAppId)
+            ? CustomClientAppId
+            : authenticationClientAppId;
+        bool hasCustomApp = !string.IsNullOrWhiteSpace(effectiveClientAppId);
 
         // Use the token provider when the caller passed explicit scopes (the call site is asking
         // for a scoped token — clientId can be null until config resolves; production callers that
@@ -208,9 +264,10 @@ public class GraphApiService
             var effectiveScopes = hasScopes ? scopes! : [AuthenticationConstants.UserReadScope];
             _logger.LogDebug(
                 "Acquiring Graph token via token provider (clientId: {AppId}, scopes: {Scopes})",
-                CustomClientAppId, string.Join(", ", effectiveScopes));
+                effectiveClientAppId, string.Join(", ", effectiveScopes));
             var loginHint = await ResolveLoginHintAsync();
-            token = await _tokenProvider.GetMgGraphAccessTokenAsync(tenantId, effectiveScopes, false, CustomClientAppId, ct, loginHint, forceRefresh);
+            token = await _tokenProvider.GetMgGraphAccessTokenAsync(
+                tenantId, effectiveScopes, false, effectiveClientAppId, ct, loginHint, forceRefresh);
 
             if (string.IsNullOrWhiteSpace(token))
             {
@@ -337,9 +394,20 @@ public class GraphApiService
     /// Use this instead of GraphGetAsync when the caller needs to distinguish auth failures
     /// (401) from transient server errors (503, 429, network exceptions).
     /// </summary>
-    public virtual async Task<GraphResponse> GraphGetWithResponseAsync(string tenantId, string relativePath, bool forceRefresh = false, IEnumerable<string>? scopes = null, CancellationToken ct = default)
+    public virtual async Task<GraphResponse> GraphGetWithResponseAsync(
+        string tenantId,
+        string relativePath,
+        bool forceRefresh = false,
+        IEnumerable<string>? scopes = null,
+        CancellationToken ct = default,
+        string? authenticationClientAppId = null)
     {
-        if (!await EnsureGraphHeadersAsync(tenantId, forceRefresh: forceRefresh, scopes: scopes, ct: ct))
+        if (!await EnsureGraphHeadersAsync(
+                tenantId,
+                forceRefresh: forceRefresh,
+                scopes: scopes,
+                ct: ct,
+                authenticationClientAppId: authenticationClientAppId))
             return new GraphResponse { IsSuccess = false, StatusCode = 0, ReasonPhrase = "NoAuth", Body = "Failed to acquire token" };
 
         var url = GraphApiConstants.BuildUrl(_graphBaseUrl, relativePath);
@@ -354,7 +422,14 @@ public class GraphApiService
                 JsonDocument? json = null;
                 if (resp.IsSuccessStatusCode && !string.IsNullOrWhiteSpace(body))
                 {
-                    try { json = JsonDocument.Parse(body); } catch { /* ignore parse errors */ }
+                    try
+                    {
+                        json = JsonDocument.Parse(body);
+                    }
+                    catch (JsonException ex)
+                    {
+                        _logger.LogDebug(ex, "Graph GET {Url} returned invalid JSON", url);
+                    }
                 }
 
                 if (!resp.IsSuccessStatusCode)
@@ -371,7 +446,7 @@ public class GraphApiService
                 };
             }, cancellationToken: ct);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             if (NetworkHelper.IsConnectionResetByProxy(ex))
                 _logger.LogWarning(NetworkHelper.ConnectionResetWarning);
@@ -553,7 +628,7 @@ public class GraphApiService
     public virtual async Task<string?> LookupServicePrincipalByAppIdAsync(
         string tenantId, string appId, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
-        // $filter=appId eq is "Default+Advanced" per Graph docs -� no ConsistencyLevel header required.
+        // $filter=appId eq is "Default+Advanced" per Graph docs - no ConsistencyLevel header required.
         // The token must have Application.Read.All; pass scopes to ensure MSAL token is used when needed.
         using var doc = await GraphGetAsync(
             tenantId,
@@ -563,6 +638,97 @@ public class GraphApiService
         if (doc == null) return null;
         if (!doc.RootElement.TryGetProperty("value", out var value) || value.GetArrayLength() == 0) return null;
         return value[0].GetProperty("id").GetString();
+    }
+
+    /// <summary>
+    /// Looks up a service principal by application ID while preserving the distinction between
+    /// a successful empty result and an authentication, HTTP, network, or response-format failure.
+    /// Requests the delegated <c>Application.Read.All</c> scope required by this Graph query.
+    /// </summary>
+    public virtual async Task<ServicePrincipalLookupResult> LookupServicePrincipalByAppIdWithResponseAsync(
+        string tenantId,
+        string appId,
+        CancellationToken ct = default)
+    {
+        if (!Guid.TryParse(appId, out var validAppId))
+        {
+            return new ServicePrincipalLookupResult
+            {
+                IsSuccess = false,
+                FailureReason = $"Invalid service-principal appId '{appId}'. Expected a GUID."
+            };
+        }
+
+        var normalizedAppId = validAppId.ToString("D");
+        var authenticationClientAppId =
+            AuthenticationConstants.IsWellKnownFirstPartyClientApp(normalizedAppId)
+                ? AuthenticationConstants.WellKnownClientAppId
+                : null;
+        var response = await GraphGetWithResponseAsync(
+            tenantId,
+            $"/v1.0/servicePrincipals?$filter=appId eq '{normalizedAppId}'&$select=id",
+            scopes: [AuthenticationConstants.ApplicationReadAllScope],
+            ct: ct,
+            authenticationClientAppId: authenticationClientAppId);
+        using var responseJson = response.Json;
+
+        if (!response.IsSuccess)
+        {
+            var status = response.StatusCode > 0
+                ? $"HTTP {response.StatusCode} {response.ReasonPhrase}".TrimEnd()
+                : response.ReasonPhrase;
+            return new ServicePrincipalLookupResult
+            {
+                IsSuccess = false,
+                StatusCode = response.StatusCode,
+                FailureReason = string.IsNullOrWhiteSpace(status)
+                    ? "Microsoft Graph service-principal lookup failed before a response was received."
+                    : $"Microsoft Graph service-principal lookup failed: {status}."
+            };
+        }
+
+        if (responseJson is null ||
+            responseJson.RootElement.ValueKind != JsonValueKind.Object ||
+            !responseJson.RootElement.TryGetProperty("value", out var value) ||
+            value.ValueKind != JsonValueKind.Array)
+        {
+            return new ServicePrincipalLookupResult
+            {
+                IsSuccess = false,
+                StatusCode = response.StatusCode,
+                FailureReason = "Microsoft Graph returned an invalid service-principal lookup response."
+            };
+        }
+
+        if (value.GetArrayLength() == 0)
+        {
+            return new ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                StatusCode = response.StatusCode
+            };
+        }
+
+        var firstResult = value[0];
+        if (firstResult.ValueKind != JsonValueKind.Object ||
+            !firstResult.TryGetProperty("id", out var id) ||
+            id.ValueKind != JsonValueKind.String ||
+            string.IsNullOrWhiteSpace(id.GetString()))
+        {
+            return new ServicePrincipalLookupResult
+            {
+                IsSuccess = false,
+                StatusCode = response.StatusCode,
+                FailureReason = "Microsoft Graph returned a service-principal result without a valid object ID."
+            };
+        }
+
+        return new ServicePrincipalLookupResult
+        {
+            IsSuccess = true,
+            ServicePrincipalId = id.GetString(),
+            StatusCode = response.StatusCode
+        };
     }
 
     /// <summary>
@@ -585,22 +751,96 @@ public class GraphApiService
     }
 
     /// <summary>
-    /// Checks whether an Entra application with the given appId exists in the tenant.
-    /// Uses the default az CLI token — does not require CustomClientAppId to be set.
-    /// Returns false on any error so callers can fall back gracefully.
+    /// Looks up an Entra application by appId while preserving the distinction between absence
+    /// and an authentication, HTTP, network, or response-format failure.
     /// Virtual to allow mocking in unit tests.
+    /// </summary>
+    public virtual async Task<ApplicationLookupResult> LookupApplicationByAppIdWithResponseAsync(
+        string tenantId, string appId, CancellationToken ct = default)
+    {
+        if (!Guid.TryParse(appId, out var validGuid))
+        {
+            return new ApplicationLookupResult
+            {
+                IsSuccess = false,
+                FailureReason = $"Invalid application appId '{appId}'. Expected a GUID."
+            };
+        }
+
+        var response = await GraphGetWithResponseAsync(
+            tenantId,
+            $"/v1.0/applications?$filter=appId eq '{validGuid:D}'&$select=appId&$top=1",
+            ct: ct);
+        using var responseJson = response.Json;
+
+        if (!response.IsSuccess)
+        {
+            var status = response.StatusCode > 0
+                ? $"HTTP {response.StatusCode} {response.ReasonPhrase}".TrimEnd()
+                : response.ReasonPhrase;
+            return new ApplicationLookupResult
+            {
+                IsSuccess = false,
+                StatusCode = response.StatusCode,
+                FailureReason = string.IsNullOrWhiteSpace(status)
+                    ? "Microsoft Graph application lookup failed before a response was received."
+                    : $"Microsoft Graph application lookup failed: {status}."
+            };
+        }
+
+        if (responseJson is null ||
+            responseJson.RootElement.ValueKind != JsonValueKind.Object ||
+            !responseJson.RootElement.TryGetProperty("value", out var value) ||
+            value.ValueKind != JsonValueKind.Array)
+        {
+            return new ApplicationLookupResult
+            {
+                IsSuccess = false,
+                StatusCode = response.StatusCode,
+                FailureReason = "Microsoft Graph returned an invalid application lookup response."
+            };
+        }
+
+        if (value.GetArrayLength() == 0)
+        {
+            return new ApplicationLookupResult
+            {
+                IsSuccess = true,
+                StatusCode = response.StatusCode
+            };
+        }
+
+        var firstResult = value[0];
+        if (firstResult.ValueKind != JsonValueKind.Object ||
+            !firstResult.TryGetProperty("appId", out var returnedAppId) ||
+            returnedAppId.ValueKind != JsonValueKind.String ||
+            string.IsNullOrWhiteSpace(returnedAppId.GetString()))
+        {
+            return new ApplicationLookupResult
+            {
+                IsSuccess = false,
+                StatusCode = response.StatusCode,
+                FailureReason = "Microsoft Graph returned an application result without a valid appId."
+            };
+        }
+
+        return new ApplicationLookupResult
+        {
+            IsSuccess = true,
+            ApplicationId = returnedAppId.GetString(),
+            StatusCode = response.StatusCode
+        };
+    }
+
+    /// <summary>
+    /// Checks whether an Entra application with the given appId exists in the tenant.
+    /// Returns false when the app is absent or the lookup is inconclusive.
     /// </summary>
     public virtual async Task<bool> ApplicationExistsByAppIdAsync(
         string tenantId, string appId, CancellationToken ct = default)
     {
-        if (!Guid.TryParse(appId, out var validGuid)) return false;
-
-        using var doc = await GraphGetAsync(
-            tenantId,
-            $"/v1.0/applications?$filter=appId eq '{validGuid:D}'&$select=appId&$top=1",
-            ct);
-        if (doc == null) return false;
-        return doc.RootElement.TryGetProperty("value", out var value) && value.GetArrayLength() > 0;
+        var result = await LookupApplicationByAppIdWithResponseAsync(tenantId, appId, ct);
+        return result.IsSuccess && !string.IsNullOrWhiteSpace(result.ApplicationId);
     }
 
     /// <summary>

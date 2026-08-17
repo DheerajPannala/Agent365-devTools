@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using FluentAssertions;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
@@ -78,6 +79,26 @@ public class WidsOptionalClaimRequirementCheckTests
             because: "wids is on the access token so role detection will work — the check has nothing to do");
         result.Details.Should().Contain(ValidClientAppId,
             because: "the success details must identify which app was inspected so the operator can correlate with their app registration");
+    }
+
+    [Fact]
+    public async Task CheckAsync_FirstPartyClientApp_SkipsTenantLocalOptionalClaimsInspection()
+    {
+        var check = new WidsOptionalClaimRequirementCheck(_validator);
+        var config = new Agent365Config
+        {
+            ClientAppId = AuthenticationConstants.WellKnownClientAppId,
+            TenantId = ValidTenantId
+        };
+
+        var result = await check.CheckAsync(config, _logger);
+
+        result.Passed.Should().BeTrue(
+            because: "customers cannot inspect or change optional claims on Microsoft's first-party application registration");
+        result.Details.Should().Contain("Microsoft-managed",
+            because: "the requirements output must explain why the tenant-local optional-claim check was skipped");
+        await _validator.DidNotReceive().HasWidsAccessTokenOptionalClaimAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]

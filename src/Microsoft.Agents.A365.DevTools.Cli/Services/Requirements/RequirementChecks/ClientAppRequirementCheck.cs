@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Extensions.Logging;
@@ -8,23 +9,27 @@ using Microsoft.Extensions.Logging;
 namespace Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 
 /// <summary>
-/// Requirement check that validates the custom client app configuration
-/// Verifies that the app exists, has required permissions, and admin consent is granted
+/// Validates first-party or custom client-app presence and Microsoft Graph authorization.
 /// </summary>
 public class ClientAppRequirementCheck : RequirementCheck
 {
     private readonly IClientAppValidator _clientAppValidator;
+    private readonly bool _firstParty;
 
-    public ClientAppRequirementCheck(IClientAppValidator clientAppValidator)
+    /// <param name="clientAppValidator">The validator used to check the client app configuration.</param>
+    /// <param name="firstParty">Forces first-party validation semantics; also auto-applied when
+    /// <c>config.ClientAppId</c> is the well-known first-party app, regardless of this flag.</param>
+    public ClientAppRequirementCheck(IClientAppValidator clientAppValidator, bool firstParty = false)
     {
         _clientAppValidator = clientAppValidator ?? throw new ArgumentNullException(nameof(clientAppValidator));
+        _firstParty = firstParty;
     }
 
     /// <inheritdoc />
     public override string Name => "Client App Configuration";
 
     /// <inheritdoc />
-    public override string Description => "Validates that the custom client app exists, has required Microsoft Graph permissions, and admin consent is granted";
+    public override string Description => "Validates that the first-party or custom client app exists and has the required Microsoft Graph authorization";
 
     /// <inheritdoc />
     public override string Category => "Authentication";
@@ -62,10 +67,17 @@ public class ClientAppRequirementCheck : RequirementCheck
 
         try
         {
+            // Automatically apply first-party semantics whenever the resolved client app is
+            // Microsoft's well-known Agent 365 CLI application, in addition to any explicit
+            // --first-party override — Microsoft's own application registration must never be
+            // PATCHed regardless of how the check was invoked.
+            var isFirstParty = _firstParty || AuthenticationConstants.IsWellKnownFirstPartyClientApp(config.ClientAppId);
+
             // Validate the client app using the validator
             await _clientAppValidator.EnsureValidClientAppAsync(
                 config.ClientAppId,
                 config.TenantId,
+                isFirstParty: isFirstParty,
                 ct: cancellationToken
             );
 

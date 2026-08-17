@@ -17,9 +17,11 @@ public interface IClientAppValidator
     /// <param name="tenantId">The tenant ID where the app should exist</param>
     /// <param name="skipConfirmation">When true, applies any required app registration fixes without prompting the user.
     /// Use for non-interactive or CI scenarios. Defaults to false (prompt before modifying the app registration).</param>
+    /// <param name="isFirstParty">When true, validates a first-party app (e.g. Agent 365 CLI) without
+    /// mutating its Entra registration — presence via /servicePrincipals, scopes via token 'scp' claim.</param>
     /// <param name="ct">Cancellation token</param>
     /// <exception cref="Exceptions.ClientAppValidationException">Thrown when validation fails</exception>
-    Task EnsureValidClientAppAsync(string clientAppId, string tenantId, bool skipConfirmation = false, CancellationToken ct = default);
+    Task EnsureValidClientAppAsync(string clientAppId, string tenantId, bool skipConfirmation = false, bool isFirstParty = false, CancellationToken ct = default);
 
     /// <summary>
     /// Ensures the client app has required redirect URIs configured for Microsoft Graph PowerShell SDK.
@@ -32,13 +34,14 @@ public interface IClientAppValidator
 
     /// <summary>
     /// Returns the subset of required permissions that are not yet present in the client app's
-    /// oauth2PermissionGrant (i.e. not consented). Used to prompt the user before granting.
+    /// oauth2PermissionGrant; returns empty for the Microsoft first-party app.
     /// </summary>
     Task<List<string>> GetUnconsentedRequiredPermissionsAsync(string clientAppId, string tenantId, CancellationToken ct = default);
 
     /// <summary>
-    /// Extends the client app's oauth2PermissionGrant to include the given permissions.
+    /// Extends a custom client app's oauth2PermissionGrant to include the given permissions.
     /// </summary>
+    /// <exception cref="InvalidOperationException">The client app is Microsoft's first-party app.</exception>
     Task GrantConsentForPermissionsAsync(string clientAppId, List<string> permissions, string tenantId, CancellationToken ct = default);
 
     /// <summary>

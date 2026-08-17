@@ -3,6 +3,7 @@
 
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
@@ -11,6 +12,9 @@ using Microsoft.Agents.A365.DevTools.Cli.Tests.TestHelpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
+using System.CommandLine.Builder;
+using System.CommandLine.IO;
+using System.CommandLine.Parsing;
 using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
@@ -283,6 +287,98 @@ public class RequirementsSubcommandTests
         allPassed.Should().BeFalse();
         failedCount.Should().Be(2);
         results.Should().HaveCount(2);
+    }
+
+    #endregion
+
+    #region ClientAppRequirementCheck First-Party Mode Tests
+
+    [Fact]
+    public async Task ClientAppRequirementCheck_ExplicitFirstPartyTrue_PassesIsFirstPartyTrueToValidator()
+    {
+        var mockValidator = Substitute.For<IClientAppValidator>();
+        var check = new ClientAppRequirementCheck(mockValidator, firstParty: true);
+        var config = new Agent365Config
+        {
+            ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
+            TenantId = "12345678-1234-1234-1234-123456789012"
+        };
+
+        await check.CheckAsync(config, _mockLogger);
+
+        await mockValidator.Received(1).EnsureValidClientAppAsync(
+            config.ClientAppId, config.TenantId, isFirstParty: true, ct: Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ClientAppRequirementCheck_DefaultFirstPartyFalse_WithCustomAppId_PassesIsFirstPartyFalse()
+    {
+        var mockValidator = Substitute.For<IClientAppValidator>();
+        var check = new ClientAppRequirementCheck(mockValidator);
+        var config = new Agent365Config
+        {
+            ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
+            TenantId = "12345678-1234-1234-1234-123456789012"
+        };
+
+        await check.CheckAsync(config, _mockLogger);
+
+        await mockValidator.Received(1).EnsureValidClientAppAsync(
+            config.ClientAppId, config.TenantId, isFirstParty: false, ct: Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ClientAppRequirementCheck_DefaultFirstPartyFalse_WithWellKnownClientAppId_AutoAppliesIsFirstPartyTrue()
+    {
+        // Even without the explicit --first-party flag, resolving to Microsoft's well-known
+        // first-party application must automatically apply first-party semantics — the CLI must
+        // never PATCH Microsoft's own app registration regardless of how the check was invoked.
+        var mockValidator = Substitute.For<IClientAppValidator>();
+        var check = new ClientAppRequirementCheck(mockValidator);
+        var config = new Agent365Config
+        {
+            ClientAppId = AuthenticationConstants.WellKnownClientAppId,
+            TenantId = "12345678-1234-1234-1234-123456789012"
+        };
+
+        await check.CheckAsync(config, _mockLogger);
+
+        await mockValidator.Received(1).EnsureValidClientAppAsync(
+            config.ClientAppId, config.TenantId, isFirstParty: true, ct: Arg.Any<CancellationToken>());
+    }
+
+    #endregion
+
+    #region --first-party CLI Option Tests
+
+    [Fact]
+    public async Task Command_WithFirstPartyFlag_ParsesOptionAndLogsFirstPartyMode()
+    {
+        // Arrange: use a category that matches nothing, so the command short-circuits right
+        // after building the (firstParty-aware) check lists and logging the first-party notice,
+        // without needing a real Azure/Graph bootstrap.
+        var mockConfigService = Substitute.For<IConfigService>();
+        var mockExecutor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        var mockAuthValidator = Substitute.ForPartsOf<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, mockExecutor);
+        var mockClientAppValidator = Substitute.For<IClientAppValidator>();
+        var mockGraphApiService = Substitute.ForPartsOf<GraphApiService>(
+            Substitute.For<ILogger<GraphApiService>>(), mockExecutor, (Func<Task<string?>>)(() => Task.FromResult<string?>(null)));
+
+        var command = RequirementsSubcommand.CreateCommand(
+            _mockLogger, mockConfigService, mockAuthValidator, mockClientAppValidator, mockExecutor, mockGraphApiService);
+        var parser = new CommandLineBuilder(command).Build();
+        var testConsole = new TestConsole();
+
+        var exitCode = await parser.InvokeAsync("--first-party --category NoSuchCategory", testConsole);
+
+        exitCode.Should().Be(0,
+            because: "a non-matching --category must short-circuit with a warning, not a failure exit code");
+        _mockLogger.Received().Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("First-party mode")),
+            Arg.Any<Exception>(),
+            Arg.Any<Func<object, Exception?, string>>());
     }
 
     #endregion

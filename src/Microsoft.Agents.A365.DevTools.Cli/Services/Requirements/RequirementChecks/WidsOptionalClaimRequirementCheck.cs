@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Extensions.Logging;
 
@@ -60,6 +61,12 @@ public class WidsOptionalClaimRequirementCheck : RequirementCheck
                 errorMessage: "tenantId is not configured",
                 resolutionGuidance: "Configure tenantId in a365.config.json or pass --tenant-id.",
                 details: "The wids optional claim check requires a tenantId to query Graph.");
+        }
+
+        if (AuthenticationConstants.IsWellKnownFirstPartyClientApp(config.ClientAppId))
+        {
+            return RequirementCheckResult.Success(
+                details: "The first-party Agent 365 CLI token configuration is Microsoft-managed; no tenant-local optional-claim changes are required.");
         }
 
         bool hasWids;

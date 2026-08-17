@@ -37,19 +37,22 @@ public sealed class ClientAppValidator : IClientAppValidator
     /// <param name="tenantId">The tenant ID where the app should exist</param>
     /// <param name="skipConfirmation">When true, applies any required app registration fixes without prompting the user.
     /// Use for non-interactive or CI scenarios. Defaults to false (prompt before modifying the app registration).</param>
+    /// <param name="isFirstParty">When true, validates a Microsoft first-party application without
+    /// mutating its Entra app registration — see <see cref="EnsureValidFirstPartyClientAppAsync"/>.</param>
     /// <param name="ct">Cancellation token</param>
     /// <exception cref="ClientAppValidationException">Thrown when validation fails</exception>
     public async Task EnsureValidClientAppAsync(
         string clientAppId,
         string tenantId,
         bool skipConfirmation = false,
+        bool isFirstParty = false,
         CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(clientAppId);
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
 
         // Step 1: Validate GUID format
-        if (!Guid.TryParse(clientAppId, out _))
+        if (!Guid.TryParse(clientAppId, out var parsedClientAppId))
         {
             throw ClientAppValidationException.ValidationFailed(
                 $"clientAppId must be a valid GUID format (received: {clientAppId})",
@@ -67,6 +70,13 @@ public sealed class ClientAppValidator : IClientAppValidator
 
         try
         {
+            // Never run tenant-owned mutation logic against Microsoft's application registration.
+            if (isFirstParty || AuthenticationConstants.IsWellKnownFirstPartyClientApp(clientAppId))
+            {
+                await EnsureValidFirstPartyClientAppAsync(parsedClientAppId.ToString("D"), tenantId, ct);
+                return;
+            }
+
             // Step 2: Verify app exists (token acquisition is handled inside GraphApiService)
             var appInfo = await GetClientAppInfoAsync(clientAppId, tenantId, ct);
             if (appInfo == null)
@@ -340,6 +350,98 @@ public sealed class ClientAppValidator : IClientAppValidator
     }
 
     /// <summary>
+    /// Validates first-party service-principal presence and delegated token scopes without mutation.
+    /// </summary>
+    private async Task EnsureValidFirstPartyClientAppAsync(string clientAppId, string tenantId, CancellationToken ct)
+    {
+        GraphApiService.ServicePrincipalLookupResult lookup;
+        try
+        {
+            lookup = await _graphApiService.LookupServicePrincipalByAppIdWithResponseAsync(
+                tenantId, clientAppId, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw ClientAppValidationException.FirstPartyServicePrincipalLookupFailed(
+                clientAppId, tenantId, ex.Message);
+        }
+
+        if (lookup is null || !lookup.IsSuccess)
+        {
+            throw ClientAppValidationException.FirstPartyServicePrincipalLookupFailed(
+                clientAppId,
+                tenantId,
+                lookup?.FailureReason ?? "Service-principal lookup returned no result.");
+        }
+
+        if (string.IsNullOrWhiteSpace(lookup.ServicePrincipalId))
+        {
+            throw ClientAppValidationException.FirstPartyServicePrincipalNotFound(clientAppId, tenantId);
+        }
+
+        _logger.LogDebug(
+            "First-party service principal {SpId} found for {ClientAppId} — no app-registration mutations will be attempted.",
+            lookup.ServicePrincipalId, clientAppId);
+
+        // Keep the registration scope separate because Entra can reject a combined request before
+        // returning a token whose scp claim identifies the unavailable permission.
+        await ValidateFirstPartyTokenScopesAsync(
+            clientAppId,
+            tenantId,
+            AuthenticationConstants.BlueprintOperationScopes,
+            ct);
+        await ValidateFirstPartyTokenScopesAsync(
+            clientAppId,
+            tenantId,
+            [AuthenticationConstants.AgentRegistrationReadWriteAllScope],
+            ct);
+
+        _logger.LogDebug(
+            "First-party client app validation successful for {ClientAppId} — all required scopes present on delegated tokens.",
+            clientAppId);
+    }
+
+    private async Task ValidateFirstPartyTokenScopesAsync(
+        string clientAppId,
+        string tenantId,
+        IReadOnlyCollection<string> requiredScopes,
+        CancellationToken ct)
+    {
+        string? token;
+        try
+        {
+            token = await _graphApiService.GetClientAppAccessTokenAsync(tenantId, clientAppId, requiredScopes, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw ClientAppValidationException.FirstPartyAuthorizationFailed(
+                clientAppId, requiredScopes, ex.Message);
+        }
+
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            throw ClientAppValidationException.FirstPartyAuthorizationFailed(
+                clientAppId, requiredScopes, "Token acquisition returned no result.");
+        }
+
+        if (!JwtHelper.TryDecodeSpaceDelimitedClaim(
+                token,
+                "scp",
+                out var grantedScopes,
+                out var decodeFailureReason))
+        {
+            throw ClientAppValidationException.FirstPartyAuthorizationFailed(
+                clientAppId, requiredScopes, decodeFailureReason);
+        }
+
+        var missingScopes = requiredScopes.Where(s => !grantedScopes.Contains(s)).ToList();
+        if (missingScopes.Count > 0)
+        {
+            throw ClientAppValidationException.FirstPartyMissingPermissions(clientAppId, missingScopes);
+        }
+    }
+
+    /// <summary>
     /// Ensures the client app has required redirect URIs configured for Microsoft Graph PowerShell SDK.
     /// Automatically adds missing redirect URIs if needed (self-healing).
     /// </summary>
@@ -353,6 +455,12 @@ public sealed class ClientAppValidator : IClientAppValidator
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(clientAppId);
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+
+        if (AuthenticationConstants.IsWellKnownFirstPartyClientApp(clientAppId))
+        {
+            _logger.LogDebug("Skipping redirect URI mutation for the first-party Agent 365 CLI application.");
+            return;
+        }
 
         try
         {
@@ -878,13 +986,18 @@ public sealed class ClientAppValidator : IClientAppValidator
 
     /// <summary>
     /// Returns the subset of <see cref="AuthenticationConstants.RequiredClientAppPermissions"/>
-    /// that are not yet present in the client app's oauth2PermissionGrant (i.e. not consented).
+    /// missing from a custom app's grant; first-party authorization is token-based and returns empty.
     /// </summary>
     public async Task<List<string>> GetUnconsentedRequiredPermissionsAsync(
         string clientAppId,
         string tenantId,
         CancellationToken ct = default)
     {
+        if (AuthenticationConstants.IsWellKnownFirstPartyClientApp(clientAppId))
+        {
+            return [];
+        }
+
         var consented = await GetConsentedPermissionsAsync(clientAppId, tenantId, ct);
         return AuthenticationConstants.RequiredClientAppPermissions
             .Where(p => !consented.Contains(p, StringComparer.OrdinalIgnoreCase))
@@ -892,7 +1005,7 @@ public sealed class ClientAppValidator : IClientAppValidator
     }
 
     /// <summary>
-    /// Extends the client app's oauth2PermissionGrant to include the specified permissions.
+    /// Extends a custom client app's oauth2PermissionGrant to include the specified permissions.
     /// Call after the user has confirmed they want to grant admin consent.
     /// </summary>
     public Task GrantConsentForPermissionsAsync(
@@ -900,7 +1013,15 @@ public sealed class ClientAppValidator : IClientAppValidator
         List<string> permissions,
         string tenantId,
         CancellationToken ct = default)
-        => TryExtendConsentGrantScopesAsync(clientAppId, permissions, tenantId, ct);
+    {
+        if (AuthenticationConstants.IsWellKnownFirstPartyClientApp(clientAppId))
+        {
+            throw new InvalidOperationException(
+                "Tenant-local consent grants cannot be modified for the first-party Agent 365 CLI application.");
+        }
+
+        return TryExtendConsentGrantScopesAsync(clientAppId, permissions, tenantId, ct);
+    }
 
     /// <inheritdoc />
     public async Task<bool> HasWidsAccessTokenOptionalClaimAsync(
