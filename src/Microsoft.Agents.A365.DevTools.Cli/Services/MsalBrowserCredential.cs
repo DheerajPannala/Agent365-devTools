@@ -284,8 +284,8 @@ public sealed class MsalBrowserCredential : TokenCredential
         }
         else if (_authenticationMode == InteractiveAuthenticationMode.DeviceCode)
         {
-            // The Microsoft-managed CLI app uses WAM on Windows and publishes no localhost
-            // reply URL, so browser callbacks are not valid when WAM is unavailable.
+            // The Microsoft-managed CLI app uses WAM on Windows. Its MSAL system-browser flow
+            // is rejected with AADSTS70007 in WSL/non-Windows environments, so use device code.
             _logger?.LogDebug("Configuring device code authentication for the first-party Agent 365 CLI application");
         }
         else

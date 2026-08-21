@@ -239,11 +239,11 @@ public class MsalBrowserCredentialTests
             CancellationToken.None);
 
         result.Token.Should().Be(expected.Token,
-            because: "the FPA has no localhost browser reply URI, so WSL, macOS, and Linux must authenticate with device code");
+            because: "the FPA system-browser request is rejected with AADSTS70007 in WSL/non-Windows environments, while device code avoids that response-mode incompatibility");
         acquirer.DeviceCodeCalls.Should().Be(1,
             because: "the non-WAM FPA path must invoke device code exactly once");
         acquirer.SystemBrowserCalls.Should().Be(0,
-            because: "the FPA has no localhost reply URI for browser authentication");
+            because: "the FPA must not repeat the system-browser request that Entra rejects with AADSTS70007");
         acquirer.WamCalls.Should().Be(0,
             because: "WAM is unavailable in WSL, macOS, and Linux");
     }
@@ -300,7 +300,7 @@ public class MsalBrowserCredentialTests
         acquirer.DeviceCodeCalls.Should().Be(0,
             because: "device code is only the FPA fallback when WAM is unavailable");
         acquirer.SystemBrowserCalls.Should().Be(0,
-            because: "the FPA must never use a localhost browser callback");
+            because: "native Windows must retain WAM rather than switching the FPA to system-browser authentication");
     }
 
     [Fact]
