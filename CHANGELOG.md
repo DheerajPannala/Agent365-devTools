@@ -59,6 +59,7 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 - `a365 develop get-token --device-code` — forces device code auth for Microsoft Graph scopes the Windows WAM broker rejects (e.g. Exchange `MailboxSettings.ReadWrite`, `ExchangeMessageTrace.Read.All`).
 
 ### Fixed
+- The first-party Agent 365 CLI app now uses device code authentication when Windows Account Manager is unavailable, avoiding unsupported browser-response errors in WSL, macOS, and Linux.
 - `setup all --authmode s2s` no longer prints spurious "Action Required" PowerShell steps when the agent identity already inherits its app roles from the blueprint, and now retries the grant automatically before falling back to manual steps (#460).
 - `a365 develop get-token` now falls back to device code when the Windows WAM broker rejects Exchange Graph scopes with `ApiContractViolation`, instead of failing with an opaque MSAL error.
 - `setup blueprint` now configures the blueprint's inheritable Microsoft Graph permissions even when the signed-in user is not a Global Administrator, no longer aborts with a misleading "Failed to configure inheritable permissions" error when the tenant-wide consent grant cannot be made programmatically, and ends with a setup summary whose Action Required block surfaces the admin-consent URL for non-admins to hand off (#452).
