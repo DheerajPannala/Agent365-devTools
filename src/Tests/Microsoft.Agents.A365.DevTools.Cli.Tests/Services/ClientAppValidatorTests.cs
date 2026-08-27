@@ -26,6 +26,9 @@ public class ClientAppValidatorTests
     private readonly ClientAppValidator _validator;
 
     private const string ValidClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6";
+
+    // The well-known Microsoft app ID is the only trigger for the non-mutating first-party path.
+    private const string FirstPartyClientAppId = AuthenticationConstants.WellKnownClientAppId;
     private const string ValidTenantId = "12345678-1234-1234-1234-123456789012";
     private const string InvalidGuid = "not-a-guid";
     private const string AppObjId = "object-id-123";
@@ -253,7 +256,7 @@ public class ClientAppValidatorTests
 
     #endregion
 
-    #region EnsureValidClientAppAsync - First-Party Mode Tests
+    #region EnsureValidClientAppAsync - First-Party App Tests
 
     private static string BuildTokenWithScopes(params string[] scopes)
     {
@@ -281,11 +284,14 @@ public class ClientAppValidatorTests
     }
 
     private void SetupFirstPartyServicePrincipalLookup(
-        string clientAppId = ValidClientAppId,
+        string clientAppId = FirstPartyClientAppId,
         string? servicePrincipalId = SpObjId)
     {
         _graphApiService.LookupServicePrincipalByAppIdWithResponseAsync(
-                ValidTenantId, clientAppId, Arg.Any<CancellationToken>())
+                ValidTenantId,
+                clientAppId,
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.ResolvedClientApp)
             .Returns(new GraphApiService.ServicePrincipalLookupResult
             {
                 IsSuccess = true,
@@ -300,7 +306,7 @@ public class ClientAppValidatorTests
         SetupFirstPartyServicePrincipalLookup(servicePrincipalId: null);
 
         var exception = await Assert.ThrowsAsync<ClientAppValidationException>(
-            () => _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId, isFirstParty: true));
+            () => _validator.EnsureValidClientAppAsync(FirstPartyClientAppId, ValidTenantId));
 
         exception.IssueDescription.Should().Contain("not found",
             because: "a missing first-party service principal must surface the same AppNotFound failure as a missing custom app");
@@ -308,7 +314,10 @@ public class ClientAppValidatorTests
         // The identity must be resolved via /servicePrincipals — /applications must never be queried
         // in first-party mode, since a customer tenant may have no local application object.
         await _graphApiService.Received(1).LookupServicePrincipalByAppIdWithResponseAsync(
-            ValidTenantId, ValidClientAppId, Arg.Any<CancellationToken>());
+            ValidTenantId,
+            FirstPartyClientAppId,
+            Arg.Any<CancellationToken>(),
+            GraphAuthenticationMode.ResolvedClientApp);
         await _graphApiService.DidNotReceive().ApplicationExistsByAppIdAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
@@ -317,13 +326,16 @@ public class ClientAppValidatorTests
     public async Task EnsureValidClientAppAsync_FirstParty_WhenServicePrincipalLookupThrows_PreservesFirstPartyGuidance()
     {
         _graphApiService.LookupServicePrincipalByAppIdWithResponseAsync(
-                ValidTenantId, ValidClientAppId, Arg.Any<CancellationToken>())
+                ValidTenantId,
+                FirstPartyClientAppId,
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.ResolvedClientApp)
             .Returns(Task.FromException<GraphApiService.ServicePrincipalLookupResult>(
                 new HttpRequestException("service-principal lookup unavailable")));
 
         var exception = await Assert.ThrowsAsync<ClientAppValidationException>(
             () => _validator.EnsureValidClientAppAsync(
-                ValidClientAppId, ValidTenantId, isFirstParty: true));
+                FirstPartyClientAppId, ValidTenantId));
 
         exception.IssueDescription.Should().Contain("service principal",
             because: "a Graph lookup failure must remain distinguishable from a missing service principal");
@@ -339,7 +351,10 @@ public class ClientAppValidatorTests
     public async Task EnsureValidClientAppAsync_FirstParty_WhenServicePrincipalLookupReturnsHttpFailure_ReportsLookupFailure()
     {
         _graphApiService.LookupServicePrincipalByAppIdWithResponseAsync(
-                ValidTenantId, ValidClientAppId, Arg.Any<CancellationToken>())
+                ValidTenantId,
+                FirstPartyClientAppId,
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.ResolvedClientApp)
             .Returns(new GraphApiService.ServicePrincipalLookupResult
             {
                 IsSuccess = false,
@@ -349,7 +364,7 @@ public class ClientAppValidatorTests
 
         var exception = await Assert.ThrowsAsync<ClientAppValidationException>(
             () => _validator.EnsureValidClientAppAsync(
-                ValidClientAppId, ValidTenantId, isFirstParty: true));
+                FirstPartyClientAppId, ValidTenantId));
 
         exception.IssueDescription.Should().Contain("Unable to verify",
             because: "an HTTP failure must remain distinguishable from a successful lookup with no matching service principal");
@@ -367,10 +382,10 @@ public class ClientAppValidatorTests
 
         var token = BuildTokenWithScopes(AuthenticationConstants.RequiredClientAppPermissions);
         _graphApiService.GetClientAppAccessTokenAsync(
-            ValidTenantId, ValidClientAppId, Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>())
+            ValidTenantId, FirstPartyClientAppId, Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<string?>(token));
 
-        await _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId, isFirstParty: true);
+        await _validator.EnsureValidClientAppAsync(FirstPartyClientAppId, ValidTenantId);
 
         // No app-registration mutation of any kind must be attempted on a first-party application.
         await _graphApiService.DidNotReceive().GraphPatchAsync(
@@ -389,7 +404,7 @@ public class ClientAppValidatorTests
 
         var requestedScopeSets = new List<string[]>();
         _graphApiService.GetClientAppAccessTokenAsync(
-            ValidTenantId, ValidClientAppId, Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>())
+            ValidTenantId, FirstPartyClientAppId, Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>())
             .Returns(callInfo =>
             {
                 var scopes = callInfo.ArgAt<IEnumerable<string>>(2).ToArray();
@@ -398,7 +413,7 @@ public class ClientAppValidatorTests
             });
 
         await _validator.EnsureValidClientAppAsync(
-            ValidClientAppId, ValidTenantId, isFirstParty: true);
+            FirstPartyClientAppId, ValidTenantId);
 
         requestedScopeSets.Should().HaveCount(2,
             because: "the registration scope must be acquired separately so Entra can return a token whose scp claim identifies authorization for each operation group");
@@ -424,11 +439,11 @@ public class ClientAppValidatorTests
             .ToArray();
         var token = BuildTokenWithScopes(grantedScopes);
         _graphApiService.GetClientAppAccessTokenAsync(
-            ValidTenantId, ValidClientAppId, Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>())
+            ValidTenantId, FirstPartyClientAppId, Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<string?>(token));
 
         var exception = await Assert.ThrowsAsync<ClientAppValidationException>(
-            () => _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId, isFirstParty: true));
+            () => _validator.EnsureValidClientAppAsync(FirstPartyClientAppId, ValidTenantId));
 
         exception.ErrorDetails.Should().Contain(d => d.Contains("User.Read"),
             because: "every required scope must be checked individually so the operator knows exactly which scope the token is missing");
@@ -446,11 +461,11 @@ public class ClientAppValidatorTests
         SetupFirstPartyServicePrincipalLookup();
 
         _graphApiService.GetClientAppAccessTokenAsync(
-            ValidTenantId, ValidClientAppId, Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>())
+            ValidTenantId, FirstPartyClientAppId, Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<string?>(null));
 
         var exception = await Assert.ThrowsAsync<ClientAppValidationException>(
-            () => _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId, isFirstParty: true));
+            () => _validator.EnsureValidClientAppAsync(FirstPartyClientAppId, ValidTenantId));
 
         exception.IssueDescription.Should().Contain("access token",
             because: "a failed token acquisition must surface a clear, explicit failure rather than being silently swallowed as \'missing permissions\'");
@@ -461,13 +476,13 @@ public class ClientAppValidatorTests
     {
         SetupFirstPartyServicePrincipalLookup();
         _graphApiService.GetClientAppAccessTokenAsync(
-            ValidTenantId, ValidClientAppId, Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>())
+            ValidTenantId, FirstPartyClientAppId, Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromException<string?>(
                 new InvalidOperationException("interactive acquisition denied")));
 
         var exception = await Assert.ThrowsAsync<ClientAppValidationException>(
             () => _validator.EnsureValidClientAppAsync(
-                ValidClientAppId, ValidTenantId, isFirstParty: true));
+                FirstPartyClientAppId, ValidTenantId));
 
         exception.ErrorDetails.Should().Contain(
             detail => detail.Contains("interactive acquisition denied", StringComparison.Ordinal),
@@ -485,13 +500,13 @@ public class ClientAppValidatorTests
     {
         SetupFirstPartyServicePrincipalLookup();
         _graphApiService.GetClientAppAccessTokenAsync(
-                ValidTenantId, ValidClientAppId,
+                ValidTenantId, FirstPartyClientAppId,
                 Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<string?>(token));
 
         var exception = await Assert.ThrowsAsync<ClientAppValidationException>(
             () => _validator.EnsureValidClientAppAsync(
-                ValidClientAppId, ValidTenantId, isFirstParty: true));
+                FirstPartyClientAppId, ValidTenantId));
 
         exception.IssueDescription.Should().Contain("access token",
             because: "an unreadable token must be reported as an authorization-validation failure");
@@ -504,7 +519,7 @@ public class ClientAppValidatorTests
     }
 
     [Fact]
-    public async Task EnsureValidClientAppAsync_WellKnownIdWithoutFlag_AutomaticallySkipsCustomAppMutationPath()
+    public async Task EnsureValidClientAppAsync_WellKnownId_SkipsCustomAppMutationPath()
     {
         SetupFirstPartyServicePrincipalLookup(AuthenticationConstants.WellKnownClientAppId);
         _graphApiService.GetClientAppAccessTokenAsync(
@@ -523,7 +538,7 @@ public class ClientAppValidatorTests
             .Where(call => call.GetMethodInfo().Name is nameof(GraphApiService.GraphPatchAsync) or nameof(GraphApiService.GraphPostAsync))
             .ToList();
         mutationCalls.Should().BeEmpty(
-            because: "the well-known Microsoft application must be protected even when a caller omits the explicit first-party flag");
+            because: "the well-known Microsoft application ID alone must select the non-mutating validation path");
     }
 
     [Fact]
@@ -564,9 +579,9 @@ public class ClientAppValidatorTests
     }
 
     [Fact]
-    public async Task EnsureValidClientAppAsync_CustomApp_DefaultIsFirstPartyFalse_PreservesExistingMutationBehavior()
+    public async Task EnsureValidClientAppAsync_CustomApp_PreservesExistingMutationBehavior()
     {
-        // Regression guard: omitting isFirstParty must preserve the full custom-app validation
+        // Regression guard: a tenant-owned client app ID must keep the full custom-app validation
         // path (existence via /applications, permission/consent self-healing), unchanged.
         SetupAppInfoWithAllPermissions(ValidClientAppId);
         SetupPermissionResolution();
@@ -575,6 +590,100 @@ public class ClientAppValidatorTests
 
         await _graphApiService.Received().GraphGetWithResponseAsync(
             Arg.Any<string>(), Arg.Is<string>(p => p.Contains("displayName")), Arg.Any<bool>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>());
+    }
+
+    #endregion
+
+    #region HasWidsClaimOnIssuedAccessTokenAsync Tests
+
+    private static string BuildTokenWithPayload(string payloadJson) =>
+        $"{Base64UrlEncode("""{"alg":"none","typ":"JWT"}""")}.{Base64UrlEncode(payloadJson)}.sig";
+
+    [Fact]
+    public async Task HasWidsClaimOnIssuedAccessTokenAsync_WhenTokenCarriesWids_ReturnsTrue()
+    {
+        _graphApiService.GetClientAppAccessTokenAsync(
+                ValidTenantId, FirstPartyClientAppId, Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<string?>(
+                BuildTokenWithPayload("""{"wids":["62e90394-69f5-4237-9190-012177145e10"]}""")));
+
+        var result = await _validator.HasWidsClaimOnIssuedAccessTokenAsync(FirstPartyClientAppId, ValidTenantId);
+
+        result.Should().BeTrue(
+            because: "the claim on a token actually issued to the app is the only evidence available for an app registration the tenant cannot read");
+    }
+
+    [Fact]
+    public async Task HasWidsClaimOnIssuedAccessTokenAsync_WhenTokenOmitsWids_ReturnsFalse()
+    {
+        _graphApiService.GetClientAppAccessTokenAsync(
+                ValidTenantId, FirstPartyClientAppId, Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<string?>(BuildTokenWithPayload("""{"scp":"User.Read"}""")));
+
+        var result = await _validator.HasWidsClaimOnIssuedAccessTokenAsync(FirstPartyClientAppId, ValidTenantId);
+
+        result.Should().BeFalse(
+            because: "a decodable token without the claim proves the claim is absent from issued tokens");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("not-a-jwt")]
+    public async Task HasWidsClaimOnIssuedAccessTokenAsync_WhenTokenUnavailableOrUnreadable_ReturnsNull(string? token)
+    {
+        _graphApiService.GetClientAppAccessTokenAsync(
+                ValidTenantId, FirstPartyClientAppId, Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(token));
+
+        var result = await _validator.HasWidsClaimOnIssuedAccessTokenAsync(FirstPartyClientAppId, ValidTenantId);
+
+        result.Should().BeNull(
+            because: "an unavailable or undecodable token is inconclusive and must never be reported as a confirmed absent claim");
+    }
+
+    [Fact]
+    public async Task HasWidsClaimOnIssuedAccessTokenAsync_WhenTokenAcquisitionThrows_ReturnsNull()
+    {
+        _graphApiService.GetClientAppAccessTokenAsync(
+                ValidTenantId, FirstPartyClientAppId, Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromException<string?>(new InvalidOperationException("token acquisition failed")));
+
+        var result = await _validator.HasWidsClaimOnIssuedAccessTokenAsync(FirstPartyClientAppId, ValidTenantId);
+
+        result.Should().BeNull(
+            because: "a token acquisition failure is inconclusive, not proof that the claim is missing");
+    }
+
+    [Fact]
+    public async Task HasWidsClaimOnIssuedAccessTokenAsync_WhenTokenAcquisitionTimesOut_ReturnsNull()
+    {
+        _graphApiService.GetClientAppAccessTokenAsync(
+                ValidTenantId, FirstPartyClientAppId, Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromException<string?>(
+                new TaskCanceledException("token provider timed out")));
+
+        var result = await _validator.HasWidsClaimOnIssuedAccessTokenAsync(
+            FirstPartyClientAppId, ValidTenantId);
+
+        result.Should().BeNull(
+            because: "a provider timeout without caller cancellation is inconclusive and must not abort all requirement checks");
+    }
+
+    [Fact]
+    public async Task HasWidsClaimOnIssuedAccessTokenAsync_WhenCallerCancels_PropagatesCancellation()
+    {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        _graphApiService.GetClientAppAccessTokenAsync(
+                ValidTenantId, FirstPartyClientAppId, Arg.Any<IEnumerable<string>>(), cts.Token)
+            .Returns(Task.FromException<string?>(new OperationCanceledException(cts.Token)));
+
+        Func<Task> act = async () => await _validator.HasWidsClaimOnIssuedAccessTokenAsync(
+            FirstPartyClientAppId, ValidTenantId, cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>(
+            because: "caller cancellation must abort the command rather than be reported as an inconclusive claim");
     }
 
     #endregion

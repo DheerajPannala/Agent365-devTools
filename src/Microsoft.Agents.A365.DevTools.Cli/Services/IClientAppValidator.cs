@@ -17,11 +17,11 @@ public interface IClientAppValidator
     /// <param name="tenantId">The tenant ID where the app should exist</param>
     /// <param name="skipConfirmation">When true, applies any required app registration fixes without prompting the user.
     /// Use for non-interactive or CI scenarios. Defaults to false (prompt before modifying the app registration).</param>
-    /// <param name="isFirstParty">When true, validates a first-party app (e.g. Agent 365 CLI) without
-    /// mutating its Entra registration — presence via /servicePrincipals, scopes via token 'scp' claim.</param>
     /// <param name="ct">Cancellation token</param>
     /// <exception cref="Exceptions.ClientAppValidationException">Thrown when validation fails</exception>
-    Task EnsureValidClientAppAsync(string clientAppId, string tenantId, bool skipConfirmation = false, bool isFirstParty = false, CancellationToken ct = default);
+    /// <remarks>The well-known first-party Agent 365 CLI app is validated without mutating its Entra
+    /// registration — presence via /servicePrincipals, scopes via the token 'scp' claim.</remarks>
+    Task EnsureValidClientAppAsync(string clientAppId, string tenantId, bool skipConfirmation = false, CancellationToken ct = default);
 
     /// <summary>
     /// Ensures the client app has required redirect URIs configured for Microsoft Graph PowerShell SDK.
@@ -53,4 +53,12 @@ public interface IClientAppValidator
     /// caller decides how to surface either case to the operator.
     /// </summary>
     Task<bool> HasWidsAccessTokenOptionalClaimAsync(string clientAppId, string tenantId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Returns whether an access token issued to the client app actually carries the <c>wids</c>
+    /// claim, or <c>null</c> when the token could not be acquired or decoded. Used for apps whose
+    /// registration cannot be read from the tenant (the Microsoft first-party app), where the
+    /// issued token is the only available evidence.
+    /// </summary>
+    Task<bool?> HasWidsClaimOnIssuedAccessTokenAsync(string clientAppId, string tenantId, CancellationToken ct = default);
 }

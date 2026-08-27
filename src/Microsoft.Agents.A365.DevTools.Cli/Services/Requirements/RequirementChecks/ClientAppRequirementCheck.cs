@@ -1,7 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Extensions.Logging;
@@ -14,15 +13,11 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementCh
 public class ClientAppRequirementCheck : RequirementCheck
 {
     private readonly IClientAppValidator _clientAppValidator;
-    private readonly bool _firstParty;
 
     /// <param name="clientAppValidator">The validator used to check the client app configuration.</param>
-    /// <param name="firstParty">Forces first-party validation semantics; also auto-applied when
-    /// <c>config.ClientAppId</c> is the well-known first-party app, regardless of this flag.</param>
-    public ClientAppRequirementCheck(IClientAppValidator clientAppValidator, bool firstParty = false)
+    public ClientAppRequirementCheck(IClientAppValidator clientAppValidator)
     {
         _clientAppValidator = clientAppValidator ?? throw new ArgumentNullException(nameof(clientAppValidator));
-        _firstParty = firstParty;
     }
 
     /// <inheritdoc />
@@ -67,17 +62,11 @@ public class ClientAppRequirementCheck : RequirementCheck
 
         try
         {
-            // Automatically apply first-party semantics whenever the resolved client app is
-            // Microsoft's well-known Agent 365 CLI application, in addition to any explicit
-            // --first-party override — Microsoft's own application registration must never be
-            // PATCHed regardless of how the check was invoked.
-            var isFirstParty = _firstParty || AuthenticationConstants.IsWellKnownFirstPartyClientApp(config.ClientAppId);
-
-            // Validate the client app using the validator
+            // First-party semantics are keyed off the well-known app ID inside the validator, so
+            // Microsoft's own registration is never PATCHed regardless of the call site.
             await _clientAppValidator.EnsureValidClientAppAsync(
                 config.ClientAppId,
                 config.TenantId,
-                isFirstParty: isFirstParty,
                 ct: cancellationToken
             );
 

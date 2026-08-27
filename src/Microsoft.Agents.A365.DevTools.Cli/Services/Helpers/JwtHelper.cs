@@ -121,4 +121,31 @@ internal static class JwtHelper
         failureReason = string.Empty;
         return true;
     }
+
+    /// <summary>
+    /// Returns whether <paramref name="claimName"/> is present in the JWT payload, or null when
+    /// the token cannot be decoded — an undecodable token proves nothing about the claim.
+    /// </summary>
+    internal static bool? ClaimExists(string? jwt, string claimName)
+    {
+        if (string.IsNullOrWhiteSpace(jwt)) return null;
+        try
+        {
+            var parts = jwt.Split('.');
+            if (parts.Length < 2 || string.IsNullOrWhiteSpace(parts[1])) return null;
+            var payload = parts[1].Replace('-', '+').Replace('_', '/');
+            payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
+            using var doc = JsonDocument.Parse(Convert.FromBase64String(payload));
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) return null;
+            return doc.RootElement.TryGetProperty(claimName, out _);
+        }
+        catch (FormatException)
+        {
+            return null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
 }

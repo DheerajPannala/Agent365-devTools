@@ -37,15 +37,12 @@ public sealed class ClientAppValidator : IClientAppValidator
     /// <param name="tenantId">The tenant ID where the app should exist</param>
     /// <param name="skipConfirmation">When true, applies any required app registration fixes without prompting the user.
     /// Use for non-interactive or CI scenarios. Defaults to false (prompt before modifying the app registration).</param>
-    /// <param name="isFirstParty">When true, validates a Microsoft first-party application without
-    /// mutating its Entra app registration — see <see cref="EnsureValidFirstPartyClientAppAsync"/>.</param>
     /// <param name="ct">Cancellation token</param>
     /// <exception cref="ClientAppValidationException">Thrown when validation fails</exception>
     public async Task EnsureValidClientAppAsync(
         string clientAppId,
         string tenantId,
         bool skipConfirmation = false,
-        bool isFirstParty = false,
         CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(clientAppId);
@@ -71,7 +68,7 @@ public sealed class ClientAppValidator : IClientAppValidator
         try
         {
             // Never run tenant-owned mutation logic against Microsoft's application registration.
-            if (isFirstParty || AuthenticationConstants.IsWellKnownFirstPartyClientApp(clientAppId))
+            if (AuthenticationConstants.IsWellKnownFirstPartyClientApp(clientAppId))
             {
                 await EnsureValidFirstPartyClientAppAsync(parsedClientAppId.ToString("D"), tenantId, ct);
                 return;
@@ -357,8 +354,9 @@ public sealed class ClientAppValidator : IClientAppValidator
         GraphApiService.ServicePrincipalLookupResult lookup;
         try
         {
+            _graphApiService.CustomClientAppId = clientAppId;
             lookup = await _graphApiService.LookupServicePrincipalByAppIdWithResponseAsync(
-                tenantId, clientAppId, ct);
+                tenantId, clientAppId, ct, GraphAuthenticationMode.ResolvedClientApp);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -1036,6 +1034,31 @@ public sealed class ClientAppValidator : IClientAppValidator
         return hasWids;
     }
 
+    /// <inheritdoc />
+    public async Task<bool?> HasWidsClaimOnIssuedAccessTokenAsync(
+        string clientAppId,
+        string tenantId,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(clientAppId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+
+        string? token;
+        try
+        {
+            // User.Read matches the scope set used by the role check, so the token is served from
+            // the provider cache instead of triggering a second interactive sign-in.
+            token = await _graphApiService.GetClientAppAccessTokenAsync(
+                tenantId, clientAppId, [AuthenticationConstants.UserReadScope], ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogDebug(ex, "Could not acquire an access token for {ClientAppId} to inspect the 'wids' claim.", clientAppId);
+            return null;
+        }
+
+        return JwtHelper.ClaimExists(token, "wids");
+    }
 
     /// <summary>
     /// Read-only check: returns the redirect URIs that are missing from the app registration

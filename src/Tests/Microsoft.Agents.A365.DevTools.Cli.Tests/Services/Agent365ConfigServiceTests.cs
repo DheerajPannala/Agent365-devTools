@@ -683,6 +683,51 @@ public class Agent365ConfigServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task TryResolveClientAppIdAsync_WhenConfiguredIsFirstPartyAndLookupFails_WarnsAndPreservesConfig()
+    {
+        const string tenantId = "12345678-1234-1234-1234-123456789012";
+        var originalCwd = Environment.CurrentDirectory;
+        var graph = CreateMockGraphApiService();
+        var logger = Substitute.For<ILogger<ConfigService>>();
+        var service = new ConfigService(logger);
+        try
+        {
+            var configPath = await WriteConfigAndChdirAsync(
+                tenantId, AuthenticationConstants.WellKnownClientAppId);
+            graph.LookupServicePrincipalByAppIdWithResponseAsync(
+                    tenantId,
+                    AuthenticationConstants.WellKnownClientAppId,
+                    Arg.Any<CancellationToken>())
+                .Returns(new GraphApiService.ServicePrincipalLookupResult
+                {
+                    IsSuccess = false,
+                    StatusCode = 503,
+                    FailureReason = "Microsoft Graph service-principal lookup failed: HTTP 503 Service Unavailable."
+                });
+
+            await service.TryResolveClientAppIdAsync(graph);
+
+            var jsonAfter = await File.ReadAllTextAsync(configPath);
+            jsonAfter.Should().Contain(
+                AuthenticationConstants.WellKnownClientAppId,
+                because: "an inconclusive lookup is not evidence that the configured first-party app should be replaced");
+            logger.Received().Log(
+                LogLevel.Warning,
+                Arg.Any<EventId>(),
+                Arg.Is<object>(state =>
+                    state.ToString()!.Contains("no configuration changes were made", StringComparison.Ordinal)),
+                Arg.Any<Exception>(),
+                Arg.Any<Func<object, Exception?, string>>());
+            await graph.DidNotReceive().FindApplicationByDisplayNameAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalCwd;
+        }
+    }
+
+    [Fact]
     public async Task TryResolveClientAppIdAsync_WhenNoConfiguredId_AndFirstPartyServicePrincipalExists_PatchesToWellKnownIdWithoutDisplayNameLookup()
     {
         const string tenantId = "12345678-1234-1234-1234-123456789012";
@@ -901,6 +946,55 @@ public class Agent365ConfigServiceTests : IDisposable
                 Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
             await graph.DidNotReceive().FindApplicationByDisplayNameAsync(
                 Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalCwd;
+        }
+    }
+
+    [Fact]
+    public async Task TryResolveClientAppIdAsync_WhenFirstPartyLookupFails_WarnsInsteadOfSilentlySwallowing()
+    {
+        const string tenantId = "12345678-1234-1234-1234-123456789012";
+        const string staleCustomId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6";
+        var originalCwd = Environment.CurrentDirectory;
+        var graph = CreateMockGraphApiService();
+        var logger = Substitute.For<ILogger<ConfigService>>();
+        var service = new ConfigService(logger);
+        try
+        {
+            await WriteConfigAndChdirAsync(tenantId, staleCustomId);
+            graph.LookupApplicationByAppIdWithResponseAsync(
+                    tenantId, staleCustomId, Arg.Any<CancellationToken>())
+                .Returns(new GraphApiService.ApplicationLookupResult
+                {
+                    IsSuccess = true,
+                    StatusCode = 200
+                });
+            graph.LookupServicePrincipalByAppIdWithResponseAsync(
+                    tenantId, AuthenticationConstants.WellKnownClientAppId, Arg.Any<CancellationToken>())
+                .Returns(new GraphApiService.ServicePrincipalLookupResult
+                {
+                    IsSuccess = false,
+                    StatusCode = 429,
+                    FailureReason = "Microsoft Graph service-principal lookup failed: HTTP 429 Too Many Requests."
+                });
+
+            await service.TryResolveClientAppIdAsync(graph);
+
+            logger.Received().Log(
+                LogLevel.Warning,
+                Arg.Any<EventId>(),
+                Arg.Is<object>(state => state.ToString()!.Contains("Could not verify client app")),
+                Arg.Any<Exception>(),
+                Arg.Any<Func<object, Exception?, string>>());
+            logger.DidNotReceive().Log(
+                LogLevel.Debug,
+                Arg.Any<EventId>(),
+                Arg.Is<object>(state => state.ToString()!.Contains("resolution skipped due to error")),
+                Arg.Any<Exception>(),
+                Arg.Any<Func<object, Exception?, string>>());
         }
         finally
         {

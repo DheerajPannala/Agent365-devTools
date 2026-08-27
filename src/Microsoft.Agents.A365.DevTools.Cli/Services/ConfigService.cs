@@ -584,10 +584,10 @@ public class ConfigService : IConfigService
                         tenantId, AuthenticationConstants.WellKnownClientAppId, ct);
                     if (lookup is null || !lookup.IsSuccess)
                     {
-                        throw ClientAppValidationException.FirstPartyServicePrincipalLookupFailed(
-                            AuthenticationConstants.WellKnownClientAppId,
-                            tenantId,
+                        LogInconclusiveClientAppLookup(
+                            configuredId,
                             lookup?.FailureReason ?? "Service-principal lookup returned no result.");
+                        return;
                     }
 
                     exists = !string.IsNullOrWhiteSpace(lookup.ServicePrincipalId);
@@ -598,8 +598,7 @@ public class ConfigService : IConfigService
                         tenantId, configuredId, ct);
                     if (applicationLookup is null || !applicationLookup.IsSuccess)
                     {
-                        _logger?.LogWarning(
-                            "Could not verify configured clientAppId {Id}; preserving the existing configuration. {Reason}",
+                        LogInconclusiveClientAppLookup(
                             configuredId,
                             applicationLookup?.FailureReason ?? "Application lookup returned no result.");
                         return;
@@ -635,10 +634,10 @@ public class ConfigService : IConfigService
                     tenantId, AuthenticationConstants.WellKnownClientAppId, ct);
                 if (firstPartyLookup is null || !firstPartyLookup.IsSuccess)
                 {
-                    throw ClientAppValidationException.FirstPartyServicePrincipalLookupFailed(
+                    LogInconclusiveClientAppLookup(
                         AuthenticationConstants.WellKnownClientAppId,
-                        tenantId,
                         firstPartyLookup?.FailureReason ?? "Service-principal lookup returned no result.");
+                    return;
                 }
 
                 if (!string.IsNullOrWhiteSpace(firstPartyLookup.ServicePrincipalId))
@@ -683,6 +682,19 @@ public class ConfigService : IConfigService
         {
             _logger?.LogDebug(ex, "Client app ID resolution skipped due to error: {Message}", ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Reports a client app lookup that could neither confirm nor disprove the app's presence.
+    /// The existing configuration is preserved — a failed lookup is not evidence of absence.
+    /// </summary>
+    private void LogInconclusiveClientAppLookup(string clientAppId, string reason)
+    {
+        _logger?.LogWarning(
+            "Could not verify client app {Id}; no configuration changes were made. {Reason} " +
+            "Run 'a365 setup requirements' for full diagnostics if commands fail.",
+            clientAppId,
+            reason);
     }
 
     /// <summary>

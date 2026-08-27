@@ -46,22 +46,12 @@ internal static class RequirementsSubcommand
             ["--verbose", "-v"],
             description: "Enable verbose logging");
 
-        var firstPartyOption = new Option<bool>(
-            ["--first-party"],
-            description: "Validate the client app as Microsoft's first-party Agent 365 CLI application: " +
-                "verifies service principal presence and required token scopes, but never PATCHes " +
-                "permissions, redirect URIs, public-client settings, optional claims, or consent " +
-                "configuration on the Entra app registration. Applied automatically when the resolved " +
-                "clientAppId is the well-known first-party application, even without this flag.");
-
         command.AddOption(categoryOption);
         command.AddOption(verboseOption);
-        command.AddOption(firstPartyOption);
 
         command.SetHandler(async (InvocationContext context) =>
         {
             var category = context.ParseResult.GetValueForOption(categoryOption);
-            var firstParty = context.ParseResult.GetValueForOption(firstPartyOption);
             var ct = context.GetCancellationToken();
 
             logger.LogInformation("Agent 365 Requirements Check");
@@ -87,12 +77,7 @@ internal static class RequirementsSubcommand
                 // Pre-filter by category so we can emit a single warning if nothing matches,
                 // and skip the Entra bootstrap entirely when only system checks match.
                 var systemChecks = FilterByCategory(GetSystemRequirementChecks(), category);
-                var configChecks = FilterByCategory(GetConfigRequirementChecks(authValidator, clientAppValidator, firstParty), category);
-
-                if (firstParty)
-                {
-                    logger.LogInformation("First-party mode: the Agent 365 CLI application registration will not be modified.");
-                }
+                var configChecks = FilterByCategory(GetConfigRequirementChecks(authValidator, clientAppValidator), category);
 
                 if (systemChecks.Count == 0 && configChecks.Count == 0 && !string.IsNullOrWhiteSpace(category))
                 {
@@ -158,7 +143,9 @@ internal static class RequirementsSubcommand
         var localConfigPath = Path.Combine(Directory.GetCurrentDirectory(), ConfigConstants.DefaultConfigFileName);
         if (File.Exists(localConfigPath))
         {
-            return await configService.LoadAsync(localConfigPath);
+            var localConfig = await configService.LoadAsync(localConfigPath);
+            graphApiService.CustomClientAppId = localConfig.ClientAppId;
+            return localConfig;
         }
 
         // No config file — try to synthesize a minimal config from the Azure CLI context.
@@ -177,6 +164,7 @@ internal static class RequirementsSubcommand
             return null;
         }
 
+        graphApiService.CustomClientAppId = clientAppId;
         return new Agent365Config
         {
             TenantId = tenantId,
@@ -273,10 +261,10 @@ internal static class RequirementsSubcommand
     /// Gets all available requirement checks.
     /// Derived from the union of system and config checks to keep a single source of truth.
     /// </summary>
-    public static List<IRequirementCheck> GetRequirementChecks(AzureAuthValidator authValidator, IClientAppValidator clientAppValidator, bool firstParty = false)
+    public static List<IRequirementCheck> GetRequirementChecks(AzureAuthValidator authValidator, IClientAppValidator clientAppValidator)
     {
         return GetSystemRequirementChecks()
-            .Concat(GetConfigRequirementChecks(authValidator, clientAppValidator, firstParty))
+            .Concat(GetConfigRequirementChecks(authValidator, clientAppValidator))
             .ToList();
     }
 
@@ -299,7 +287,7 @@ internal static class RequirementsSubcommand
     /// <summary>
     /// Gets configuration-dependent requirement checks that must run after the configuration is loaded.
     /// </summary>
-    private static List<IRequirementCheck> GetConfigRequirementChecks(AzureAuthValidator authValidator, IClientAppValidator clientAppValidator, bool firstParty = false)
+    private static List<IRequirementCheck> GetConfigRequirementChecks(AzureAuthValidator authValidator, IClientAppValidator clientAppValidator)
     {
         return new List<IRequirementCheck>
         {
@@ -307,7 +295,7 @@ internal static class RequirementsSubcommand
             new AzureAuthRequirementCheck(authValidator),
 
             // Client app configuration validation (checks all required Graph permissions incl. UpdateAuthProperties.All)
-            new ClientAppRequirementCheck(clientAppValidator, firstParty),
+            new ClientAppRequirementCheck(clientAppValidator),
         };
     }
 

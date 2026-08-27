@@ -82,7 +82,7 @@ public class WidsOptionalClaimRequirementCheckTests
     }
 
     [Fact]
-    public async Task CheckAsync_FirstPartyClientApp_SkipsTenantLocalOptionalClaimsInspection()
+    public async Task CheckAsync_FirstPartyClientApp_WhenIssuedTokenCarriesWids_ReturnsSuccess()
     {
         var check = new WidsOptionalClaimRequirementCheck(_validator);
         var config = new Agent365Config
@@ -90,15 +90,63 @@ public class WidsOptionalClaimRequirementCheckTests
             ClientAppId = AuthenticationConstants.WellKnownClientAppId,
             TenantId = ValidTenantId
         };
+        _validator.HasWidsClaimOnIssuedAccessTokenAsync(
+            AuthenticationConstants.WellKnownClientAppId, ValidTenantId, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<bool?>(true));
 
         var result = await check.CheckAsync(config, _logger);
 
-        result.Passed.Should().BeTrue(
-            because: "customers cannot inspect or change optional claims on Microsoft's first-party application registration");
-        result.Details.Should().Contain("Microsoft-managed",
-            because: "the requirements output must explain why the tenant-local optional-claim check was skipped");
+        result.Passed.Should().BeTrue();
+        result.IsWarning.Should().BeFalse(
+            because: "the claim was verified from a token actually issued to the app, so PASS is truthful");
+        result.Details.Should().Contain(AuthenticationConstants.WellKnownClientAppId,
+            because: "the success details must identify which app was inspected");
         await _validator.DidNotReceive().HasWidsAccessTokenOptionalClaimAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task CheckAsync_FirstPartyClientApp_WhenIssuedTokenOmitsWids_ReturnsWarningNotSuccess()
+    {
+        var check = new WidsOptionalClaimRequirementCheck(_validator);
+        var config = new Agent365Config
+        {
+            ClientAppId = AuthenticationConstants.WellKnownClientAppId,
+            TenantId = ValidTenantId
+        };
+        _validator.HasWidsClaimOnIssuedAccessTokenAsync(
+            AuthenticationConstants.WellKnownClientAppId, ValidTenantId, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<bool?>(false));
+
+        var result = await check.CheckAsync(config, _logger);
+
+        result.IsWarning.Should().BeTrue(
+            because: "an unverified claim must never be reported as PASS just because the app is Microsoft-managed");
+        result.ErrorMessage.Should().Contain("'wids' is not present",
+            because: "the operator must be told the claim was checked and found absent, not that the check was skipped");
+        result.Details.Should().Contain("cannot be changed in your tenant",
+            because: "remediation must not tell customers to patch Microsoft's application registration");
+    }
+
+    [Fact]
+    public async Task CheckAsync_FirstPartyClientApp_WhenTokenUnavailable_ReturnsWarningNotSuccess()
+    {
+        var check = new WidsOptionalClaimRequirementCheck(_validator);
+        var config = new Agent365Config
+        {
+            ClientAppId = AuthenticationConstants.WellKnownClientAppId,
+            TenantId = ValidTenantId
+        };
+        _validator.HasWidsClaimOnIssuedAccessTokenAsync(
+            AuthenticationConstants.WellKnownClientAppId, ValidTenantId, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<bool?>(null));
+
+        var result = await check.CheckAsync(config, _logger);
+
+        result.IsWarning.Should().BeTrue(
+            because: "an inconclusive verification is a diagnostic result, not a pass and not a hard failure the tenant could fix");
+        result.ErrorMessage.Should().Contain("Could not verify",
+            because: "the operator must be able to distinguish an unverifiable claim from a confirmed missing claim");
     }
 
     [Fact]
@@ -137,6 +185,26 @@ public class WidsOptionalClaimRequirementCheckTests
             () => check.CheckAsync(config, _logger, new System.Threading.CancellationToken(canceled: true)));
         // Contract: cancellation must propagate so the calling pipeline can abort the entire setup
         // — swallowing it into a Failure result would make Ctrl+C unresponsive.
+    }
+
+    [Fact]
+    public async Task CheckAsync_FirstPartyClientApp_WhenValidatorThrowsCancellation_PropagatesCancellation()
+    {
+        var check = new WidsOptionalClaimRequirementCheck(_validator);
+        var config = new Agent365Config
+        {
+            ClientAppId = AuthenticationConstants.WellKnownClientAppId,
+            TenantId = ValidTenantId
+        };
+        var cancellationToken = new CancellationToken(canceled: true);
+        _validator.HasWidsClaimOnIssuedAccessTokenAsync(
+                config.ClientAppId, config.TenantId, cancellationToken)
+            .Throws(new OperationCanceledException(cancellationToken));
+
+        Func<Task> act = async () => await check.CheckAsync(config, _logger, cancellationToken);
+
+        await act.Should().ThrowAsync<OperationCanceledException>(
+            because: "caller cancellation must propagate through the first-party token inspection path");
     }
 
     [Fact]

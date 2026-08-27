@@ -223,7 +223,7 @@ public class GraphApiService
         bool forceRefresh = false,
         IEnumerable<string>? scopes = null,
         CancellationToken ct = default,
-        string? authenticationClientAppId = null)
+        GraphAuthenticationMode authenticationMode = GraphAuthenticationMode.ResolvedClientApp)
     {
         // Authentication strategy:
         //
@@ -244,14 +244,16 @@ public class GraphApiService
         //    that need claims from the custom-app JWT (e.g. CheckDirectoryRoleAsync) must guard
         //    for both `_tokenProvider == null` and an empty `CustomClientAppId` themselves.
         //
+        // 4. GraphAuthenticationMode.Ambient: the caller is probing whether a client app exists.
+        //    Authenticating as that app would make its own absence unverifiable, so the resolved
+        //    client app and requested scopes are ignored and the bootstrap path below is used.
+        //
         // All paths go through MSAL — no az CLI subprocess involved.
 
         string? token;
-        bool hasScopes = scopes?.Any() == true;
-        var effectiveClientAppId = string.IsNullOrWhiteSpace(authenticationClientAppId)
-            ? CustomClientAppId
-            : authenticationClientAppId;
-        bool hasCustomApp = !string.IsNullOrWhiteSpace(effectiveClientAppId);
+        bool useAmbient = authenticationMode == GraphAuthenticationMode.Ambient;
+        bool hasScopes = !useAmbient && scopes?.Any() == true;
+        bool hasCustomApp = !useAmbient && !string.IsNullOrWhiteSpace(CustomClientAppId);
 
         // Use the token provider when the caller passed explicit scopes (the call site is asking
         // for a scoped token — clientId can be null until config resolves; production callers that
@@ -264,10 +266,10 @@ public class GraphApiService
             var effectiveScopes = hasScopes ? scopes! : [AuthenticationConstants.UserReadScope];
             _logger.LogDebug(
                 "Acquiring Graph token via token provider (clientId: {AppId}, scopes: {Scopes})",
-                effectiveClientAppId, string.Join(", ", effectiveScopes));
+                CustomClientAppId, string.Join(", ", effectiveScopes));
             var loginHint = await ResolveLoginHintAsync();
             token = await _tokenProvider.GetMgGraphAccessTokenAsync(
-                tenantId, effectiveScopes, false, effectiveClientAppId, ct, loginHint, forceRefresh);
+                tenantId, effectiveScopes, false, CustomClientAppId, ct, loginHint, forceRefresh);
 
             if (string.IsNullOrWhiteSpace(token))
             {
@@ -400,14 +402,14 @@ public class GraphApiService
         bool forceRefresh = false,
         IEnumerable<string>? scopes = null,
         CancellationToken ct = default,
-        string? authenticationClientAppId = null)
+        GraphAuthenticationMode authenticationMode = GraphAuthenticationMode.ResolvedClientApp)
     {
         if (!await EnsureGraphHeadersAsync(
                 tenantId,
                 forceRefresh: forceRefresh,
                 scopes: scopes,
                 ct: ct,
-                authenticationClientAppId: authenticationClientAppId))
+                authenticationMode: authenticationMode))
             return new GraphResponse { IsSuccess = false, StatusCode = 0, ReasonPhrase = "NoAuth", Body = "Failed to acquire token" };
 
         var url = GraphApiConstants.BuildUrl(_graphBaseUrl, relativePath);
@@ -446,7 +448,13 @@ public class GraphApiService
                 };
             }, cancellationToken: ct);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        // Only caller-requested cancellation propagates; an HttpClient timeout surfaces as a
+        // TaskCanceledException with no cancellation requested and is a lookup failure, not a cancel.
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
         {
             if (NetworkHelper.IsConnectionResetByProxy(ex))
                 _logger.LogWarning(NetworkHelper.ConnectionResetWarning);
@@ -643,12 +651,14 @@ public class GraphApiService
     /// <summary>
     /// Looks up a service principal by application ID while preserving the distinction between
     /// a successful empty result and an authentication, HTTP, network, or response-format failure.
-    /// Requests the delegated <c>Application.Read.All</c> scope required by this Graph query.
+    /// Defaults to ambient authentication because the app being probed may itself be absent.
+    /// Callers validating an already-resolved app can request resolved-client authentication.
     /// </summary>
     public virtual async Task<ServicePrincipalLookupResult> LookupServicePrincipalByAppIdWithResponseAsync(
         string tenantId,
         string appId,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        GraphAuthenticationMode authenticationMode = GraphAuthenticationMode.Ambient)
     {
         if (!Guid.TryParse(appId, out var validAppId))
         {
@@ -660,16 +670,14 @@ public class GraphApiService
         }
 
         var normalizedAppId = validAppId.ToString("D");
-        var authenticationClientAppId =
-            AuthenticationConstants.IsWellKnownFirstPartyClientApp(normalizedAppId)
-                ? AuthenticationConstants.WellKnownClientAppId
-                : null;
         var response = await GraphGetWithResponseAsync(
             tenantId,
             $"/v1.0/servicePrincipals?$filter=appId eq '{normalizedAppId}'&$select=id",
-            scopes: [AuthenticationConstants.ApplicationReadAllScope],
+            scopes: authenticationMode == GraphAuthenticationMode.ResolvedClientApp
+                ? [AuthenticationConstants.ApplicationReadAllScope]
+                : null,
             ct: ct,
-            authenticationClientAppId: authenticationClientAppId);
+            authenticationMode: authenticationMode);
         using var responseJson = response.Json;
 
         if (!response.IsSuccess)

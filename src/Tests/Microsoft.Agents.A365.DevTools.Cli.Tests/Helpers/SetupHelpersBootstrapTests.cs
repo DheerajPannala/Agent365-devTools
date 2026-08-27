@@ -370,6 +370,34 @@ public class SetupHelpersBootstrapTests : IDisposable
     }
 
     [Fact]
+    public async Task ResolveBootstrapClientAppIdAsync_WhenFirstPartyLookupCannotAuthenticate_DoesNotFallBackSilently()
+    {
+        // "NoAuth" is what the presence probe reports when no Graph token could be acquired at all.
+        // That is an operational failure, not evidence that the first-party application is absent.
+        _mockGraph.LookupServicePrincipalByAppIdWithResponseAsync(
+                "tenant-id",
+                AuthenticationConstants.WellKnownClientAppId,
+                Arg.Any<CancellationToken>())
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = false,
+                StatusCode = 0,
+                FailureReason = "Microsoft Graph service-principal lookup failed: NoAuth."
+            });
+
+        Func<Task> act = async () => await SetupHelpers.ResolveBootstrapClientAppIdAsync(
+            "tenant-id", _mockGraph, NullLogger.Instance, CancellationToken.None);
+
+        var exception = await act.Should().ThrowAsync<ClientAppValidationException>(
+            because: "a token-acquisition failure must surface, not be downgraded to a silent custom-app fallback");
+        exception.Which.ErrorDetails.Should().Contain(
+            detail => detail.Contains("NoAuth", StringComparison.Ordinal),
+            because: "the operator needs to see that authentication, not app absence, blocked the lookup");
+        await _mockGraph.DidNotReceive().FindApplicationByDisplayNameAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task ResolveBootstrapClientAppIdAsync_DoesNotMutateGraphServiceCustomClientAppId()
     {
         // Arrange: the side effect (graphApiService.CustomClientAppId = ...) was removed from the
