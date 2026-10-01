@@ -331,6 +331,45 @@ public class SetupHelpersConsentUrlTests
             because: "no Messaging Bot consent URL is generated for non-M365 agents, so no resourceConsents entry should be persisted");
     }
 
+    [Theory]
+    [InlineData("prod", ConfigConstants.ObservabilityApiAppId)]
+    [InlineData("gcc", ConfigConstants.GccObservabilityApiAppId)]
+    public void PopulateAdminConsentUrls_WithoutObservability_ClearsObservabilityConsentUrlFromEarlierRun(string environment, string observabilityAppId)
+    {
+        var config = new Agent365Config
+        {
+            TenantId = TenantId,
+            AgentBlueprintId = BlueprintClientId,
+            Environment = environment,
+        };
+        config.ResourceConsents.Add(new ResourceConsent
+        {
+            ResourceName = "Observability API",
+            ResourceAppId = observabilityAppId,
+            ConsentUrl = "https://login.microsoftonline.com/old-observability-consent",
+            ConsentGranted = true,
+            InheritablePermissionsConfigured = true,
+        });
+
+        var names = SetupHelpers.PopulateAdminConsentUrls(
+            config, McpConstants.WorkIQToolsProdAppId, new[] { "McpServers.Mail.All" },
+            isM365: false, includeObservability: false);
+
+        var observability = config.ResourceConsents.Should().ContainSingle(
+            rc => rc.ResourceAppId == observabilityAppId,
+            because: "re-running setup does not revoke, so the record of the earlier grant is kept").Which;
+        observability.ConsentUrl.Should().BeNull(
+            because: "an Observability consent URL saved by an earlier run must not keep asking the admin for permissions this run no longer requests, in any cloud");
+        observability.ConsentGranted.Should().BeTrue(
+            because: "clearing the URL must not erase that an earlier run granted consent");
+        observability.InheritablePermissionsConfigured.Should().Be(true,
+            because: "clearing the URL must not erase the earlier inheritable-permission state");
+        names.Should().NotContain("Observability API");
+        config.ResourceConsents.Should().Contain(
+            rc => rc.ResourceAppId == PowerPlatformConstants.PowerPlatformApiResourceAppId,
+            because: "clearing the stale Observability URL must not affect the resources that are still requested");
+    }
+
     // ── V2 per-server audience routing (issue #429) ──────────────────────────
     //
     // V2 manifest entries declare a per-server audience (a unique Entra appId) and the

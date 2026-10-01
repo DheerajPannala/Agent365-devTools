@@ -143,8 +143,8 @@ internal static class AllSubcommand
             "--authmode",
             description: "Authentication pattern for the agent identity (blueprint agents only).\n" +
                          "  obo  — on-behalf-of (default); principal-scoped delegated grants; no admin consent needed.\n" +
-                         "  s2s  — service-to-service; app permissions on agent identity; Global Admin needed or PowerShell fallback.\n" +
-                         "  both — delegated grants (OBO) and app permissions (S2S).\n" +
+                         "  s2s  — service-to-service; grants the app roles in requested specs (blueprint agents no longer request OtelWrite).\n" +
+                         "  both — delegated grants (OBO) plus those S2S app-role grants.\n" +
                          "Not supported with --aiteammate true.");
 
         var skipSpProvisioningOption = new Option<bool>(
@@ -397,13 +397,19 @@ internal static class AllSubcommand
                 return;
             }
 
+            // Registered blueprint agents export telemetry app-only over S2S without OtelWrite in every auth
+            // mode, so blueprint setup never requests it; AI Teammate setup (including an AI Teammate config
+            // kept for a dry run) is unchanged.
+            var skipObservabilityPermissions = nonDwConfig is not null
+                && (aiTeammateFlag == false || nonDwConfig.IsBlueprintAgent);
+
             if (nonDwConfig is not null)
             {
                 if (dryRun)
                 {
                     var rawArgs = context.ParseResult.Tokens.Select(t => t.Value).ToArray();
                     var effectiveAuthMode = authMode ?? nonDwConfig.AuthMode;
-                    NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(nonDwConfig, logger, isBootstrap, rawArgs, skipRequirements, isM365, agentRegistrationOnly, effectiveAuthMode, messagingEndpointFlag);
+                    NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(nonDwConfig, logger, isBootstrap, rawArgs, skipRequirements, isM365, agentRegistrationOnly, effectiveAuthMode, messagingEndpointFlag, skipObservabilityPermissions);
                     return;
                 }
 
@@ -441,7 +447,8 @@ internal static class AllSubcommand
                     confirmationProvider: confirmationProvider,
                     skipSpProvisioning: skipSpProvisioning,
                     messagingEndpointOverride: messagingEndpointFlag,
-                    nonInteractive: Console.IsInputRedirected);
+                    nonInteractive: Console.IsInputRedirected,
+                    skipObservabilityPermissions: skipObservabilityPermissions);
 
                 context.ExitCode = await NonDwBlueprintSetupOrchestrator.ExecuteAsync(nonDwCtx);
                 return;
@@ -1012,7 +1019,8 @@ internal static class AllSubcommand
         // for both DW and non-DW agents; serverNamesByAudience drives the per-server display
         // names so V2 audiences read as e.g. "mcp_MailTools" rather than "Agent 365 Tools".
         var specs = await SetupHelpers.BuildConfiguredPermissionSpecsAsync(
-            ctx.Config, setInheritable: true, isM365: ctx.IsM365, scopesByAudience, serverNamesByAudience);
+            ctx.Config, setInheritable: true, isM365: ctx.IsM365, scopesByAudience, serverNamesByAudience,
+            includeObservability: !ctx.SkipObservabilityPermissions);
 
         // Return the full scopesByAudience map alongside the V1-compat mcpScopes so V2
         // callers (ApplyConsentUrlsIfNeeded) can route per-server audiences to the bare
