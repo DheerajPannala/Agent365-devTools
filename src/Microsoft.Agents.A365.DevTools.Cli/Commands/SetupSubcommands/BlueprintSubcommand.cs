@@ -351,7 +351,10 @@ internal static class BlueprintSubcommand
                     logger.LogInformation("  - Display Name: (pass --agent-name to preview)");
                 if (!string.IsNullOrWhiteSpace(dryRunConfig?.TenantId))
                     logger.LogInformation("  - Tenant: {TenantId}", dryRunConfig!.TenantId);
-                var dryRunServiceManagementReference = ServiceManagementReferenceHelper.Resolve(serviceManagementReferenceFlag, dryRunConfig);
+                // Applied only to a new blueprint, so omit it when config already has one (matches 'setup all').
+                var dryRunServiceManagementReference = string.IsNullOrWhiteSpace(dryRunConfig?.AgentBlueprintId)
+                    ? ServiceManagementReferenceHelper.Resolve(serviceManagementReferenceFlag, dryRunConfig)
+                    : null;
                 if (dryRunServiceManagementReference is not null)
                     logger.LogInformation("  - serviceManagementReference: {ServiceManagementReference}", dryRunServiceManagementReference);
                 logger.LogInformation("  - Would request admin consent for Graph and Connectivity APIs");
@@ -1551,7 +1554,7 @@ internal static class BlueprintSubcommand
         var failure = BlueprintCreationFailure.FromGraphResponse(status, body);
 
         // If sponsors/owners fields cause error (Bad Request 400), retry selectively.
-        // First drop only sponsors — this preserves ownership if sponsors was the sole cause.
+        // First drop only sponsors: this preserves ownership if sponsors was the sole cause.
         // Only drop owners as a last resort, since losing ownership breaks addPassword for non-admins.
         if (CanRetryWithoutSponsorOrOwner(failure) && appManifest.ContainsKey("sponsors@odata.bind"))
         {
@@ -1573,7 +1576,7 @@ internal static class BlueprintSubcommand
                 (succeeded, status, body) = await PostManifestAsync();
                 if (succeeded)
                 {
-                    logger.LogWarning("Agent Blueprint created without owner assignment. Client secret creation may fail — ensure you have Application Administrator role or the blueprint owner is set correctly.");
+                    logger.LogWarning("Agent Blueprint created without owner assignment. Client secret creation may fail; ensure you have Application Administrator role or the blueprint owner is set correctly.");
                     return (JsonNode.Parse(body)!.AsObject(), null);
                 }
 

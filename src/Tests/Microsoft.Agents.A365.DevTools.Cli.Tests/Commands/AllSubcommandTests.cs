@@ -689,8 +689,11 @@ public class AllSubcommandTests : IDisposable
 
         var act = () => AllSubcommand.ExecuteBlueprintStepAsync(ctx);
 
-        (await act.Should().ThrowAsync<GraphApiException>()).Which.ErrorCode.Should().Be(expectedErrorCode,
+        var thrown = (await act.Should().ThrowAsync<GraphApiException>()).Which;
+        thrown.ErrorCode.Should().Be(expectedErrorCode,
             because: "GRAPH_PERMISSION_DENIED is reserved for genuine authorization failures; serviceManagementReference and other failures need their own guidance");
+        thrown.GetFormattedMessage().Should().Contain($"Error code: {expectedErrorCode}",
+            because: "setup all prints this exception's error block, so the code the user acts on must appear there");
         ctx.Results.BlueprintFailed.Should().BeTrue();
         ctx.Results.Errors.Should().ContainSingle(e => e.Contains(expectedErrorCode),
             because: "the setup summary must report the same error code the user is told to act on");

@@ -46,8 +46,10 @@ public class BlueprintApplicationCreateTests
         failure.Should().BeNull();
         application.Should().NotBeNull();
         var request = handler.Requests.Should().ContainSingle().Subject;
-        request.Method.Should().Be(HttpMethod.Post);
-        request.Uri.Should().Be($"{GraphBaseUrl}/beta/applications");
+        request.Method.Should().Be(HttpMethod.Post,
+            because: "Microsoft Graph creates application objects only through POST");
+        request.Uri.Should().Be($"{GraphBaseUrl}/beta/applications",
+            because: "blueprints are created by POSTing an AgentIdentityBlueprint-typed application to the Graph beta endpoint; moving it changes the Graph contract and must be a deliberate change, not one this test follows");
         request.Body["serviceManagementReference"]!.GetValue<string>().Should().Be(ReferenceId,
             because: "tenants that require serviceManagementReference reject blueprint creation unless it is in the create request");
         request.Body["@odata.type"]!.GetValue<string>().Should().Be("Microsoft.Graph.AgentIdentityBlueprint",

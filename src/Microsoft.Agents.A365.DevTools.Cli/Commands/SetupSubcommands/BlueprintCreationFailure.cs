@@ -35,6 +35,9 @@ internal sealed record BlueprintCreationFailure(
 {
     internal const string Operation = "Create Agent Blueprint";
 
+    /// <summary>Label of the output line that carries the error code.</summary>
+    internal const string ErrorCodeLabel = "Error code";
+
     private const int MaxRawBodyLength = 500;
 
     private static readonly Regex UrlPattern = new(@"https?://[^\s`'""<>()\[\]]+", RegexOptions.Compiled);
@@ -125,8 +128,7 @@ internal sealed record BlueprintCreationFailure(
     {
         if (failure is null)
         {
-            return new GraphApiException(
-                Operation,
+            return Build(
                 ErrorCodes.GraphApiFailed,
                 new List<string> { "Blueprint creation did not complete. Review the errors logged above." },
                 GraphApiException.DefaultMitigationSteps());
@@ -138,8 +140,7 @@ internal sealed record BlueprintCreationFailure(
         switch (failure.Kind)
         {
             case BlueprintCreationFailureKind.ServiceManagementReference when string.IsNullOrWhiteSpace(serviceManagementReference):
-                return new GraphApiException(
-                    Operation,
+                return Build(
                     ErrorCodes.ServiceManagementReferenceRequired,
                     new List<string>
                     {
@@ -153,8 +154,7 @@ internal sealed record BlueprintCreationFailure(
                     }));
 
             case BlueprintCreationFailureKind.ServiceManagementReference:
-                return new GraphApiException(
-                    Operation,
+                return Build(
                     ErrorCodes.ServiceManagementReferenceRejected,
                     new List<string>
                     {
@@ -176,8 +176,7 @@ internal sealed record BlueprintCreationFailure(
                 roleGuidance.Add($"Creating an agent blueprint requires an active {AuthenticationConstants.BlueprintCreationRequiredRoles} role.");
                 roleGuidance.Add("If the role is assigned as eligible through Privileged Identity Management (PIM), activate it first; activation can take a few minutes to apply.");
                 roleGuidance.Add("Then re-run the command.");
-                return new GraphApiException(
-                    Operation,
+                return Build(
                     ErrorCodes.GraphPermissionDenied,
                     new List<string>
                     {
@@ -187,8 +186,7 @@ internal sealed record BlueprintCreationFailure(
                     roleGuidance);
 
             default:
-                return new GraphApiException(
-                    Operation,
+                return Build(
                     ErrorCodes.GraphApiFailed,
                     new List<string> { "Blueprint creation failed.", failure.Describe() },
                     IsRejectedRequest(failure.HttpStatusCode)
@@ -200,6 +198,12 @@ internal sealed record BlueprintCreationFailure(
                         : GraphApiException.DefaultMitigationSteps());
         }
     }
+
+    // The shared formatter prints context lines, so the code reaches both setup commands' output
+    // without changing how errors from other commands are formatted.
+    private static GraphApiException Build(string errorCode, List<string> errorDetails, List<string> mitigationSteps) =>
+        new(Operation, errorCode, errorDetails, mitigationSteps,
+            new Dictionary<string, string> { [ErrorCodeLabel] = errorCode });
 
     private static List<string> WithTroubleshootingUrl(BlueprintCreationFailure failure, List<string> steps)
     {

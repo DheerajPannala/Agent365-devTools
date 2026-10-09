@@ -154,6 +154,8 @@ a365 setup blueprint --service-management-reference <guid>
 
 #### Troubleshooting blueprint creation
 
+When blueprint creation fails, `setup blueprint` and `setup all` end the error with an `Error code:` line that matches one of these codes:
+
 | Error code | Cause | Fix |
 |------------|-------|-----|
 | `SERVICE_MANAGEMENT_REFERENCE_REQUIRED` | Graph rejected the request because the tenant requires `serviceManagementReference` and none was sent. | Re-run with `--service-management-reference <guid>`, or set `serviceManagementReference` in `a365.config.json`. The error includes the troubleshooting link from Graph's response. |

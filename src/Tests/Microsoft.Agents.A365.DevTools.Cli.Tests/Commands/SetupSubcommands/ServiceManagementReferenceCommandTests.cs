@@ -119,6 +119,21 @@ public class ServiceManagementReferenceCommandTests
     }
 
     [Fact]
+    public async Task SetupBlueprint_DryRunWithExistingBlueprint_OmitsReferenceRow()
+    {
+        var config = BlueprintAgentConfig(ConfigReferenceId);
+        config.AgentBlueprintId = "existing-blueprint-app-id";
+        _configService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
+
+        var exitCode = await BuildParser(BuildSetupBlueprintCommand()).InvokeAsync(
+            new[] { "--dry-run", Option, ReferenceId }, new TestConsole());
+
+        exitCode.Should().Be(0);
+        AssertNotLogged(LogLevel.Information, "serviceManagementReference:",
+            because: "an existing blueprint is reused unchanged, so the plan must not promise to set serviceManagementReference");
+    }
+
+    [Fact]
     public async Task SetupAll_BlueprintAgentDryRun_ShowsReferenceOnBlueprintStep()
     {
         _configService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(BlueprintAgentConfig());
@@ -282,15 +297,29 @@ public class ServiceManagementReferenceCommandTests
     }
 
     [Fact]
-    public async Task SetupBlueprint_WhenBlueprintCreationFails_ExitsOne()
+    public async Task SetupBlueprint_WhenBlueprintCreationFails_ExitsOneAndPrintsErrorCode()
     {
         _configService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(BlueprintAgentConfig());
 
-        var exitCode = await BuildParser(BuildSetupBlueprintCommand()).InvokeAsync(
-            new[] { "--skip-requirements" }, new TestConsole());
+        // The error block is written to Console.Error; this collection runs serially, so redirecting it is safe.
+        var originalError = Console.Error;
+        using var stderr = new StringWriter();
+        Console.SetError(stderr);
+        int exitCode;
+        try
+        {
+            exitCode = await BuildParser(BuildSetupBlueprintCommand()).InvokeAsync(
+                new[] { "--skip-requirements" }, new TestConsole());
+        }
+        finally
+        {
+            Console.SetError(originalError);
+        }
 
         exitCode.Should().Be(1,
             because: "a failed blueprint creation must not report success to scripts and CI");
+        stderr.ToString().Should().Contain($"Error code: {ErrorCodes.ServiceManagementReferenceRequired}",
+            because: "standalone 'setup blueprint' must print the documented error code, not only 'setup all' in its summary");
         _capturedOptions.Should().ContainSingle().Which.ServiceManagementReference.Should().BeNull(
             because: "without the option or config key, no serviceManagementReference is sent");
     }

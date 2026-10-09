@@ -54,14 +54,20 @@ public class GraphApiException : Agent365Exception
     }
 
     /// <summary>
-    /// Creates a Graph failure with an operation-specific error code, details, and mitigation steps.
+    /// Creates a Graph failure with an operation-specific error code, details, mitigation steps, and optional context lines.
     /// </summary>
-    public GraphApiException(string operation, string errorCode, List<string> errorDetails, List<string> mitigationSteps)
+    public GraphApiException(
+        string operation,
+        string errorCode,
+        List<string> errorDetails,
+        List<string> mitigationSteps,
+        Dictionary<string, string>? context = null)
         : base(
             errorCode: errorCode,
             issueDescription: $"Microsoft Graph API operation failed: {operation}",
             errorDetails: errorDetails,
-            mitigationSteps: mitigationSteps)
+            mitigationSteps: mitigationSteps,
+            context: context)
     {
         Operation = operation;
     }

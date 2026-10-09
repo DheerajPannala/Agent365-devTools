@@ -194,6 +194,25 @@ public class BlueprintCreationFailureTests
     }
 
     [Theory]
+    [InlineData(nameof(BlueprintCreationFailureKind.ServiceManagementReference), 400, null, ErrorCodes.ServiceManagementReferenceRequired)]
+    [InlineData(nameof(BlueprintCreationFailureKind.ServiceManagementReference), 400, ReferenceId, ErrorCodes.ServiceManagementReferenceRejected)]
+    [InlineData(nameof(BlueprintCreationFailureKind.PermissionDenied), 403, null, ErrorCodes.GraphPermissionDenied)]
+    [InlineData(nameof(BlueprintCreationFailureKind.Other), 400, null, ErrorCodes.GraphApiFailed)]
+    [InlineData(null, null, null, ErrorCodes.GraphApiFailed)]
+    public void CreateException_FormattedOutputIncludesErrorCode(string? kind, int? statusCode, string? reference, string expectedCode)
+    {
+        var failure = kind is null
+            ? null
+            : new BlueprintCreationFailure(Enum.Parse<BlueprintCreationFailureKind>(kind), "Graph rejected the request.", statusCode, "Request_BadRequest");
+
+        var exception = BlueprintCreationFailure.CreateException(failure, reference);
+
+        exception.ErrorCode.Should().Be(expectedCode);
+        exception.GetFormattedMessage().Should().Contain($"Error code: {expectedCode}",
+            because: "the documented error codes must appear in the printed error, which is all that standalone 'setup blueprint' shows");
+    }
+
+    [Theory]
     [InlineData("Refer to the TSG `https://aka.ms/service-management-reference-error` for resolving the error", "https://aka.ms/service-management-reference-error")]
     [InlineData("See https://example.com/troubleshooting.", "https://example.com/troubleshooting")]
     [InlineData("No link in this message.", null)]
